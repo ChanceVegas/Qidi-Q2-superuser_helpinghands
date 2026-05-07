@@ -46,7 +46,7 @@ gcode:
     # ============================================
     # BOX SYSTEM PROCESSING
     # ============================================
-    M118 Box Logix starts
+    M118 Box Logic starts
     {% if printer.save_variables.variables.box_count >= 1 and printer["box_extras"] %}
         # Reset retry variables
         SAVE_VARIABLE VARIABLE=load_retry_num VALUE=0
