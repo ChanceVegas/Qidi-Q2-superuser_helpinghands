@@ -17,14 +17,19 @@ gcode:
     {% endif %} 
     
     M140 S{bedtemp}      # Start bed heating (non-blocking) - IMMEDIATELY!
+    M118 Bed set
     M141 S{chambertemp}  # Start chamber heating (non-blocking) - IMMEDIATELY!
-    M104 S100 			 # Start the Hotend temp just a little, to save a few seconds while avioding oozing
+    M118 Chamber Set
+    M104 S100
+    M188 Initial Heatup
 	SAVE_VARIABLE VARIABLE=qdc_ai_error_code VALUE='""' # Disables AI detection, at least to my knowledge
     AUTOTUNE_SHAPERS
-    DISABLE_ALL_SENSOR	 # Disables filament runout sensor
+    DISABLE_ALL_SENSOR
     CLEAR_PAUSE
 	
 	# PREPARATION: HOTEND OFF AND FANS
+	# M104 S0  # Turn off hotend for safety Umm, no
+
 	# Chamber fan control
     {% if chambertemp == 0 %}
         M106 P3 S255  # Turn on chamber fan if chamber is not used
@@ -32,13 +37,16 @@ gcode:
         M106 P3 S0    # Turn off fan if chamber is used
     {% endif %}
 
-    # Homing
+    # Homing, Nozzle clean, and home again
+    M118 Begin Homing
     G28  # Home all axes
     SET_GCODE_OFFSET Z=0 MOVE=0  # Reset Z offset
+    M118 "Z offset = 0)
 
     # ============================================
     # BOX SYSTEM PROCESSING
     # ============================================
+    M118 Box Logix starts
     {% if printer.save_variables.variables.box_count >= 1 and printer["box_extras"] %}
         # Reset retry variables
         SAVE_VARIABLE VARIABLE=load_retry_num VALUE=0
@@ -61,28 +69,35 @@ gcode:
         {% endif %}
     {% endif %}
     #CLEAR_NOZZLE HOTEND={hotendtemp} # Disabled because EXTRUSION_AND_FLUSH has a purge
-    BRUSH # The second half a clear nozzle that rubs it on the brush
-    G1 Z5 F900 # Makes sure nozzle will not colide with print bed
-    CUT_FILAMENT_1
+    M118 Brush starts
+    #BRUSH # The second half a clear nozzle that rubs it on the brush  ## this wastes so much time waiting for nozzle to cool down
+    #M118 Make sure nozzle doesn't colide with bed
+    # G1 Z5 F900 # Makes sure nozzle will not colide with print bed ## Don't have BRUSH so don't need this
+    # CUT_FILAMENT_1
     
     # Pre-heat hotend to 140°C for cutting
     # (140°C is sufficient for most materials for safe cutting)
     M104 S140 #Set nozzle to 140
+    M118 nozzle set
     G4 P7500  # Double Optimized, 7.5 seconds instead of 30 (material already partially heated)
     M400       # Wait for all commands to complete
+    M118 begin second homing
     G28  # Home after cutting (important for positioning accuracy)
+    M118 start tild adjust
     Z_TILT_ADJUST  # Bed tilt calibration
 
     # Wait
     # Parallel waiting for bed and chamber (saves time)
     M190 S{bedtemp}      # Wait for bed temperature (blocking)
     M191 S{chambertemp}  # Wait for chamber temperature (blocking)
+    M118 Chamber and Bed set
     M400                 # Ensure all commands are executed
     # Short pause for temperature stabilization (optimized)
     # G4 P5000  # 5 seconds instead of 60 - sufficient for stabilization
 
+    M118 Begin bed mesh calibrate
     BED_MESH_CALIBRATE # Calibrate the mesh
-    Smart_Park # Parking... its smart
+    # Smart_Park # Parking... its smart ## Smart park, its dumb ash
 
      # ============================================
     # ENABLE BUFFER MONITORING (if needed)
@@ -92,9 +107,19 @@ gcode:
     {% endif %}
 
     # Make sure its heated
+    M118 Set hotend
     M109 S{hotendtemp}  # Heat and wait for hotend working temperature
 
-    set_zoffset # Save Zoffset
-    ENABLE_ALL_SENSOR # Turn filament runout sensor back on
+    set_zoffset
+    ENABLE_ALL_SENSOR
+    M118 Filament runout back on
     save_last_file
-    VORON_purge #If you're not using VORON_purge what are you doing
+    M118 Move to purge area
+    G0 X105 Y0 F1700 # Move to purge area because Smart Park tries to commit suicide
+    M119 Voron Purge
+    LINE_PURGE # Normal purge
+    # VORON_purge #If you're not using VORON_purge what are you doing
+    M118 Print started
+
+    # Ready notification
+    {action_respond_info("PRINT_START: Printer ready for printing")}
