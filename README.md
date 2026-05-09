@@ -24,7 +24,7 @@ I use Spoolman for this
 # Printer Configs
 Out of the box the printer ships with a really bloated print preparation macro that takes a lot of time. All the documentation I found is listed in [This folder](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/My%20Resources.md)
 
-## Basic Config adjustments
+##Basic Config adjustments
 Everyone should be able to do this. Later on I will be attempting to install Bunny Box which may be more difficult, but lets cross that hill when we get to it.
 It is always wise to back up any configs before we edit them. To do that go to the configs section of the printer web interface, right click, and download. Save these to a folder you will remember. As of writing these work with Q2 firmware 1.1.0 and I have both Qidi Box and no box versions setup.
 
@@ -38,5 +38,12 @@ It is always wise to back up any configs before we edit them. To do that go to t
 Now that everything is fast lets print some things to make our printer better
 
 [Printables](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Printables/Prints.md)
+
+# Advanced Users
+This will be instructions to install advanced features like helixscreen and bunny box. This is currently a work in progress
+
+[Advanced Users](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Advanced/Readme.md)
 # You're done
 Congragulations, you've finished. If you can help format this better it would be greatly appreciated. Thanks. Let me know if you have anything you think should be added.
+
+[Thanks](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Thanks.md)
