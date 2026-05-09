@@ -1,0 +1,1 @@
+This is the start of the advanced readme. You will need to have some very basic of ssh'ing into your printer. All future steps may void warranty, make the machine temporarily unusable, etc. All things have been tested on my own Q2 and should work, but I take no responsibility. Good luck :)
