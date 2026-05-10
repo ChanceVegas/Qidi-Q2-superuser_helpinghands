@@ -23,5 +23,5 @@ services:
       # This can also be an absolute path, e.g. /var/octoapp/plugin/data or /c/users/name/plugin/data
       - ./data:/data
 ```
-4. Run it with 'sudo docker compose up -d'
+4. Run it with `sudo docker compose up -d`
 5. Restart the printer and the plugin will be installed correctly
