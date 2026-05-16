@@ -16,15 +16,18 @@ gcode:
         {action_respond_error("ERROR: Invalid chamber temperature: " ~ chambertemp)}
     {% endif %} 
     
-    M140 S{bedtemp}      # Start bed heating (non-blocking) - IMMEDIATELY!
+	M140 S{bedtemp}      # Start bed heating (non-blocking) - IMMEDIATELY!
+	M118 Bed set
     M141 S{chambertemp}  # Start chamber heating (non-blocking) - IMMEDIATELY!
-	SAVE_VARIABLE VARIABLE=qdc_ai_error_code VALUE='""' # Disables AI detection, at least to my knowledge
+    M118 Chamber Set
+    M104 S100
+    M118 Initial Heatup
+	SAVE_VARIABLE VARIABLE=qdc_ai_error_code VALUE='""' # Disables AI detection from stopping the print
+# To fully disable the service check this https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/processes.md
     AUTOTUNE_SHAPERS
     DISABLE_ALL_SENSOR
     CLEAR_PAUSE
 	
-	# PREPARATION: HOTEND OFF AND FANS
-	M104 S0  # Turn off hotend for safety
 	# Chamber fan control
     {% if chambertemp == 0 %}
         M106 P3 S255  # Turn on chamber fan if chamber is not used
@@ -33,19 +36,22 @@ gcode:
     {% endif %}
 
     # Homing, Nozzle clean, and home again
+	M118 Begin Homing
     G28  # Home all axes
     SET_GCODE_OFFSET Z=0 MOVE=0  # Reset Z offset
+	M118 Z offset = 0
 
-    CLEAR_NOZZLE HOTEND={hotendtemp} Disabled because box has extrusion and flush
-    CUT_FILAMENT_1
+    CLEAR_NOZZLE HOTEND={hotendtemp} # Disabled because box has extrusion and flush
+    # CUT_FILAMENT_1
     
     # Pre-heat hotend to 140°C for cutting
     # (140°C is sufficient for most materials for safe cutting)
     M104 S140
-    G4 P15000  # Optimized: 15 seconds instead of 30 (material already partially heated)
-    M400       # Wait for all commands to complete
-    G28  # Home after cutting (important for positioning accuracy)
+    M118 Nozzle Set
+	M118 start tilt adjust
     Z_TILT_ADJUST  # Bed tilt calibration
+	M118 Home Z
+	G28 Z
 
     # Wait
     # Parallel waiting for bed and chamber (saves time)
@@ -53,9 +59,7 @@ gcode:
     M191 S{chambertemp}  # Wait for chamber temperature (blocking)
     M400                 # Ensure all commands are executed
     
-    # Short pause for temperature stabilization (optimized)
-    G4 P5000  # 5 seconds instead of 60 - sufficient for stabilization
-
+	M118 Bed Mesh beginning
     BED_MESH_CALIBRATE
 
     # Make sure its heated
@@ -63,8 +67,13 @@ gcode:
 
     set_zoffset
     ENABLE_ALL_SENSOR
+    M118 Filament runout back on
     save_last_file
-    LINE_PURGE
+    M118 Move to purge area
+    G0 X105 Y0 F1700 # Move to purge area because Smart Park tries to commit suicide
+    M119 Voron Purge
+    LINE_PURGE # Normal purge
+    M118 Print started
 
     # Ready notification
     {action_respond_info("PRINT_START: Printer ready for printing")}
