@@ -7,6 +7,7 @@ If you are a true begginer this will help you get the slicer set up, provide a l
 # Chapter 1 - Plugins
 ### Remote Access
 I like checking on my printer and hate giving my information to china, that is why I chose octoeverywhere
+Edit: I can no longer recomend Octoeverywhere as the service has been unusable for me. There is no way to get past the upgrade to premium screen. Once I setup remote access with tailscale I will be adding documentation for that.
 
 Alternatives: Obico
 
