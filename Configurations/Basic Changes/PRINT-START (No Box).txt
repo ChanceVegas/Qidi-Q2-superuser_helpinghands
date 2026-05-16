@@ -57,7 +57,6 @@ gcode:
     G4 P5000  # 5 seconds instead of 60 - sufficient for stabilization
 
     BED_MESH_CALIBRATE
-    Smart_Park
 
     # Make sure its heated
     M109 S{hotendtemp}  # Heat and wait for hotend working temperature
@@ -65,7 +64,7 @@ gcode:
     set_zoffset
     ENABLE_ALL_SENSOR
     save_last_file
-    VORON_purge
+    LINE_PURGE
 
     # Ready notification
     {action_respond_info("PRINT_START: Printer ready for printing")}
