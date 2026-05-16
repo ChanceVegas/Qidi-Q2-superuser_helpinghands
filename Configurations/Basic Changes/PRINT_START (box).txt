@@ -82,6 +82,7 @@ gcode:
     M118 nozzle set
     M118 start tild adjust
     Z_TILT_ADJUST  # Bed tilt calibration
+    M118 Start Home
 	G28 # Home Again
 
     # Wait
