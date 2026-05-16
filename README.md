@@ -28,9 +28,7 @@ Out of the box the printer ships with a really bloated print preparation macro t
 Everyone should be able to do this. Later on I will be attempting to install Bunny Box which may be more difficult, but lets cross that hill when we get to it.
 It is always wise to back up any configs before we edit them. To do that go to the configs section of the printer web interface, right click, and download. Save these to a folder you will remember. As of writing these work with Q2 firmware 1.1.0 and I have both Qidi Box and no box versions setup.
 
-[Adaptine Bed Leveling (KAMP)](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/Basic%20Changes/KAMP%20Tutorial.md)
-
-[Macros](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/Basic%20Changes/Macro%20Tutorials.md)
+All macro adjustments are now done with my [one line install tool](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Instructions.md)
 
 [Filament Configs](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/Filamet%20Configurations.md)
 
