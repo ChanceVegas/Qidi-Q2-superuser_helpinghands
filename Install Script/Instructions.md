@@ -15,7 +15,7 @@ curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs
 ```
 
 ### Just faster
-This install is for non-box users who wish to retain the stock screen. These changes make the `print_start` macro faster, lowers the bed almost all of the way down during print_end, and adds the `screws_tilt` macro for easy bed leveling setup.
+This install is for non-box users who wish to retain the stock screen. Barebones changes that only involve the adjustments listed for all scripts.
 ```
 curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/No%20Box%20-%20No%20HS.sh | sh
 ```
