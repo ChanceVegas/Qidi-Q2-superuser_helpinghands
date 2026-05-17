@@ -1,3 +1,5 @@
+Join the discord: https://discord.gg/aZGUk69Mp
+
 # What this guide includes
 In here I will list everything I am running (or have printed) on/for my printer and alternatives I have heard of. This includes octoapp, octoeverywhere, and spoolman, which are all running remotely so I don't waste printer ram space.
 # Chapter 0.5 - True Beginers
