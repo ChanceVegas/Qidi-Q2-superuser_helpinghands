@@ -14,6 +14,8 @@ Pros and Cons: [Bunny Box](https://github.com/Wazzup77/Bunny-Box) adds improved 
 curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/BB%20%26%20HS.sh | sh
 ```
 
+After install, make sure to [download](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Printer%20Presets/Presets.md) and import the presets to Orca.
+
 ### Just faster
 This install is for non-box users who wish to retain the stock screen. Barebones changes that only involve the adjustments listed for all scripts.
 ```
