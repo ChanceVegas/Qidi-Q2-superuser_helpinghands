@@ -1,0 +1,1 @@
+Download Boxless Q2.orca_printer and Qidi Q2 0.4 Nozzle - Box.orca_printer and import them to orca. If you are using the box, use the box preset. If you are using the bypass to print flexibles, use the boxless preset.
