@@ -70,7 +70,7 @@ This repo documents what those macros do and provides faster, cleaner replacemen
 
 All macro adjustments are now handled by my one‑line install tool:
 
-[Install Script Instructions](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Instructions.md)
+[Install Script Instructions](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install-Script/Instructions.md)
 
 Additional config resources:
 
