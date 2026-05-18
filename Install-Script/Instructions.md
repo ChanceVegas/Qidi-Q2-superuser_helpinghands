@@ -8,7 +8,7 @@ All scripts will:
 - Apply faster PRINT_START and PRINT_END macros
 - Lower the bed fully at print end
 - Install the `screw_tilt_adjust` macro  
-  Documentation: https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md
+  [Documentation](https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md)
 
 To use any install script:
 
@@ -31,9 +31,9 @@ This is the full setup I run on my own Q2.
 ### Pros
 
 - **Bunny Box** adds improved box functionality, faster loading, and better multicolor behavior.  
-  [https://github.com/Wazzup77/Bunny-Box](https://github.com/Wazzup77/Bunny-Box)  
+  [Bunny Box Documentation](https://github.com/Wazzup77/Bunny-Box)
 - **HelixScreen** replaces the stock UI and works seamlessly with Bunny Box.  
-  `https://github.com/prestonbrown/helixscreen` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2Fprestonbrown%2Fhelixscreen")  
+  [Helixscreen Documentation](https://github.com/prestonbrown/helixscreen) 
 - Ships with a preconfigured screen layout.
 
 ### Cons
