@@ -2,6 +2,8 @@
 
 There are multiple install scripts in this repo. Make sure you run the one that matches what you want to install.
 
+**Warning** this script is actively beinf modified. All install scripts may not work. If you would like to see the status and get updates, join the doscord listed at top of readme
+
 All scripts will:
 
 - Back up your current config (backup system is being improved)
