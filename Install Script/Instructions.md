@@ -26,6 +26,8 @@ This install is for non-box users who wish to retain the stock screen. Barebones
 Pros: It is just an OEM+ Q2 setup
 
 Cons: The only con you could say is that you don't have the box, and maybe that you don't have [Helixscreen](https://github.com/prestonbrown/helixscreen)
+
+To begin the installer, simply run
 ```
 curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/No%20Box%20-%20No%20HS.sh | sh
 ```
