@@ -14,6 +14,19 @@ if [ -d "/home/mks/helixscreen" ]; then
     echo "HelixScreen detected. Uninstalling..."
     curl -sSL https://releases.helixscreen.org/install.sh | sudo sh -s -- --remove
     echo "HelixScreen uninstall complete."
+    echo ""
+
+    echo "Re-enabling stock Qidi screen services..."
+    sudo systemctl stop helixscreen
+    sudo systemctl disable helixscreen
+    sudo systemctl mask helixscreen
+
+    sudo systemctl enable lightdm
+    sudo systemctl restart lightdm
+
+    sudo systemctl enable makerbase-client
+    sudo systemctl restart makerbase-client
+    echo "Stock screen restored."
 else
     echo "HelixScreen not detected. Skipping."
 fi
