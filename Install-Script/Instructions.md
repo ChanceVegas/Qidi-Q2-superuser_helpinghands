@@ -49,7 +49,7 @@ curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs
 
 After installation, download and import the Orca slicer presets:
 
-`https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install-Script/Printer%20Presets/Presets.md` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2FCamden-Winder%2FQidi-Q2-superuser%2Fblob%2Fmain%2FInstall-Script%2FPrinter%2520Presets%2FPresets.md")
+[Presets](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install-Script/Printer%20Presets/1.%20Presets.md)
 
 ---
 
