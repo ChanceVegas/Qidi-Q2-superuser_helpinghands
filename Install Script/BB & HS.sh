@@ -25,34 +25,34 @@ echo "Bunny Box is installing"
 # wget:
 #   -q  = quiet mode (no output except errors)
 #   -O - = write output to stdout so it can be piped into bash
-# wget does NOT hide download progress unless -q is used.
-wget -O - https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh | bash
+# Using -q removes the progress bar.
+wget -qO - https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh | bash
 
 echo "Helixscreen is installing"
 
 # Install Helixscreen
 # curl:
-#   -S = show errors if they occur
+#   -f = fail silently on server errors
 #   -L = follow redirects (required for GitHub raw URLs)
-# No -s flag is used, so curl will show a progress meter.
-curl -SL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh
+# No -s, no -S, no progress bar.
+curl -fL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh
 
 echo "Config changes are now being made"
 
 echo "gcode_macro.cfg is being changed"
-curl -SL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/gcode_macro.cfg \
+curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/gcode_macro.cfg \
   -o /home/mks/printer_data/config/gcode_macro.cfg
 
 echo "printer.cfg is being changed"
-curl -SL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/printer.cfg \
+curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/printer.cfg \
   -o /home/mks/printer_data/config/printer.cfg
 
 echo "KAMP settings are being adjusted"
-curl -SL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/KAMP_settings.cfg \
+curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/KAMP_settings.cfg \
   -o /home/mks/printer_data/config/KAMP_Settings.cfg
 
 echo "helixscreen settings are being adjusted"
-curl -SL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/helixscreen_settings.json \
+curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/helixscreen_settings.json \
   -o /home/mks/helixscreen/config/settings.json
 
 echo "Congrats, everything is now installed"
