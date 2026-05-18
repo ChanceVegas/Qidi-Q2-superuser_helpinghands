@@ -21,7 +21,7 @@ Alternatives: Mobilraker
 
 [Setting up Mobile Access](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Mobile%20Access/Mobile%20Access%20Tutorial.md)
 # Filament tracking
-I use Spoolman for this
+I use Spoolman for this, this will be especially useful when Bunny Box is installed on the Qidi Box later
 
 [Setting up Spoolman](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Spoolman/Spoolman%20Tutorial.md)
 # Printer Configs
