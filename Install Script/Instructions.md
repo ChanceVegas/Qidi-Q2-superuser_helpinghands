@@ -1,36 +1,111 @@
-There are **multiple** install scripts, ensure you run the right one
+# Install Scripts – Qidi Q2 Superuser
 
-All scripts will: back up the current config changes (this does not currently work), apply the config changes to make print start macro faster, lower bed all the way down for print end, and install the screw_tilt_adjust macro ([here is documentation for that](https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md))
+There are multiple install scripts in this repo. Make sure you run the one that matches what you want to install.
 
-To use the install script, ssh into your printer using `ssh mks@<printer.ip.address>` and enter `makerbase` as the password
+All scripts will:
 
-### Whole 9 yards
-This install will install Bunny Box, Helixscreen, and install my custom config changes for a better experience.
+- Back up your current config (backup system is being improved)
+- Apply faster PRINT_START and PRINT_END macros
+- Lower the bed fully at print end
+- Install the `screw_tilt_adjust` macro  
+  Documentation: `https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2Fbluedrool%2FQidi-Q2-tuning-tweaks-and-mods%2Fblob%2Fmain%2Fdocs%2Ftramming.md")
 
-Pros: [Bunny Box](https://github.com/Wazzup77/Bunny-Box) adds improved box functionality, specifically things like faster loading times and improved multicolor.
+To use any install script:
 
-[Helixscreen](https://github.com/prestonbrown/helixscreen) makes using the box with Bunny Box installed possible. It has low resource use and is very configurable. The install script ships with a base screen setup configured.
+1. SSH into your printer  
+   ```sh
+   ssh mks@<printer.ip.address>
+   ```
+2. Enter the password:  
+   ```sh
+   makerbase
+   ```
 
-Cons: Neither of these tools can currently be used without the other. Bunny Box has no plans to add stock screen support, but Helixscreen is working on stock box support.
+---
 
-To begin the installer, simply run
+## Whole 9 Yards Install
+
+**Installs:** Bunny Box + HelixScreen + my custom config changes  
+This is the full setup I run on my own Q2.
+
+### Pros
+
+- **Bunny Box** adds improved box functionality, faster loading, and better multicolor behavior.  
+  [https://github.com/Wazzup77/Bunny-Box](https://github.com/Wazzup77/Bunny-Box)  
+- **HelixScreen** replaces the stock UI and works seamlessly with Bunny Box.  
+  `https://github.com/prestonbrown/helixscreen` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2Fprestonbrown%2Fhelixscreen")  
+- Ships with a preconfigured screen layout.
+
+### Cons
+
+- Bunny Box currently requires HelixScreen.  
+- HelixScreen is working on stock screen support, but it’s not ready yet.
+
+### Install command
+
+```sh
+curl -sSL "https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/BB%20%26%20HS.sh" | sh
 ```
-curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/BB%20%26%20HS.sh | sh
+
+After installation, download and import the Orca slicer presets:
+
+`https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Printer%20Presets/Presets.md` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2FCamden-Winder%2FQidi-Q2-superuser%2Fblob%2Fmain%2FInstall%2520Script%2FPrinter%2520Presets%2FPresets.md")
+
+---
+
+## Just Faster
+
+**Installs:** Only the macro and config improvements  
+**Does NOT install:** Bunny Box or HelixScreen
+
+This is for users who want to keep the stock screen and avoid modifying the Qidi Box.  
+It’s the clean OEM+ setup — faster starts, cleaner macros, nothing extra.
+
+### Pros
+
+- Keeps the stock screen  
+- Faster PRINT_START  
+- Cleaner macros  
+- No UI changes  
+- No Bunny Box or HelixScreen required
+
+### Cons
+
+- You don’t get Bunny Box  
+- You don’t get HelixScreen
+
+### Install command
+
+```sh
+curl -sSL "https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/Cleaning/Install%20Script/No%20Box%20-%20No%20HS.sh" | sh
 ```
 
-After install, make sure to [download](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Printer%20Presets/Presets.md) and import the presets to Orca.
+---
 
-### Just faster
-This install is for non-box users who wish to retain the stock screen. Barebones changes that only involve the adjustments listed for all scripts.
+## Uninstall and Revert
 
-Pros: It is just an OEM+ Q2 setup
+If you want to remove everything and go back to your previous configuration, you can run the uninstaller.
 
-Cons: The only con you could say is that you don't have the box, and maybe that you don't have [Helixscreen](https://github.com/prestonbrown/helixscreen)
+This removes:
 
-### Uninstall and Revert
-So you didn't like any of the tools, or it wasn't working? That's okay you can uninstall **everything** and revert to whatever configurations you had before
+- Bunny Box  
+- HelixScreen  
+- All applied config changes  
+- And restores your backed‑up configs (if available)
 
-To begin the uninstaller, simply run
+### Uninstall command
+
+```sh
+curl -sSL "https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/uninstall.sh" | sh
 ```
-curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/uninstall.sh | sh
-```
+
+---
+
+## Notes
+
+- All scripts are designed for the Qidi Q2’s default user (`mks`).  
+- Do **not** run these scripts as root — it will break permissions.  
+- Backups are stored in your `printer_data/config` directory and `/home/mks/mudstockbackups`.  
+- More variants will be added as the project evolves.
+
+---
