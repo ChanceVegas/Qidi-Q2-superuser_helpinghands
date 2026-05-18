@@ -1,87 +1,63 @@
 #!/bin/sh
 
-echo "Starting universal uninstall / revert tool..."
-echo ""
+echo "Starting uninstall and restore process..."
 
-###############################################################################
-# 1. BACK UP CURRENT CONFIGS BEFORE ANYTHING IS REMOVED
-###############################################################################
-
-echo "Backing up current configs before uninstall..."
-
+echo "Backing up current configs..."
+# Create backup folder if missing. -p prevents errors if it already exists.
 mkdir -p /home/mks/mudinstallbackups
 
-# rsync:
-#   -a = archive mode (preserves structure, permissions, timestamps)
+# rsync -a preserves structure, permissions, timestamps, and handles nested folders.
 rsync -a /home/mks/printer_data/config/ /home/mks/mudinstallbackups/
-
 echo "Backup complete."
 echo ""
 
-###############################################################################
-# 2. UNINSTALL HELIXSCREEN (IF INSTALLED)
-###############################################################################
-
 echo "Checking for HelixScreen installation..."
-
+# HelixScreen installs into /home/mks/helixscreen, so checking that folder
 if [ -d "/home/mks/helixscreen" ]; then
     echo "HelixScreen detected. Uninstalling..."
 
-    # IMPORTANT:
-    # --remove = uninstall ONLY (no reinstall)
-    curl -fL https://releases.helixscreen.org/install.sh | sudo sh -s -- --remove
+    # curl -sSL:
+    #   -s  silent (no progress bar)
+    #   -S  show errors even when silent
+    #   -L  follow redirects (required for GitHub/raw URLs)
+    # --remove tells the HelixScreen installer to uninstall instead of install
+    curl -sSL https://releases.helixscreen.org/install.sh | sudo sh -s -- --remove
 
     echo "HelixScreen uninstall complete."
 else
-    echo "HelixScreen not detected. Skipping uninstall."
+    echo "HelixScreen not detected. Skipping."
 fi
 
 echo ""
 
-###############################################################################
-# 3. UNINSTALL BUNNY BOX (HAPPY-HARE FORK)
-###############################################################################
-
 echo "Checking for Bunny Box installation..."
-
+# Bunny Box installs into /home/mks/Happy-Hare
 if [ -d "/home/mks/Happy-Hare" ]; then
-    echo "Bunny Box detected at /home/mks/Happy-Hare"
-    echo "Attempting uninstall..."
+    echo "Bunny Box detected. Attempting uninstall..."
 
-    # IMPORTANT:
-    # Happy-Hare requires bash, not sh
+    # Bunny Box uses a bash-based installer, not sh.
+    # -d flag triggers uninstall mode.
     if [ -f "/home/mks/Happy-Hare/install.sh" ]; then
         sudo bash /home/mks/Happy-Hare/install.sh -d
         echo "Bunny Box uninstall complete."
     else
-        echo "ERROR: install.sh not found inside Happy-Hare."
-        echo "Skipping Bunny Box uninstall."
+        echo "install.sh not found inside Happy-Hare. Cannot uninstall."
     fi
 else
-    echo "Bunny Box not detected. Skipping uninstall."
+    echo "Bunny Box not detected. Skipping."
 fi
 
 echo ""
 
-###############################################################################
-# 4. RESTORE FULL CONFIG FOLDER FROM mudstockbackups
-###############################################################################
-
-echo "Restoring full config folder from mudstockbackups..."
-
-if [ ! -d "/home/mks/mudstockbackups" ]; then
-    echo "WARNING: No mudstockbackups folder found."
-    echo "Skipping config restore."
-else
+echo "Restoring configs from mudstockbackups..."
+# Restore only if the backup folder exists
+if [ -d "/home/mks/mudstockbackups" ]; then
+    # rsync -a restores the entire config folder exactly as it was
     rsync -a /home/mks/mudstockbackups/ /home/mks/printer_data/config/
     echo "Config restore complete."
+else
+    echo "No mudstockbackups folder found. Skipping restore."
 fi
 
 echo ""
-
-###############################################################################
-# 5. FINAL MESSAGE
-###############################################################################
-
-echo "Universal uninstall / revert complete."
-echo "Your system is now restored as much as possible."
+echo "Uninstall and restore process complete."
