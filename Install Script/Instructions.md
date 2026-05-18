@@ -27,7 +27,10 @@ Pros: It is just an OEM+ Q2 setup
 
 Cons: The only con you could say is that you don't have the box, and maybe that you don't have [Helixscreen](https://github.com/prestonbrown/helixscreen)
 
-To begin the installer, simply run
+### Uninstall and Revert
+So you didn't like any of the tools, or it wasn't working? That's okay you can uninstall **everything** and revert to whatever configurations you had before
+
+To begin the uninstaller, simply run
 ```
-curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/No%20Box%20-%20No%20HS.sh | sh
+curl -SL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/uninstall.sh | sh
 ```
