@@ -32,5 +32,5 @@ So you didn't like any of the tools, or it wasn't working? That's okay you can u
 
 To begin the uninstaller, simply run
 ```
-curl -SL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/uninstall.sh | sh
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/uninstall.sh | sh
 ```
