@@ -58,7 +58,7 @@ After installation, download and import the Orca slicer presets:
 **Installs:** Only the macro and config improvements  
 **Does NOT install:** Bunny Box or HelixScreen
 
-This is for users who want to keep the stock screen and avoid modifying the Qidi Box.  
+This is for users who want to keep the stock screen and avoid modifying (or don't have) the Qidi Box.  
 It’s the clean OEM+ setup — faster starts, cleaner macros, nothing extra.
 
 ### Pros
