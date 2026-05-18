@@ -1,15 +1,19 @@
 There are **multiple** install scripts, ensure you run the right one
 
-All scripts will: back up the current config changes, apply the config changes to make print start macro faster, lower bed all the way down for print end, and install the screw_tilt_adjust macro ([here is documentation for that](https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md))
+All scripts will: back up the current config changes (this does not currently work), apply the config changes to make print start macro faster, lower bed all the way down for print end, and install the screw_tilt_adjust macro ([here is documentation for that](https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md))
 
 To use the install script, ssh into your printer using `ssh mks@<printer.ip.address>` and enter `makerbase` as the password
 
 ### Whole 9 yards
 This install will install Bunny Box, Helixscreen, and install my custom config changes for a better experience.
 
-Pros and Cons: [Bunny Box](https://github.com/Wazzup77/Bunny-Box) adds improved box functionality, specifically things like faster loading times and improved multicolor.
+Pros: [Bunny Box](https://github.com/Wazzup77/Bunny-Box) adds improved box functionality, specifically things like faster loading times and improved multicolor.
 
 [Helixscreen](https://github.com/prestonbrown/helixscreen) makes using the box with Bunny Box installed possible. It has low resource use and is very configurable. The install script ships with a base screen setup configured.
+
+Cons: Neither of these tools can currently be used without the other. Bunny Box has no plans to add stock screen support, but Helixscreen is working on stock box support.
+
+To begin the installer, simply run
 ```
 curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/BB%20%26%20HS.sh | sh
 ```
@@ -18,6 +22,10 @@ After install, make sure to [download](https://github.com/Camden-Winder/Qidi-Q2-
 
 ### Just faster
 This install is for non-box users who wish to retain the stock screen. Barebones changes that only involve the adjustments listed for all scripts.
+
+Pros: It is just an OEM+ Q2 setup
+
+Cons: The only con you could say is that you don't have the box, and maybe that you don't have [Helixscreen](https://github.com/prestonbrown/helixscreen)
 ```
 curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/No%20Box%20-%20No%20HS.sh | sh
 ```
