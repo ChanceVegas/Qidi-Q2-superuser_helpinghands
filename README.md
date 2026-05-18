@@ -1,43 +1,97 @@
-Join the discord: https://discord.gg/aZGUk69Mp
+# Qidi Q2 Superuser Guide
 
-# What this guide includes
-In here I will list everything I am running (or have printed) on/for my printer and alternatives I have heard of. This includes octoapp, octoeverywhere, and spoolman, which are all running remotely so I don't waste printer ram space.
-# Chapter 0.5 - True Beginers
-If you are a true begginer this will help you get the slicer set up, provide a link to an unboxxing video, and general other "my first 3D printer" things
+Welcome — this repo is everything I use to turn a stock Qidi Q2 into a faster, cleaner, and more capable printer.
 
-[Setup for beginer](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Beginers/First%20Setup.md)
-# Chapter 1 - Plugins
-### Remote Access
-I like checking on my printer and hate giving my information to china, that is why I chose octoeverywhere
-Edit: I can no longer recomend Octoeverywhere as the service has been unusable for me. There is no way to get past the upgrade to premium screen. Once I setup remote access with tailscale I will be adding documentation for that.
+Join the Discord: https://discord.gg/aZGUk69Mp
 
-Alternatives: Obico
+---
 
-[Setting up remote access](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Remote%20Access/Remote%20Access%20Tutorial.md)
-### Mobile Access
-I choose to use OctoApp, which works with IOS and andriod.
+# What’s in this guide
 
-Alternatives: Mobilraker
+This repo covers:
 
-[Setting up Mobile Access](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Mobile%20Access/Mobile%20Access%20Tutorial.md)
-# Filament tracking
-I use Spoolman for this, this will be especially useful when Bunny Box is installed on the Qidi Box later
+- Beginner‑friendly first‑time setup  
+- Remote and mobile access options  
+- Filament tracking with Spoolman  
+- Faster, cleaner printer macros  
+- One‑line install and uninstall tools  
+- Recommended printables for the Q2  
 
-[Setting up Spoolman](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Spoolman/Spoolman%20Tutorial.md)
+Everything here is optional — take what you want, skip what you don’t.
+
+---
+
+# Chapter 0 – True Beginners
+
+If this is your first 3D printer (or your first Klipper printer), start here.  
+This section walks you through slicer setup, basic usage, and the “what do I do first?” questions.
+
+[Beginner Setup](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Beginers/First%20Setup.md)
+
+---
+
+# Chapter 1 – Plugins
+
+## Remote Access
+
+I used to recommend OctoEverywhere, but recent reliability issues and aggressive paywalling make it hard to suggest now.
+
+I’m moving toward Tailscale‑based remote access. Once I’ve fully tested it on the Q2, I’ll publish a full guide.
+
+Alternatives worth considering: **Obico**
+
+[Remote Access Tutorial](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Remote%20Access/Remote%20Access%20Tutorial.md)
+
+---
+
+## Mobile Access
+
+I use **OctoApp**, which works well on both iOS and Android.
+
+Alternative: **Mobilraker**
+
+[Mobile Access Tutorial](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Mobile%20Access/Mobile%20Access%20Tutorial.md)
+
+---
+
+# Filament Tracking
+
+I use **Spoolman** for filament tracking.  
+This becomes especially useful once Bunny Box is installed on the Qidi Box.
+
+[Spoolman Tutorial](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Plugins/Spoolman/Spoolman%20Tutorial.md)
+
+---
+
 # Printer Configs
-Out of the box the printer ships with a really bloated print preparation macro that takes a lot of time. All the documentation I found is listed in [This folder](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/My%20Resources.md)
 
-## Basic Config adjustments
-All macro adjustments are now done with my [one line install tool](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Instructions.md)
+The Q2 ships with a very heavy PRINT_START macro and a lot of vendor‑specific glue code.  
+This repo documents what those macros do and provides faster, cleaner replacements.
 
-[Filament Configs](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/Filamet%20Configurations.md)
+All macro adjustments are now handled by my one‑line install tool:
+
+[Install Script Instructions](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Instructions.md)
+
+Additional config resources:
+
+- [My Resources](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/My%20Resources.md)  
+- [Filament Configurations](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/Filamet%20Configurations.md)
+
+---
 
 # Printables
-Now that everything is fast lets print some things to make our printer better
+
+Once your Q2 is running smoothly, here are prints that actually improve the machine.
 
 [Printables](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Printables/Prints.md)
 
-# You're done
-Congragulations, you've finished. If you can help format this better it would be greatly appreciated. Thanks. Let me know if you have anything you think should be added.
+---
+
+# You’re Done
+
+Congratulations — you’ve reached the end of the guide.
+
+If you have ideas, corrections, or additional tips for the Q2, feel free to open an issue or PR.  
+I’m always improving this setup and appreciate good suggestions.
 
 [Thanks](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Thanks.md)
