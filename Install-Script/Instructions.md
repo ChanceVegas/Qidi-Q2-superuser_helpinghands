@@ -8,7 +8,7 @@ All scripts will:
 - Apply faster PRINT_START and PRINT_END macros
 - Lower the bed fully at print end
 - Install the `screw_tilt_adjust` macro  
-  Documentation: `https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2Fbluedrool%2FQidi-Q2-tuning-tweaks-and-mods%2Fblob%2Fmain%2Fdocs%2Ftramming.md")
+  Documentation: https://github.com/bluedrool/Qidi-Q2-tuning-tweaks-and-mods/blob/main/docs/tramming.md
 
 To use any install script:
 
@@ -44,12 +44,12 @@ This is the full setup I run on my own Q2.
 ### Install command
 
 ```sh
-curl -sSL "https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/BB%20%26%20HS.sh" | sh
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install-Script/BunnyBox%26HelixScreen.sh | sh
 ```
 
 After installation, download and import the Orca slicer presets:
 
-`https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install%20Script/Printer%20Presets/Presets.md` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2FCamden-Winder%2FQidi-Q2-superuser%2Fblob%2Fmain%2FInstall%2520Script%2FPrinter%2520Presets%2FPresets.md")
+`https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install-Script/Printer%20Presets/Presets.md` [(github.com in Bing)](https://www.bing.com/search?q="https%3A%2F%2Fgithub.com%2FCamden-Winder%2FQidi-Q2-superuser%2Fblob%2Fmain%2FInstall-Script%2FPrinter%2520Presets%2FPresets.md")
 
 ---
 
@@ -77,7 +77,7 @@ It’s the clean OEM+ setup — faster starts, cleaner macros, nothing extra.
 ### Install command
 
 ```sh
-curl -sSL "https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/Cleaning/Install%20Script/No%20Box%20-%20No%20HS.sh" | sh
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install-Script/JustFasterPrinter.sh | sh
 ```
 
 ---
@@ -96,7 +96,7 @@ This removes:
 ### Uninstall command
 
 ```sh
-curl -sSL "https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/uninstall.sh" | sh
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install-Script/uninstall.sh | sh
 ```
 
 ---
