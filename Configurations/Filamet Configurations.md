@@ -1,16 +1,49 @@
-## Filament Configurations
-This will allow adding more vendors, as well as rearanging the screen so you can move the filaments you use the most to the top.
+# Filament Configurations
 
-The best way to explain this is just to link it to [this video](https://www.youtube.com/watch?v=MS9I-vYy4Fs)
+**What this does**  
+This file explains how to reorder filament entries so you can add vendors and move the filaments you use most to the top of the printer menu.
 
-Now, to change the order
-1. Copy every filament over into a text editor (I use sublime, but notepad would work as well)
-2. Copy and paste the ones you want into a new notepad. Put the notepad windows right next to each other so you can look at both at the same time.
-3. Change the number in [filax]. So if I copied over a filament and it is the first filament in my new config file. Lets say it was ABS (which is fila5).
-I would copy it over first and change the 5 to a 1 (fila1). Now when selecting filament from the printer screen ABS will be first.
+**Quick video walkthrough**  
+[Short demo video](https://www.youtube.com/watch?v=MS9I-vYy4Fs)
+
+---
+
+## How it works
+Each filament entry uses a `filax` index (for example `fila1`, `fila2`, etc.). The printer displays filaments in ascending index order, so changing the index reorders the list.
+
+---
+
+## Step‑by‑step: Reorder filaments
+1. **Copy** all filament entries into a text editor. (Any plain text editor works.)
+2. **Create** a new file and paste only the filaments you want to keep or reorder.
+3. **Renumber** the `filax` index so the filament you want first is `fila1`, the next is `fila2`, and so on.
+   - **Example**: If ABS is currently `fila5` and you want it first, change `fila5` → `fila1`.
+4. **Save** the new config and upload it to your printer following your usual process.
+
+---
 
 ## Example
-For example here is my [filament config file](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/filament%20configs.txt)
+
+```text
+; original
+filax=5 ; ABS
+
+; changed to be first
+filax=1 ; ABS
+```
+
+For a full example config, see my repository: [filament config file](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/filament%20configs.txt)
+
+---
+
+## Troubleshooting
+- **Duplicates**: Make sure no two filaments share the same `filax` number.
+- **Gaps**: Gaps (e.g., `fila1` then `fila3`) usually work but renumbering consecutively keeps things predictable.
+- **Backup**: Always keep a copy of the original config before editing.
+
+---
 
 ## Thanks
-Thank you to jarvis5178 who found this and posted it in the Qidi Discord
+Thanks to **jarvis5178** for finding this and posting it in the Qidi Discord.
+
+---
