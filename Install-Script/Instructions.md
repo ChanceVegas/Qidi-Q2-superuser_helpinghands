@@ -28,6 +28,8 @@ To use any install script:
 **Installs:** Bunny Box + HelixScreen + my custom config changes  
 This is the full setup I run on my own Q2.
 
+**Compatibility** Q2 with Qid Box, doesn't work with non-qidi box printers. 
+
 ### Pros
 
 - **Bunny Box** adds improved box functionality, faster loading, and better multicolor behavior.  
@@ -56,7 +58,8 @@ After installation, download and import the Orca slicer presets:
 ## Just Faster
 
 **Installs:** Only the macro and config improvements  
-**Does NOT install:** Bunny Box or HelixScreen
+
+**Compatibility** Q2's without the box, doesn't work on printers with the box.
 
 This is for users who want to keep the stock screen and avoid modifying (or don't have) the Qidi Box.  
 It’s the clean OEM+ setup — faster starts, cleaner macros, nothing extra.
