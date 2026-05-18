@@ -1,58 +1,58 @@
 #!/bin/sh
 
-echo "Backing up current configs before install..."
-
-# Create the backup directory if it does not already exist.
-# -p prevents errors if the folder already exists.
+echo "Backing up current configs..."
+# Create backup folder if missing. -p avoids errors if it already exists.
 mkdir -p /home/mks/mudstockbackups
 
-# Copy the entire config folder into the backup folder.
-# rsync is used because:
-#   - It safely overwrites existing files
-#   - It preserves directory structure and permissions
-#   - It handles nested folders correctly
-# Flags:
-#   -a = archive mode (preserves structure, permissions, timestamps)
-# No verbose flags are used to avoid confusing inexperienced users.
+# rsync -a preserves structure, permissions, timestamps, and handles nested folders.
 rsync -a /home/mks/printer_data/config/ /home/mks/mudstockbackups/
-
 echo "Backup complete."
 echo ""
 
-echo "Bunny Box is installing"
-
-# Install Bunny Box
-# wget:
-#   -q  = quiet mode (no output except errors)
-#   -O - = write output to stdout so it can be piped into bash
-# Using -q removes the progress bar.
+echo "Installing Bunny Box..."
+# wget -qO - downloads quietly and pipes directly into bash.
 wget -qO - https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh | bash
+echo "Bunny Box installed."
+echo ""
 
-echo "Helixscreen is installing"
+echo "Installing HelixScreen..."
+# curl -sSL:
+#   -s  silent (no progress meter)
+#   -S  show errors even when silent
+#   -L  follow redirects (required for GitHub raw URLs)
+curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh
+echo "HelixScreen installed."
+echo ""
 
-# Install Helixscreen
-# curl:
-#   -f = fail silently on server errors
-#   -L = follow redirects (required for GitHub raw URLs)
-# No -s, no -S, no progress bar.
-curl -fL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh
-
-echo "Config changes are now being made"
-
-echo "gcode_macro.cfg is being changed"
-curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/gcode_macro.cfg \
+echo "Updating gcode_macro.cfg..."
+# Pulls your combined BunnyBox + HelixScreen macro file.
+# -sSL ensures silent mode, error visibility, and redirect handling.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/gcode_macro(BunnyBox%26HelixScreen).cfg \
   -o /home/mks/printer_data/config/gcode_macro.cfg
+echo "gcode_macro.cfg updated."
+echo ""
 
-echo "printer.cfg is being changed"
-curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/printer.cfg \
+echo "Updating printer.cfg..."
+# Replaces the printer.cfg with your unified BunnyBox + HelixScreen version.
+# This ensures all required includes, macros, and settings are aligned.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/printer(BunnyBox%26HelixScreen).cfg \
   -o /home/mks/printer_data/config/printer.cfg
+echo "printer.cfg updated."
+echo ""
 
-echo "KAMP settings are being adjusted"
-curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/KAMP_settings.cfg \
-  -o /home/mks/printer_data/config/KAMP_Settings.cfg
+echo "Applying KAMP settings..."
+# Installs your tuned KAMP configuration.
+# This ensures KAMP behavior matches your macros and printer.cfg.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/KAMP_settings.cfg \
+  -o /home/mks/printer_data/config/KAMP_settings.cfg
+echo "KAMP settings applied."
+echo ""
 
-echo "helixscreen settings are being adjusted"
-curl -fL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/helixscreen_settings.json \
+echo "Applying HelixScreen settings..."
+# Updates HelixScreen’s JSON config so it matches your UI and macro layout.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/helixscreen_settings.json \
   -o /home/mks/helixscreen/config/settings.json
+echo "HelixScreen settings applied."
+echo ""
 
-echo "Congrats, everything is now installed"
+echo "Install complete."
