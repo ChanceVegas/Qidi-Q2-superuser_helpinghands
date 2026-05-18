@@ -1,0 +1,58 @@
+#!/bin/sh
+
+echo "Backing up current configs..."
+# Create backup folder if missing. -p avoids errors if it already exists.
+mkdir -p /home/mks/mudstockbackups
+
+# rsync -a preserves structure, permissions, timestamps, and handles nested folders.
+rsync -a /home/mks/printer_data/config/ /home/mks/mudstockbackups/
+echo "Backup complete."
+echo ""
+
+echo "Installing Bunny Box..."
+# wget -qO - downloads quietly and pipes directly into bash.
+wget -qO - https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh | bash
+echo "Bunny Box installed."
+echo ""
+
+echo "Installing HelixScreen..."
+# curl -sSL:
+#   -s  silent (no progress meter)
+#   -S  show errors even when silent
+#   -L  follow redirects (required for GitHub raw URLs)
+curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh
+echo "HelixScreen installed."
+echo ""
+
+echo "Updating gcode_macro.cfg..."
+# Pulls your combined BunnyBox + HelixScreen macro file.
+# -sSL ensures silent mode, error visibility, and redirect handling.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/gcode_macro(BunnyBox%26HelixScreen).cfg \
+  -o /home/mks/printer_data/config/gcode_macro.cfg
+echo "gcode_macro.cfg updated."
+echo ""
+
+echo "Updating printer.cfg..."
+# Replaces the printer.cfg with your unified BunnyBox + HelixScreen version.
+# This ensures all required includes, macros, and settings are aligned.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/printer(BunnyBox%26HelixScreen).cfg \
+  -o /home/mks/printer_data/config/printer.cfg
+echo "printer.cfg updated."
+echo ""
+
+echo "Applying KAMP settings..."
+# Installs your tuned KAMP configuration.
+# This ensures KAMP behavior matches your macros and printer.cfg.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/KAMP_settings.cfg \
+  -o /home/mks/printer_data/config/KAMP_settings.cfg
+echo "KAMP settings applied."
+echo ""
+
+echo "Applying HelixScreen settings..."
+# Updates HelixScreen’s JSON config so it matches your UI and macro layout.
+curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install%20Script/helixscreen_settings.json \
+  -o /home/mks/helixscreen/config/settings.json
+echo "HelixScreen settings applied."
+echo ""
+
+echo "Install complete."
