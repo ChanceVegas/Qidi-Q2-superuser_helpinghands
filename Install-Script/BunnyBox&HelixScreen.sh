@@ -77,7 +77,7 @@ echo "Unified configs installed."
 banner "5/7  Installing box_drying.cfg (restores spool rotation during drying)"
 fetch "${REPO_BASE}/box_drying.cfg" \
       "${CONFIG_DIR}/box_drying.cfg"
-echo "box_drying.cfg installed."
+fetch "${REPO_BASE}/gcode_macro-BunnyBox%26HelixScreen.cfg" \
 
 # ---------- 6. KAMP settings -----------------------------------------
 banner "6/7  Applying KAMP settings"
