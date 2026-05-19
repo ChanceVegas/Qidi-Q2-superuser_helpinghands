@@ -285,6 +285,34 @@ revert_to_backup() {
         info "BunnyBox not present, skipping"
     fi
 
+    # Purge every install-managed path before restoring from backup.
+    # Without this, rsync -a (no --delete) leaves the existing mmu/
+    # directory in place, so the next Happy Hare install detects it
+    # as a "previous installation" even after a "full revert".
+    banner "Purging install-managed paths before restore"
+    local purge_paths=(
+        "${CONFIG_DIR}/mmu"
+        "${CONFIG_DIR}/bunnybox_macros.cfg"
+        "${CONFIG_DIR}/box_drying.cfg"
+        "${CONFIG_DIR}/mmu_parameters.cfg"
+        "${CONFIG_DIR}/mmu_macro_vars.cfg"
+        "${CONFIG_DIR}/mmu_hardware.cfg"
+        "${CONFIG_DIR}/mmu.cfg"
+        "${HOME}/klipper/klippy/extras/mmu.py"
+        "${HOME}/klipper/klippy/extras/mmu_machine.py"
+        "${HOME}/klipper/klippy/extras/mmu_leds.py"
+        "${HOME}/moonraker/moonraker/components/mmu_server.py"
+    )
+    for p in "${purge_paths[@]}"; do
+        if [ -e "$p" ]; then
+            sudo rm -rf "$p" && info "Purged $p" || warn "Could not purge $p"
+        fi
+    done
+    # Stray mmu*.cfg files that aren't in the explicit list above
+    find "$CONFIG_DIR" -maxdepth 1 -name 'mmu*.cfg' -type f -print -delete 2>/dev/null | \
+        while read -r f; do info "Purged $f"; done
+    ok "Purge complete"
+
     info "Restoring configs from ${BACKUP_ROOT}..."
     local restore_ok=false
     if [ -d "$BACKUP_ROOT" ]; then
