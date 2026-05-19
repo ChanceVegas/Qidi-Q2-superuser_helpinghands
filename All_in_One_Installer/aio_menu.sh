@@ -93,6 +93,30 @@ bunnybox_installed() {
     [ -d "${CONFIG_DIR}/mmu" ] && [ -f "${CONFIG_DIR}/mmu/base/mmu_machine.cfg" ]
 }
 
+# Scan every path the BunnyBox installer's own detection logic looks at,
+# plus a few extras. Returns 0 if any artifact is present (and prints
+# what was found), 1 if the slate is truly clean.
+detect_bunnybox_artifacts() {
+    local found=0
+    local paths=(
+        "$HAPPY_HARE_DIR"
+        "${CONFIG_DIR}/mmu"
+        "${CONFIG_DIR}/bunnybox_macros.cfg"
+        "${CONFIG_DIR}/box_drying.cfg"
+        "${HOME}/klipper/klippy/extras/mmu.py"
+        "${HOME}/klipper/klippy/extras/mmu_machine.py"
+        "${HOME}/klipper/klippy/extras/mmu_leds.py"
+        "${HOME}/moonraker/moonraker/components/mmu_server.py"
+    )
+    for p in "${paths[@]}"; do
+        if [ -e "$p" ]; then
+            warn "Stale artifact present: $p"
+            found=1
+        fi
+    done
+    return $((1 - found))
+}
+
 helixscreen_installed() {
     [ -d "$HELIX_DIR" ] || systemctl is-enabled helixscreen &>/dev/null
 }
@@ -376,6 +400,28 @@ install_bunnybox_helixscreen() {
     info "Install log: ${INSTALL_LOG}"
 
     {
+        banner "Pre-install: scanning for stale BunnyBox artifacts"
+        if detect_bunnybox_artifacts; then
+            warn "Stale BunnyBox artifacts found (listed above)."
+            warn "Their presence will make BunnyBox's installer think an"
+            warn "install already exists and prompt you for Reinstall / Revert."
+            if confirm "Remove all stale artifacts now for a clean install?"; then
+                rm -rf "${CONFIG_DIR}/mmu"
+                sudo rm -rf "$HAPPY_HARE_DIR"
+                rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
+                rm -f "${CONFIG_DIR}/box_drying.cfg"
+                for f in mmu.py mmu_machine.py mmu_leds.py; do
+                    rm -f "${HOME}/klipper/klippy/extras/${f}"
+                done
+                rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
+                ok "Stale artifacts removed - BunnyBox installer will run as a fresh install"
+            else
+                info "Leaving artifacts in place - BunnyBox will offer its own Reinstall/Revert menu"
+            fi
+        else
+            ok "No stale artifacts - clean slate"
+        fi
+
         banner "Installing BunnyBox (Happy Hare MMU)"
         set +e
         wget -qO - "$BUNNYBOX_INSTALLER" | bash
@@ -384,7 +430,22 @@ install_bunnybox_helixscreen() {
         if [ $bb_exit -ne 0 ]; then
             warn "BunnyBox installer exited ${bb_exit} (may be normal for reinstalls)"
         fi
-        ok "BunnyBox install step complete"
+
+        # Detect cancellation: BunnyBox exits 0 if the user picks
+        # "Cancel" from its sub-menu, so an exit-code check alone
+        # would silently continue. Confirm by file detection.
+        if ! bunnybox_installed; then
+            warn "BunnyBox did not finish installing - no mmu/base/mmu_machine.cfg on disk."
+            warn "This usually means you picked 'Cancel' or 'Revert to stock' in BunnyBox's menu."
+            if confirm "Abort the rest of the AIO install (recommended)?"; then
+                info "Install aborted. Returning to main menu."
+                exit 99  # caught after the tee pipeline below
+            else
+                warn "Continuing - HelixScreen will install but MMU won't work."
+            fi
+        else
+            ok "BunnyBox install step complete"
+        fi
 
         banner "Installing HelixScreen"
         set +e
@@ -478,6 +539,13 @@ install_bunnybox_helixscreen() {
 
         verify_bunnybox_install
     } 2>&1 | tee -a "$INSTALL_LOG"
+
+    # If the install block exited 99, the user aborted after BunnyBox
+    # was cancelled. Bail before we print "Install complete".
+    if [ "${PIPESTATUS[0]}" = "99" ]; then
+        press_enter
+        return 1
+    fi
 
     banner "Install complete"
     cat <<EOF
