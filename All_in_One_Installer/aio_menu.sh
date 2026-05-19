@@ -29,11 +29,24 @@ BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/
 
 # ---------- paths ----------------------------------------------------
 CONFIG_DIR='/home/mks/printer_data/config'
-MMU_PARAMS="${CONFIG_DIR}/mmu/base/mmu_parameters.cfg"
 BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
+
+# Locate mmu_parameters.cfg at runtime - Happy Hare puts it directly
+# under ${CONFIG_DIR}/mmu/ in current versions, but older installs and
+# the original handoff doc reference ${CONFIG_DIR}/mmu/base/. Check both.
+find_mmu_params() {
+    for p in "${CONFIG_DIR}/mmu/mmu_parameters.cfg" \
+             "${CONFIG_DIR}/mmu/base/mmu_parameters.cfg"; do
+        if [ -f "$p" ]; then
+            echo "$p"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # ---------- ANSI colors ----------------------------------------------
 if [ -t 1 ]; then
@@ -90,7 +103,11 @@ fetch() {
 }
 
 bunnybox_installed() {
-    [ -d "${CONFIG_DIR}/mmu" ] && [ -f "${CONFIG_DIR}/mmu/base/mmu_machine.cfg" ]
+    # Look for mmu_parameters.cfg anywhere under ${CONFIG_DIR}/mmu/ so
+    # we work with both flat (current) and base/ (legacy) layouts.
+    [ -d "${CONFIG_DIR}/mmu" ] && \
+    [ -n "$(find "${CONFIG_DIR}/mmu" -maxdepth 3 -name 'mmu_parameters.cfg' \
+            -print -quit 2>/dev/null)" ]
 }
 
 # Scan every path the BunnyBox installer's own detection logic looks at,
@@ -383,16 +400,18 @@ verify_bunnybox_install() {
         fi
     done
 
-    if [ -f "$MMU_PARAMS" ]; then
-        if grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$MMU_PARAMS" && \
-           grep -q '^heater_vent_interval: 5' "$MMU_PARAMS"; then
-            ok "mmu_parameters.cfg (vent macro configured)"
+    local mmu_params
+    mmu_params="$(find_mmu_params)" || mmu_params=""
+    if [ -n "$mmu_params" ] && [ -f "$mmu_params" ]; then
+        if grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$mmu_params" && \
+           grep -q '^heater_vent_interval: 5' "$mmu_params"; then
+            ok "mmu_parameters.cfg (vent macro configured) at $mmu_params"
         else
             warn "mmu_parameters.cfg - vent macro not set correctly"
             all_ok=false
         fi
     else
-        err "mmu_parameters.cfg missing"
+        err "mmu_parameters.cfg missing under ${CONFIG_DIR}/mmu/"
         all_ok=false
     fi
 
@@ -544,24 +563,27 @@ install_bunnybox_helixscreen() {
         ok "box_drying.cfg installed"
 
         banner "Configuring Happy Hare Environment Manager"
-        if [ -f "$MMU_PARAMS" ]; then
+        local mmu_params
+        mmu_params="$(find_mmu_params)" || mmu_params=""
+        if [ -n "$mmu_params" ] && [ -f "$mmu_params" ]; then
+            info "mmu_parameters.cfg found at: $mmu_params"
             local changed=0
-            if grep -q '^heater_vent_macro:' "$MMU_PARAMS"; then
-                if ! grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$MMU_PARAMS"; then
-                    sed -i 's/^heater_vent_macro:.*/heater_vent_macro: _QIDI_BOX_VENT/' "$MMU_PARAMS"
+            if grep -q '^heater_vent_macro:' "$mmu_params"; then
+                if ! grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$mmu_params"; then
+                    sed -i 's/^heater_vent_macro:.*/heater_vent_macro: _QIDI_BOX_VENT/' "$mmu_params"
                     changed=1
                 fi
             else
-                echo "heater_vent_macro: _QIDI_BOX_VENT" >> "$MMU_PARAMS"
+                echo "heater_vent_macro: _QIDI_BOX_VENT" >> "$mmu_params"
                 changed=1
             fi
-            if grep -q '^heater_vent_interval:' "$MMU_PARAMS"; then
-                if ! grep -q '^heater_vent_interval: 5' "$MMU_PARAMS"; then
-                    sed -i 's/^heater_vent_interval:.*/heater_vent_interval: 5/' "$MMU_PARAMS"
+            if grep -q '^heater_vent_interval:' "$mmu_params"; then
+                if ! grep -q '^heater_vent_interval: 5' "$mmu_params"; then
+                    sed -i 's/^heater_vent_interval:.*/heater_vent_interval: 5/' "$mmu_params"
                     changed=1
                 fi
             else
-                echo "heater_vent_interval: 5" >> "$MMU_PARAMS"
+                echo "heater_vent_interval: 5" >> "$mmu_params"
                 changed=1
             fi
             if [ $changed -eq 1 ]; then
@@ -570,7 +592,7 @@ install_bunnybox_helixscreen() {
                 ok "mmu_parameters.cfg already correct"
             fi
         else
-            warn "${MMU_PARAMS} not found"
+            warn "mmu_parameters.cfg not found under ${CONFIG_DIR}/mmu/"
             warn "Manually set heater_vent_macro: _QIDI_BOX_VENT and heater_vent_interval: 5"
         fi
 
