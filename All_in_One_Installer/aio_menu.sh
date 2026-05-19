@@ -432,20 +432,17 @@ install_bunnybox_helixscreen() {
         fi
 
         # Detect cancellation: BunnyBox exits 0 if the user picks
-        # "Cancel" from its sub-menu, so an exit-code check alone
-        # would silently continue. Confirm by file detection.
+        # "Cancel" or "Revert to stock" from its sub-menu, so an
+        # exit-code check alone would silently continue. Confirm by
+        # file detection - and if BunnyBox didn't land, bail straight
+        # back to the AIO main menu (no follow-up prompt).
         if ! bunnybox_installed; then
             warn "BunnyBox did not finish installing - no mmu/base/mmu_machine.cfg on disk."
-            warn "This usually means you picked 'Cancel' or 'Revert to stock' in BunnyBox's menu."
-            if confirm "Abort the rest of the AIO install (recommended)?"; then
-                info "Install aborted. Returning to main menu."
-                exit 99  # caught after the tee pipeline below
-            else
-                warn "Continuing - HelixScreen will install but MMU won't work."
-            fi
-        else
-            ok "BunnyBox install step complete"
+            warn "Detected as user cancellation from BunnyBox's menu."
+            info "Aborting install. Returning to the AIO main menu."
+            exit 99  # caught after the tee pipeline below
         fi
+        ok "BunnyBox install step complete"
 
         banner "Installing HelixScreen"
         set +e
