@@ -33,7 +33,7 @@ MMU_PARAMS="${CONFIG_DIR}/mmu/base/mmu_parameters.cfg"
 BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
-HAPPY_HARE_DIR="${HOME}/happy_hare"
+HAPPY_HARE_DIR='/home/mks/Happy-Hare'
 
 # ---------- ANSI colors ----------------------------------------------
 if [ -t 1 ]; then
@@ -158,22 +158,23 @@ uninstall_bunnybox() {
 
     if [ -f "${HAPPY_HARE_DIR}/install.sh" ]; then
         info "Running Happy Hare uninstaller..."
-        bash "${HAPPY_HARE_DIR}/install.sh" -u || \
+        sudo bash "${HAPPY_HARE_DIR}/install.sh" -d || \
             warn "Happy Hare uninstaller returned non-zero"
-    else
-        info "Happy Hare uninstaller not found, removing manually..."
-        rm -rf "${CONFIG_DIR}/mmu"
-        rm -rf "${HAPPY_HARE_DIR}"
-        for f in mmu.py mmu_machine.py mmu_leds.py; do
-            rm -f "${HOME}/klipper/klippy/extras/${f}"
-        done
-        rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
     fi
 
+    # Belt-and-braces: even if the uninstaller ran, force-remove the dir
+    # so no trace is left.
+    info "Removing leftover files..."
+    rm -rf "${CONFIG_DIR}/mmu"
+    sudo rm -rf "${HAPPY_HARE_DIR}"
+    for f in mmu.py mmu_machine.py mmu_leds.py; do
+        rm -f "${HOME}/klipper/klippy/extras/${f}"
+    done
+    rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
     rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
     rm -f "${CONFIG_DIR}/box_drying.cfg"
 
-    ok "BunnyBox / Happy Hare uninstalled"
+    ok "BunnyBox / Happy Hare uninstalled (directory removed)"
     warn "printer.cfg may still reference [include mmu/base/*.cfg]"
     warn "and [include bunnybox_macros.cfg]. Klipper will error until you"
     warn "restore stock printer.cfg from backup or reinstall."
@@ -239,6 +240,7 @@ revert_to_backup() {
     fi
 
     info "Restoring configs from ${BACKUP_ROOT}..."
+    local restore_ok=false
     if [ -d "$BACKUP_ROOT" ]; then
         # Prefer the one-time _FIRST_STOCK snapshot (closest to factory).
         # Fall back to the OLDEST timestamped backup - the first one
@@ -262,10 +264,31 @@ revert_to_backup() {
                 warn "No timestamped backups found - restoring from flat ${BACKUP_ROOT}/"
             fi
         fi
-        rsync -a --no-owner --no-group "${src}/" "${CONFIG_DIR}/"
-        ok "Config restore complete"
+        if rsync -a --no-owner --no-group "${src}/" "${CONFIG_DIR}/"; then
+            ok "Config restore complete"
+            restore_ok=true
+        else
+            err "Restore failed"
+        fi
     else
         warn "No ${BACKUP_ROOT} folder found - nothing to restore"
+    fi
+
+    # Final cleanup: remove every directory the toolkit ever created so
+    # the Q2 is left in a clean state. Only run if the restore actually
+    # succeeded (or there was nothing to restore from) - we don't want
+    # to nuke the only safety net after a failed restore.
+    if [ "$restore_ok" = true ] || [ ! -d "$BACKUP_ROOT" ]; then
+        banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
+        for d in "$HAPPY_HARE_DIR" "$HELIX_DIR" \
+                 /home/mks/mudstockbackups /home/mks/mudinstallbackups; do
+            if [ -d "$d" ]; then
+                sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
+            fi
+        done
+    else
+        warn "Restore failed - leaving backup directories in place for recovery."
+        info "Inspect: ${BACKUP_ROOT}/ and /home/mks/mudinstallbackups/"
     fi
 
     banner "Revert complete"
@@ -338,6 +361,17 @@ install_bunnybox_helixscreen() {
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
 
+    # Preserve the stock Qidi box.cfg so the Qidi UI's "Control Box"
+    # panel keeps working after Happy Hare strips its include.
+    local BOX_CFG_PRESERVED=""
+    if [ -f "${CONFIG_DIR}/box.cfg" ]; then
+        BOX_CFG_PRESERVED="${BACKUP_DIR}/box.cfg.preserved"
+        cp "${CONFIG_DIR}/box.cfg" "$BOX_CFG_PRESERVED"
+        ok "Preserved stock box.cfg → ${BOX_CFG_PRESERVED}"
+    else
+        warn "No stock box.cfg found - Qidi Control Box UI will not be restored"
+    fi
+
     local INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
     info "Install log: ${INSTALL_LOG}"
 
@@ -373,6 +407,27 @@ install_bunnybox_helixscreen() {
             sed -i 's|\[include \./KAMP/KAMP_Settings\.cfg\]|[include KAMP_Settings.cfg]|' \
                 "${CONFIG_DIR}/printer.cfg"
             ok "Fixed KAMP include path"
+        fi
+
+        # Restore the Qidi Control Box UI: put box.cfg back and
+        # re-enable its include line in printer.cfg.
+        if [ -n "$BOX_CFG_PRESERVED" ] && [ -f "$BOX_CFG_PRESERVED" ]; then
+            cp "$BOX_CFG_PRESERVED" "${CONFIG_DIR}/box.cfg"
+            ok "Restored stock box.cfg"
+        fi
+        if [ -f "${CONFIG_DIR}/box.cfg" ]; then
+            if grep -q '^# *\[include box\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
+                sed -i 's|^# *\[include box\.cfg\].*|[include box.cfg]  # Re-enabled by AIO for Qidi Control Box UI|' \
+                    "${CONFIG_DIR}/printer.cfg"
+                ok "Re-enabled [include box.cfg] for Qidi Control Box UI"
+            elif ! grep -q '^\[include box\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
+                # No include line at all - add one alongside box_drying.cfg
+                sed -i '/^\[include box_drying\.cfg\]/i\[include box.cfg]  # Re-enabled by AIO for Qidi Control Box UI' \
+                    "${CONFIG_DIR}/printer.cfg"
+                ok "Added [include box.cfg] for Qidi Control Box UI"
+            fi
+        else
+            warn "box.cfg not on disk - Qidi Control Box UI will not work"
         fi
         ok "Unified configs installed"
 
