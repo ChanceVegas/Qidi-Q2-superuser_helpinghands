@@ -131,13 +131,25 @@ do_backup() {
     banner "Backing up current configs"
     BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$BACKUP_DIR"
-    if rsync -a "${CONFIG_DIR}/" "${BACKUP_DIR}/"; then
-        ok "Backup written to ${BACKUP_DIR}"
-        return 0
-    else
+    if ! rsync -a "${CONFIG_DIR}/" "${BACKUP_DIR}/"; then
         err "Backup failed"
         return 1
     fi
+    ok "Backup written to ${BACKUP_DIR}"
+
+    # One-time permanent snapshot of the very first observed state. This
+    # is what "Revert to Backup" should restore - assuming the user ran
+    # the AIO before tinkering, it's their true stock. Once written, it
+    # is never overwritten.
+    if [ ! -d "${BACKUP_ROOT}/_FIRST_STOCK" ]; then
+        mkdir -p "${BACKUP_ROOT}/_FIRST_STOCK"
+        if rsync -a "${CONFIG_DIR}/" "${BACKUP_ROOT}/_FIRST_STOCK/"; then
+            ok "First-run stock snapshot saved to ${BACKUP_ROOT}/_FIRST_STOCK"
+        else
+            warn "Could not write _FIRST_STOCK snapshot (revert will fall back to oldest timestamped backup)"
+        fi
+    fi
+    return 0
 }
 
 # ---------- uninstall primitives -------------------------------------
@@ -228,11 +240,28 @@ revert_to_backup() {
 
     info "Restoring configs from ${BACKUP_ROOT}..."
     if [ -d "$BACKUP_ROOT" ]; then
-        # Pick newest timestamped backup if present, else flat root.
-        local latest
-        latest=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n 1)
-        local src="${latest:-$BACKUP_ROOT}"
-        info "Restoring from: $src"
+        # Prefer the one-time _FIRST_STOCK snapshot (closest to factory).
+        # Fall back to the OLDEST timestamped backup - the first one
+        # written is closer to stock than the newest, which captured
+        # whatever broken state was on disk right before the last action.
+        local src=""
+        if [ -d "${BACKUP_ROOT}/_FIRST_STOCK" ] && \
+           [ -n "$(ls -A "${BACKUP_ROOT}/_FIRST_STOCK" 2>/dev/null)" ]; then
+            src="${BACKUP_ROOT}/_FIRST_STOCK"
+            info "Using first-run stock snapshot: $src"
+        else
+            local oldest
+            oldest=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d \
+                     -not -name '_FIRST_STOCK' 2>/dev/null | sort | head -n 1)
+            if [ -n "$oldest" ]; then
+                src="$oldest"
+                warn "_FIRST_STOCK missing - falling back to OLDEST timestamped backup"
+                info "Restoring from: $src"
+            else
+                src="$BACKUP_ROOT"
+                warn "No timestamped backups found - restoring from flat ${BACKUP_ROOT}/"
+            fi
+        fi
         rsync -a --no-owner --no-group "${src}/" "${CONFIG_DIR}/"
         ok "Config restore complete"
     else
