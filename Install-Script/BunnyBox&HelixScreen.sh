@@ -1,17 +1,13 @@
 #!/bin/bash
 # =====================================================================
 # BunnyBox & HelixScreen installer for Qidi Q2
-# (with box_drying.cfg fix for spool rotation during filament drying)
 #
-# Features:
-#   * Detects existing BunnyBox / HelixScreen installs and offers an
-#     interactive menu: reinstall, clean reinstall, individual or
-#     combined uninstall, or cancel
-#   * read </dev/tty so the interactive prompt works when piped from curl
-#   * curl --fail on every download - 404s abort instead of writing
-#     HTML error pages over your config files
-#   * Timestamped backups - re-running never destroys the original
-#   * box_drying.cfg restores Qidi Box spool rotation during drying
+# Fully automated: installs BunnyBox (Happy Hare MMU), HelixScreen,
+# unified configs, box_drying.cfg (spool rotation during drying),
+# and patches mmu_parameters.cfg to enable the Happy Hare Environment
+# Manager's vent/rotation callback.
+#
+# Detects existing installs and offers interactive reinstall / uninstall.
 # =====================================================================
 
 set -euo pipefail
@@ -23,6 +19,7 @@ HELIXSCREEN_INSTALLER='https://raw.githubusercontent.com/prestonbrown/helixscree
 
 # ---------- paths ----------------------------------------------------
 CONFIG_DIR='/home/mks/printer_data/config'
+MMU_PARAMS="${CONFIG_DIR}/mmu/base/mmu_parameters.cfg"
 BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
@@ -95,7 +92,7 @@ uninstall_helixscreen() {
     echo "HelixScreen uninstalled."
 }
 
-# ---------- backup (used by both install and uninstall) ---------------
+# ---------- backup ---------------------------------------------------
 do_backup() {
     banner "Backing up current configs"
     BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d_%H%M%S)"
@@ -128,7 +125,6 @@ show_menu() {
     echo "    1) Reinstall over existing  (keeps current MMU calibration)"
     echo "    2) Clean reinstall          (uninstall all, then reinstall)"
 
-    # Show individual uninstall options only for what's detected
     if [ "$has_bb" = true ] && [ "$has_hs" = true ]; then
         echo "    3) Uninstall BunnyBox only"
         echo "    4) Uninstall HelixScreen only"
@@ -148,7 +144,6 @@ show_menu() {
     local choice
     read -r choice </dev/tty
 
-    # Map choices based on what's installed
     if [ "$has_bb" = true ] && [ "$has_hs" = true ]; then
         case "$choice" in
             1) ACTION="reinstall" ;;
@@ -189,13 +184,11 @@ else
     echo "  No existing installation detected. Proceeding with fresh install."
 fi
 
-# -- handle the chosen action -----------------------------------------
 case "$ACTION" in
     cancel)
         echo "  Cancelled. Nothing changed."
         exit 0
         ;;
-
     uninstall_bb)
         do_backup
         uninstall_bunnybox
@@ -204,7 +197,6 @@ case "$ACTION" in
         echo "  Backup at: ${BACKUP_DIR}"
         exit 0
         ;;
-
     uninstall_hs)
         do_backup
         uninstall_helixscreen
@@ -213,7 +205,6 @@ case "$ACTION" in
         echo "  Backup at: ${BACKUP_DIR}"
         exit 0
         ;;
-
     uninstall_both)
         do_backup
         bunnybox_installed  && uninstall_bunnybox
@@ -223,23 +214,20 @@ case "$ACTION" in
         echo "  Restore stock configs from: ${BACKUP_DIR}"
         exit 0
         ;;
-
     clean_reinstall)
         do_backup
         bunnybox_installed  && uninstall_bunnybox
         helixscreen_installed && uninstall_helixscreen
         echo "  Uninstall complete. Proceeding with fresh install..."
         ;;
-
     reinstall)
         echo "  Reinstalling over existing installation."
         ;;
-
     fresh_install)
         ;;
 esac
 
-# -- backup (for install paths that didn't already backup) ------------
+# -- backup (for paths that didn't already backup) --------------------
 if [ -z "${BACKUP_DIR:-}" ]; then
     do_backup
 fi
@@ -262,11 +250,52 @@ fetch "${REPO_BASE}/printer(BunnyBox%26HelixScreen).cfg" \
       "${CONFIG_DIR}/printer.cfg"
 echo "Unified configs installed."
 
+# -- fix KAMP include path -------------------------------------------
+# The unified printer.cfg may reference ./KAMP/KAMP_Settings.cfg which
+# double-nests the path when KAMP_Settings.cfg has its own ./KAMP/ includes.
+# Fix it to reference KAMP_Settings.cfg from the config root.
+if grep -q '\[include \./KAMP/KAMP_Settings\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
+    sed -i 's|\[include \./KAMP/KAMP_Settings\.cfg\]|[include KAMP_Settings.cfg]|' \
+        "${CONFIG_DIR}/printer.cfg"
+    echo "Fixed KAMP include path in printer.cfg."
+fi
+
 # -- box_drying.cfg ---------------------------------------------------
-banner "Installing box_drying.cfg (restores spool rotation during drying)"
+banner "Installing box_drying.cfg (spool rotation during drying)"
 fetch "${REPO_BASE}/box_drying.cfg" \
       "${CONFIG_DIR}/box_drying.cfg"
 echo "box_drying.cfg installed."
+
+# -- patch mmu_parameters.cfg for Environment Manager -----------------
+# BunnyBox's installer creates mmu_parameters.cfg with:
+#   heater_vent_macro: _MMU_VENT       (stock placeholder)
+#   heater_vent_interval: 0            (disabled)
+# We need:
+#   heater_vent_macro: _QIDI_BOX_VENT  (our rotation macro in box_drying.cfg)
+#   heater_vent_interval: 5            (call it every 5 min during drying)
+banner "Configuring Happy Hare Environment Manager"
+if [ -f "$MMU_PARAMS" ]; then
+    # heater_vent_macro: point to our rotation callback
+    if grep -q '^heater_vent_macro:' "$MMU_PARAMS"; then
+        sed -i 's/^heater_vent_macro:.*/heater_vent_macro: _QIDI_BOX_VENT/' "$MMU_PARAMS"
+    else
+        echo "heater_vent_macro: _QIDI_BOX_VENT" >> "$MMU_PARAMS"
+    fi
+
+    # heater_vent_interval: enable at 5 minutes
+    if grep -q '^heater_vent_interval:' "$MMU_PARAMS"; then
+        sed -i 's/^heater_vent_interval:.*/heater_vent_interval: 5/' "$MMU_PARAMS"
+    else
+        echo "heater_vent_interval: 5" >> "$MMU_PARAMS"
+    fi
+
+    echo "mmu_parameters.cfg patched:"
+    echo "  heater_vent_macro:    _QIDI_BOX_VENT"
+    echo "  heater_vent_interval: 5 minutes"
+else
+    echo "WARNING: ${MMU_PARAMS} not found. Skipping Environment Manager config."
+    echo "You will need to manually set heater_vent_macro and heater_vent_interval."
+fi
 
 # -- KAMP settings ----------------------------------------------------
 banner "Applying KAMP settings"
@@ -285,16 +314,27 @@ echo "HelixScreen settings applied."
 banner "Install complete"
 cat <<EOF
 
+All configuration changes have been applied automatically:
+  - printer.cfg:        unified BunnyBox + HelixScreen config
+  - gcode_macro.cfg:    unified macro config
+  - box_drying.cfg:     spool rotation during drying via Happy Hare
+  - mmu_parameters.cfg: Environment Manager vent callback enabled
+  - KAMP include path:  fixed to prevent double-nesting
+
 Next steps:
-  1. Run FIRMWARE_RESTART (from the Klipper console or HelixScreen).
+  1. Run FIRMWARE_RESTART (from the Klipper console or HelixScreen)
   2. Verify Klipper starts cleanly:
         systemctl status klipper
-  3. Smoke-test spool rotation during drying:
-        BOX_DRY TEMP=45 TIME=10
-     Watch the Klipper console — within ~5 minutes you should see:
-        "Box drying detected (target 45C). Rotating spools every 5.0 min."
-     and hear the gear steppers tick.
-  4. To stop drying at any time:
+  3. If this is a clean install, calibrate MMU gear steppers:
+        MMU_CALIBRATE_GEAR GATE=0 LENGTH=100
+     (mark filament, measure actual travel, then re-run with MEASURED=<mm>)
+  4. Start a drying cycle:
+        BOX_DRY TEMP=45 TIME=60
+     or:
+        MMU_HEATER DRY=1
+     Check status with:
+        MMU_HEATER
+  5. Stop drying:
         BOX_DRY_STOP
 
 Your prior config is preserved at:
