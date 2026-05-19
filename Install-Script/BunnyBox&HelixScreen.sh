@@ -85,10 +85,10 @@ uninstall_bunnybox() {
 uninstall_helixscreen() {
     banner "Uninstalling HelixScreen"
 
-    systemctl stop helixscreen 2>/dev/null || true
-    systemctl disable helixscreen 2>/dev/null || true
-    rm -f /etc/systemd/system/helixscreen.service
-    systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl stop helixscreen 2>/dev/null || true
+    sudo systemctl disable helixscreen 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/helixscreen.service
+    sudo systemctl daemon-reload 2>/dev/null || true
     rm -rf "$HELIX_DIR"
 
     echo "HelixScreen uninstalled."
