@@ -208,13 +208,35 @@ uninstall_bunnybox() {
 uninstall_helixscreen() {
     banner "Uninstalling HelixScreen"
 
-    sudo systemctl stop helixscreen 2>/dev/null || true
-    sudo systemctl disable helixscreen 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/helixscreen.service
-    sudo systemctl daemon-reload 2>/dev/null || true
-    rm -rf "$HELIX_DIR"
+    # Try HelixScreen's own remove path first so its installer can do
+    # whatever cleanup it expects (releases.helixscreen.org honors
+    # --remove). Fall back to manual systemd teardown if that fails.
+    if curl --fail --silent --head --max-time 5 "$HELIX_UNINSTALLER" >/dev/null 2>&1; then
+        info "Running official HelixScreen uninstaller..."
+        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --remove || \
+            warn "HelixScreen uninstaller returned non-zero"
+    fi
 
-    ok "HelixScreen uninstalled"
+    sudo systemctl stop helixscreen     2>/dev/null || true
+    sudo systemctl disable helixscreen  2>/dev/null || true
+    sudo systemctl mask helixscreen     2>/dev/null || true
+    sudo rm -f /etc/systemd/system/helixscreen.service
+    sudo systemctl daemon-reload        2>/dev/null || true
+    sudo rm -rf "$HELIX_DIR"
+
+    # Re-enable the Qidi stock display services. Without this, removing
+    # HelixScreen leaves the printer with NO running display - the user
+    # is forced to recover by hand. Done unconditionally even if the
+    # service files look healthy; unmask+enable+restart is idempotent.
+    info "Re-enabling Qidi stock display services..."
+    sudo systemctl unmask  lightdm           2>/dev/null || true
+    sudo systemctl enable  lightdm           2>/dev/null || true
+    sudo systemctl restart lightdm           2>/dev/null || true
+    sudo systemctl unmask  makerbase-client  2>/dev/null || true
+    sudo systemctl enable  makerbase-client  2>/dev/null || true
+    sudo systemctl restart makerbase-client  2>/dev/null || true
+
+    ok "HelixScreen uninstalled, stock display services re-enabled"
 }
 
 # Full upstream-style revert: re-enables lightdm + makerbase-client and
