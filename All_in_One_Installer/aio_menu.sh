@@ -34,6 +34,36 @@ HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
 
+# Drop idle_fan_shutdown.cfg into CONFIG_DIR and patch printer.cfg so
+# it's included. Idempotent - safe to re-run. Comments out any
+# pre-existing [idle_timeout] section in printer.cfg first because
+# Klipper errors on duplicate sections.
+install_idle_fan_shutdown() {
+    banner "Installing idle_fan_shutdown.cfg (10m idle → fans off, temp-gated)"
+    fetch "${REPO_BASE}/idle_fan_shutdown.cfg" \
+          "${CONFIG_DIR}/idle_fan_shutdown.cfg" || return 1
+
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    if [ -f "$pcfg" ]; then
+        # Neutralise any existing [idle_timeout] - our include owns it.
+        if grep -q '^\[idle_timeout\]' "$pcfg"; then
+            sed -i 's/^\[idle_timeout\]/#[idle_timeout] # disabled by AIO - see idle_fan_shutdown.cfg/' "$pcfg"
+            ok "Disabled pre-existing [idle_timeout] in printer.cfg"
+        fi
+        if ! grep -q '^\[include idle_fan_shutdown\.cfg\]' "$pcfg"; then
+            # Insert near the other [include ...] lines at the top.
+            sed -i '0,/^\[include /{ /^\[include / i\
+[include idle_fan_shutdown.cfg]  # 10m idle fan/heater shutdown (AIO)
+}' "$pcfg"
+            ok "Added [include idle_fan_shutdown.cfg] to printer.cfg"
+        else
+            ok "[include idle_fan_shutdown.cfg] already present"
+        fi
+    else
+        warn "printer.cfg not found - idle_fan_shutdown.cfg installed but not included"
+    fi
+}
+
 # Locate mmu_parameters.cfg at runtime - Happy Hare puts it directly
 # under ${CONFIG_DIR}/mmu/ in current versions, but older installs and
 # the original handoff doc reference ${CONFIG_DIR}/mmu/base/. Check both.
@@ -71,6 +101,7 @@ purge_happy_hare_all() {
     # Config files Happy Hare / BunnyBox may have written at config root
     rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
     rm -f "${CONFIG_DIR}/box_drying.cfg"
+    rm -f "${CONFIG_DIR}/idle_fan_shutdown.cfg"
     rm -f "${CONFIG_DIR}/mmu_parameters.cfg"
     rm -f "${CONFIG_DIR}/mmu_macro_vars.cfg"
     rm -f "${CONFIG_DIR}/mmu_hardware.cfg"
@@ -608,6 +639,8 @@ install_bunnybox_helixscreen() {
               "${HELIX_CONFIG_DIR}/settings.json" || return 1
         ok "HelixScreen settings applied"
 
+        install_idle_fan_shutdown || warn "idle_fan_shutdown setup had problems (see above)"
+
         verify_bunnybox_install
     } 2>&1 | tee -a "$INSTALL_LOG"
 
@@ -662,6 +695,8 @@ install_just_faster() {
     fetch "${REPO_BASE}/KAMP_settings.cfg" \
           "${CONFIG_DIR}/KAMP/KAMP_Settings.cfg" || { press_enter; return 1; }
     ok "KAMP settings applied"
+
+    install_idle_fan_shutdown || warn "idle_fan_shutdown setup had problems (see above)"
 
     verify_jfp_install
 
