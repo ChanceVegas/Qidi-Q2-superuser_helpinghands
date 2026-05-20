@@ -301,11 +301,28 @@ purge_happy_hare_all() {
     rm -f "${CONFIG_DIR}/mmu.cfg"
     find "$CONFIG_DIR" -maxdepth 1 -name 'mmu*.cfg' -type f -delete 2>/dev/null || true
 
-    # Klipper + Moonraker extras
+    # Klipper + Moonraker extras.
+    # Happy Hare v2 placed individual files at the extras root; v3 installs a
+    # package directory (extras/mmu/) and adds helper symlinks alongside it
+    # (mmu_espooler.py, mmu_servo.py, mmu_led_effect.py). Both sets are
+    # removed here. Leaving them causes the mmu package to load at Klipper
+    # startup and register gcode commands (CLEAR_TOOLCHANGE_STATE, etc.) that
+    # box_extras.so also registers → "already registered" crash.
     for f in mmu.py mmu_machine.py mmu_leds.py mmu_sensors.py mmu_encoder.py; do
         rm -f "${HOME}/klipper/klippy/extras/${f}"
     done
+    sudo rm -rf "${HOME}/klipper/klippy/extras/mmu"
+    find "${HOME}/klipper/klippy/extras" -maxdepth 1 -name 'mmu_*.py' \
+        -delete 2>/dev/null || true
     rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
+
+    # Root-level KAMP files installed by the AIO BunnyBox flow. Removing them
+    # lets fix_printer_cfg_after_uninstall() comment out their [include] lines
+    # so Klipper can start cleanly. The KAMP/ subdir (BunnyBox's copy) was
+    # already removed above.
+    for f in KAMP_Settings.cfg Adaptive_Meshing.cfg Line_Purge.cfg Smart_Park.cfg; do
+        rm -f "${CONFIG_DIR}/${f}"
+    done
 
     # Moonraker update_manager / mmu sections - delete the section and
     # its body up to the next section header or EOF.
