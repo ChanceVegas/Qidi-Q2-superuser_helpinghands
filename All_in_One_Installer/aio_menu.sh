@@ -718,6 +718,7 @@ run_all_verifiers() {
         info "HELIX_QIDI_BOX_WRITE not enabled"
     fi
     find_duplicate_macros
+    fix_known_klipper_conflicts
     press_enter
 }
 
@@ -772,6 +773,72 @@ find_duplicate_macros() {
 
     rm -f "$tmp"
     return 1
+}
+
+# Remove or neutralise config files known to cause "gcode command X already
+# registered" errors when BunnyBox + HelixScreen is installed alongside the
+# Qidi stock config files. Idempotent — safe to run multiple times.
+fix_known_klipper_conflicts() {
+    banner "Resolving known Klipper macro conflicts"
+
+    # 1. KAMP case-sensitivity: Linux treats KAMP_settings.cfg (lowercase-s)
+    #    and KAMP_Settings.cfg (uppercase-S) as different files. Both define
+    #    [gcode_macro _KAMP_Settings], causing a duplicate error. We install
+    #    to uppercase-S; delete the stale lowercase copy.
+    if [ -f "${CONFIG_DIR}/KAMP_settings.cfg" ] && \
+       [ -f "${CONFIG_DIR}/KAMP_Settings.cfg" ]; then
+        rm -f "${CONFIG_DIR}/KAMP_settings.cfg"
+        ok "Removed stale KAMP_settings.cfg (case-duplicate of KAMP_Settings.cfg)"
+    fi
+
+    # 2. Adaptive_Mesh.cfg is the old KAMP override that redefined
+    #    [gcode_macro BED_MESH_CALIBRATE]. KAMP_Settings.cfg is the current
+    #    replacement — delete the old file.
+    if [ -f "${CONFIG_DIR}/Adaptive_Mesh.cfg" ]; then
+        rm -f "${CONFIG_DIR}/Adaptive_Mesh.cfg"
+        ok "Removed stale Adaptive_Mesh.cfg (superseded by KAMP_Settings.cfg)"
+    fi
+
+    # 3. box1.cfg — Qidi stock file (included via box.cfg) that defines T0-T3
+    #    and UNLOAD_T0-T3. Happy Hare owns these tool-change macros while
+    #    BunnyBox is active; the box1.cfg definitions cause "already registered"
+    #    errors. Comment out only the conflicting sections; the ## AIO_DISABLED:
+    #    prefix makes them easy to restore by hand if BunnyBox is ever removed.
+    local box1="${CONFIG_DIR}/box1.cfg"
+    if [ -f "$box1" ]; then
+        local box1_changed=0
+        for macro in T0 T1 T2 T3 UNLOAD_T0 UNLOAD_T1 UNLOAD_T2 UNLOAD_T3; do
+            if grep -q "^\[gcode_macro ${macro}\]" "$box1" 2>/dev/null; then
+                awk -v target="[gcode_macro ${macro}]" '
+                    /^\[/ { in_section = ($0 == target) }
+                    { if (in_section) print "## AIO_DISABLED: " $0; else print $0 }
+                ' "$box1" > "${box1}.tmp" && mv "${box1}.tmp" "$box1"
+                box1_changed=1
+            fi
+        done
+        if [ $box1_changed -eq 1 ]; then
+            ok "Commented out conflicting tool-change macros in box1.cfg"
+            info "(Happy Hare owns T0-T3 and UNLOAD_T0-T3 while BunnyBox is active)"
+        else
+            ok "box1.cfg: no conflicting tool-change macros found"
+        fi
+    fi
+
+    # 4. EXTRUSION_AND_FLUSH: defined in both our gcode_macro.cfg and
+    #    bunnybox_macros.cfg. BunnyBox's definition is canonical; comment out
+    #    ours so only one definition is active.
+    local gcfg="${CONFIG_DIR}/gcode_macro.cfg"
+    if [ -f "$gcfg" ] && [ -f "${CONFIG_DIR}/bunnybox_macros.cfg" ] && \
+       grep -q '^\[gcode_macro EXTRUSION_AND_FLUSH\]' "$gcfg" 2>/dev/null && \
+       grep -q '^\[gcode_macro EXTRUSION_AND_FLUSH\]' "${CONFIG_DIR}/bunnybox_macros.cfg" 2>/dev/null; then
+        awk -v target="[gcode_macro EXTRUSION_AND_FLUSH]" '
+            /^\[/ { in_section = ($0 == target) }
+            { if (in_section) print "## AIO_DISABLED: " $0; else print $0 }
+        ' "$gcfg" > "${gcfg}.tmp" && mv "${gcfg}.tmp" "$gcfg"
+        ok "Disabled duplicate EXTRUSION_AND_FLUSH in gcode_macro.cfg (bunnybox_macros.cfg owns it)"
+    fi
+
+    ok "Conflict resolution complete — FIRMWARE_RESTART to apply"
 }
 
 # ---------- install: BunnyBox & HelixScreen --------------------------
@@ -955,6 +1022,8 @@ install_bunnybox_helixscreen() {
         fetch "${REPO_BASE}/helixscreen_settings.json" \
               "${HELIX_CONFIG_DIR}/settings.json" || return 1
         ok "HelixScreen settings applied"
+
+        fix_known_klipper_conflicts
 
         install_qidi_box_write
 
