@@ -263,6 +263,22 @@ find_mmu_params() {
     return 1
 }
 
+# Reverse the ## AIO_DISABLED: comments that fix_known_klipper_conflicts()
+# applied to Qidi stock files (box1.cfg, gcode_macro.cfg) when BunnyBox was
+# installed. Called during uninstall so Qidi's native T0-T3/UNLOAD_T0-T3 and
+# EXTRUSION_AND_FLUSH macros are active again once Happy Hare is removed.
+restore_aio_disabled_macros() {
+    local changed=0
+    for cfg in "${CONFIG_DIR}/box1.cfg" "${CONFIG_DIR}/gcode_macro.cfg"; do
+        if [ -f "$cfg" ] && grep -q '^## AIO_DISABLED: ' "$cfg" 2>/dev/null; then
+            sed -i 's/^## AIO_DISABLED: //' "$cfg"
+            ok "Restored AIO_DISABLED macros in $(basename "$cfg")"
+            changed=1
+        fi
+    done
+    [ "$changed" -eq 0 ] && info "No AIO_DISABLED macros to restore"
+}
+
 # Exhaustively remove every Happy Hare / BunnyBox footprint we know
 # about, regardless of whether the upstream uninstallers ran. Called
 # from revert_to_backup() and uninstall_bunnybox().
@@ -336,6 +352,8 @@ purge_happy_hare_all() {
         sed -i '/^\[mmu_server\]$/d' "$moon_conf"
         ok "Cleaned Happy Hare sections from moonraker.conf (backup: ${moon_conf}.aio-bak)"
     fi
+
+    restore_aio_disabled_macros
 
     ok "Happy Hare / BunnyBox purge complete"
 }
