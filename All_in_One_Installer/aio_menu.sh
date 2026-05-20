@@ -48,6 +48,57 @@ find_mmu_params() {
     return 1
 }
 
+# Exhaustively remove every Happy Hare / BunnyBox footprint we know
+# about, regardless of whether the upstream uninstallers ran. Called
+# from revert_to_backup() and uninstall_bunnybox().
+purge_happy_hare_all() {
+    info "Purging all Happy Hare / BunnyBox artifacts..."
+
+    # Run upstream uninstallers if they're present. Don't trust their
+    # exit codes - we'll force-clean afterwards regardless.
+    if [ -f "${HAPPY_HARE_DIR}/install.sh" ]; then
+        info "Running Happy Hare uninstaller (-d)..."
+        sudo bash "${HAPPY_HARE_DIR}/install.sh" -d 2>/dev/null || true
+        info "Running Happy Hare uninstaller (-u)..."
+        sudo bash "${HAPPY_HARE_DIR}/install.sh" -u 2>/dev/null || true
+    fi
+
+    # Happy Hare source tree + config dirs (incl. its own dated backups)
+    sudo rm -rf "$HAPPY_HARE_DIR"
+    sudo rm -rf "${CONFIG_DIR}/mmu"
+    sudo rm -rf "${CONFIG_DIR}"/mmu-* 2>/dev/null || true
+
+    # Config files Happy Hare / BunnyBox may have written at config root
+    rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
+    rm -f "${CONFIG_DIR}/box_drying.cfg"
+    rm -f "${CONFIG_DIR}/mmu_parameters.cfg"
+    rm -f "${CONFIG_DIR}/mmu_macro_vars.cfg"
+    rm -f "${CONFIG_DIR}/mmu_hardware.cfg"
+    rm -f "${CONFIG_DIR}/mmu.cfg"
+    find "$CONFIG_DIR" -maxdepth 1 -name 'mmu*.cfg' -type f -delete 2>/dev/null || true
+
+    # Klipper + Moonraker extras
+    for f in mmu.py mmu_machine.py mmu_leds.py mmu_sensors.py mmu_encoder.py; do
+        rm -f "${HOME}/klipper/klippy/extras/${f}"
+    done
+    rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
+
+    # Moonraker update_manager / mmu sections - delete the section and
+    # its body up to the next section header or EOF.
+    local moon_conf="${HOME}/printer_data/config/moonraker.conf"
+    if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
+        cp "$moon_conf" "${moon_conf}.aio-bak"
+        sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
+        # Above leaves the next [section] header intact but blanks the body.
+        # Then drop the offending headers themselves:
+        sed -i '/^\[update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\]$/d' "$moon_conf"
+        sed -i '/^\[mmu_server\]$/d' "$moon_conf"
+        ok "Cleaned Happy Hare sections from moonraker.conf (backup: ${moon_conf}.aio-bak)"
+    fi
+
+    ok "Happy Hare / BunnyBox purge complete"
+}
+
 # ---------- ANSI colors ----------------------------------------------
 if [ -t 1 ]; then
     C_RESET=$'\033[0m'
@@ -196,28 +247,10 @@ do_backup() {
 # ---------- uninstall primitives -------------------------------------
 uninstall_bunnybox() {
     banner "Uninstalling BunnyBox / Happy Hare"
-
-    if [ -f "${HAPPY_HARE_DIR}/install.sh" ]; then
-        info "Running Happy Hare uninstaller..."
-        sudo bash "${HAPPY_HARE_DIR}/install.sh" -d || \
-            warn "Happy Hare uninstaller returned non-zero"
-    fi
-
-    # Belt-and-braces: even if the uninstaller ran, force-remove the dir
-    # so no trace is left.
-    info "Removing leftover files..."
-    rm -rf "${CONFIG_DIR}/mmu"
-    sudo rm -rf "${HAPPY_HARE_DIR}"
-    for f in mmu.py mmu_machine.py mmu_leds.py; do
-        rm -f "${HOME}/klipper/klippy/extras/${f}"
-    done
-    rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
-    rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
-    rm -f "${CONFIG_DIR}/box_drying.cfg"
-
-    ok "BunnyBox / Happy Hare uninstalled (directory removed)"
-    warn "printer.cfg may still reference [include mmu/base/*.cfg]"
-    warn "and [include bunnybox_macros.cfg]. Klipper will error until you"
+    purge_happy_hare_all
+    ok "BunnyBox / Happy Hare uninstalled"
+    warn "printer.cfg may still reference [include mmu/*.cfg] and"
+    warn "[include bunnybox_macros.cfg]. Klipper will error until you"
     warn "restore stock printer.cfg from backup or reinstall."
     info "Backups: ${BACKUP_ROOT}/"
 }
@@ -285,50 +318,19 @@ revert_to_backup() {
         info "HelixScreen not present, skipping"
     fi
 
-    if [ -d "/home/mks/Happy-Hare" ] || bunnybox_installed; then
+    if [ -d "$HAPPY_HARE_DIR" ] || bunnybox_installed; then
         info "BunnyBox / Happy Hare detected - removing..."
+        # Run BunnyBox's own --revert first (it knows how to back out
+        # its own moonraker/printer.cfg edits cleanly).
         wget -qO - "$BUNNYBOX_UNINSTALLER" | bash -s -- --revert || \
             warn "BunnyBox revert returned non-zero"
-
-        if [ -f "/home/mks/Happy-Hare/install.sh" ]; then
-            sudo bash /home/mks/Happy-Hare/install.sh -d || \
-                warn "Happy Hare -d returned non-zero"
-        fi
-        # Belt-and-braces cleanup
-        rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
-        rm -f "${CONFIG_DIR}/box_drying.cfg"
-        ok "BunnyBox removed"
+        # Then exhaustive purge - removes Happy Hare source, mmu/,
+        # mmu-<date>/ dated backups Happy Hare itself creates, klipper
+        # extras, moonraker components and moonraker.conf sections.
+        purge_happy_hare_all
     else
-        info "BunnyBox not present, skipping"
+        info "BunnyBox / Happy Hare not present, skipping"
     fi
-
-    # Purge every install-managed path before restoring from backup.
-    # Without this, rsync -a (no --delete) leaves the existing mmu/
-    # directory in place, so the next Happy Hare install detects it
-    # as a "previous installation" even after a "full revert".
-    banner "Purging install-managed paths before restore"
-    local purge_paths=(
-        "${CONFIG_DIR}/mmu"
-        "${CONFIG_DIR}/bunnybox_macros.cfg"
-        "${CONFIG_DIR}/box_drying.cfg"
-        "${CONFIG_DIR}/mmu_parameters.cfg"
-        "${CONFIG_DIR}/mmu_macro_vars.cfg"
-        "${CONFIG_DIR}/mmu_hardware.cfg"
-        "${CONFIG_DIR}/mmu.cfg"
-        "${HOME}/klipper/klippy/extras/mmu.py"
-        "${HOME}/klipper/klippy/extras/mmu_machine.py"
-        "${HOME}/klipper/klippy/extras/mmu_leds.py"
-        "${HOME}/moonraker/moonraker/components/mmu_server.py"
-    )
-    for p in "${purge_paths[@]}"; do
-        if [ -e "$p" ]; then
-            sudo rm -rf "$p" && info "Purged $p" || warn "Could not purge $p"
-        fi
-    done
-    # Stray mmu*.cfg files that aren't in the explicit list above
-    find "$CONFIG_DIR" -maxdepth 1 -name 'mmu*.cfg' -type f -print -delete 2>/dev/null | \
-        while read -r f; do info "Purged $f"; done
-    ok "Purge complete"
 
     info "Restoring configs from ${BACKUP_ROOT}..."
     local restore_ok=false
