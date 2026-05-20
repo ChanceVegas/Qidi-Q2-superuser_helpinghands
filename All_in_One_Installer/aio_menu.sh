@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC4'
+AIO_VERSION='RC5'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -89,10 +89,15 @@ verify_qidi_box_helixscreen() {
         ok "box.cfg includes [box_stepper] sections"
     fi
 
-    if [ -f "$pcfg" ] && ! grep -q '^\[include box\.cfg\]' "$pcfg" 2>/dev/null; then
-        warn "printer.cfg does not [include box.cfg] - Qidi Box objects will not load"
+    # With BunnyBox installed, [include box.cfg] MUST be inactive — loading
+    # box_extras.so alongside Happy Hare's mmu package crashes Klipper
+    # (both register CLEAR_TOOLCHANGE_STATE). Revert to Backup brings the
+    # include back when BunnyBox is removed.
+    if [ -f "$pcfg" ] && grep -q '^\[include box\.cfg\]' "$pcfg" 2>/dev/null; then
+        warn "printer.cfg has [include box.cfg] active — this WILL crash Klipper while BunnyBox is installed"
+        warn "  → re-run option 1 (Install BunnyBox & HelixScreen) to disable it, or edit printer.cfg by hand"
     elif [ -f "$pcfg" ]; then
-        ok "printer.cfg includes box.cfg"
+        ok "printer.cfg [include box.cfg] is disabled (correct under BunnyBox)"
     fi
 
     if [ ! -f "$fila_list" ]; then
@@ -941,15 +946,15 @@ install_bunnybox_helixscreen() {
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
 
-    # Preserve the stock Qidi box.cfg so the Qidi UI's "Control Box"
-    # panel keeps working after Happy Hare strips its include.
+    # Preserve the stock Qidi box.cfg in BACKUP_DIR so Revert to Backup has
+    # a copy if _FIRST_STOCK is ever missing. The include line in printer.cfg
+    # stays commented out (the BunnyBox template ships it that way) — see
+    # the note below in the printer.cfg fetch block.
     local BOX_CFG_PRESERVED=""
     if [ -f "${CONFIG_DIR}/box.cfg" ]; then
         BOX_CFG_PRESERVED="${BACKUP_DIR}/box.cfg.preserved"
         cp "${CONFIG_DIR}/box.cfg" "$BOX_CFG_PRESERVED"
         ok "Preserved stock box.cfg → ${BOX_CFG_PRESERVED}"
-    else
-        warn "No stock box.cfg found - Qidi Control Box UI will not be restored"
     fi
 
     local INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
@@ -1046,25 +1051,29 @@ install_bunnybox_helixscreen() {
             ok "Fixed KAMP include path"
         fi
 
-        # Restore the Qidi Control Box UI: put box.cfg back and
-        # re-enable its include line in printer.cfg.
-        if [ -n "$BOX_CFG_PRESERVED" ] && [ -f "$BOX_CFG_PRESERVED" ]; then
+        # Restore box.cfg on disk (in case BunnyBox's installer removed it)
+        # so Revert to Backup can recover from BACKUP_DIR if _FIRST_STOCK is
+        # missing. Leave [include box.cfg] in printer.cfg commented out: the
+        # Qidi box_extras.so plugin registers CLEAR_TOOLCHANGE_STATE, which
+        # Happy Hare's mmu package also registers — loading both crashes
+        # Klipper on startup. Happy Hare owns the box hardware via its own
+        # [mmu] steppers while BunnyBox is installed, so the Qidi UI's
+        # "Control Box" panel will not be available until BunnyBox is removed
+        # via Revert to Backup (which restores stock printer.cfg with the
+        # include active).
+        if [ -n "$BOX_CFG_PRESERVED" ] && [ -f "$BOX_CFG_PRESERVED" ] && \
+           [ ! -f "${CONFIG_DIR}/box.cfg" ]; then
             cp "$BOX_CFG_PRESERVED" "${CONFIG_DIR}/box.cfg"
-            ok "Restored stock box.cfg"
+            ok "Restored box.cfg on disk (include left disabled — conflicts with Happy Hare)"
         fi
-        if [ -f "${CONFIG_DIR}/box.cfg" ]; then
-            if grep -q '^# *\[include box\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
-                sed -i 's|^# *\[include box\.cfg\].*|[include box.cfg]  # Re-enabled by AIO for Qidi Control Box UI|' \
-                    "${CONFIG_DIR}/printer.cfg"
-                ok "Re-enabled [include box.cfg] for Qidi Control Box UI"
-            elif ! grep -q '^\[include box\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
-                # No include line at all - add one alongside box_drying.cfg
-                sed -i '/^\[include box_drying\.cfg\]/i\[include box.cfg]  # Re-enabled by AIO for Qidi Control Box UI' \
-                    "${CONFIG_DIR}/printer.cfg"
-                ok "Added [include box.cfg] for Qidi Control Box UI"
-            fi
-        else
-            warn "box.cfg not on disk - Qidi Control Box UI will not work"
+        # Defensive: if a previous AIO version (RC1-RC4) left [include box.cfg]
+        # active in printer.cfg, comment it back out. The shipped template has
+        # it disabled, so a clean fetch already handles this — but the user's
+        # printer.cfg may have been edited.
+        if grep -q '^\[include box\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
+            sed -i 's|^\[include box\.cfg\].*|# [include box.cfg]  # AIO: disabled, conflicts with Happy Hare box_extras.so|' \
+                "${CONFIG_DIR}/printer.cfg"
+            ok "Disabled stale [include box.cfg] in printer.cfg (conflicts with Happy Hare)"
         fi
         ok "Unified configs installed"
 
