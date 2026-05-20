@@ -106,6 +106,49 @@ verify_qidi_box_helixscreen() {
     fi
 }
 
+QIDI_BOX_WRITE_DROPIN='/etc/systemd/system/helixscreen.service.d/qidi-box-write.conf'
+
+qidi_box_write_enabled() {
+    [ -f "$QIDI_BOX_WRITE_DROPIN" ] && \
+    grep -q 'HELIX_QIDI_BOX_WRITE=1' "$QIDI_BOX_WRITE_DROPIN" 2>/dev/null
+}
+
+# Enable HelixScreen's experimental Qidi Box WRITE ops (load_filament,
+# unload_filament, change_tool, set_tool_mapping). Upstream flags this
+# as field-testing - per RC1 policy it ships enabled by default.
+install_qidi_box_write() {
+    banner "Enabling HELIX_QIDI_BOX_WRITE (Qidi Box interactive control)"
+    warn "Upstream marks this as field-testing. Read/write Qidi Box ops"
+    warn "will run from HelixScreen; misbehavior could send a bad command"
+    warn "to the Box hardware. Disable via Revert to Backup or by removing"
+    warn "${QIDI_BOX_WRITE_DROPIN}"
+
+    sudo mkdir -p "$(dirname "$QIDI_BOX_WRITE_DROPIN")"
+    sudo tee "$QIDI_BOX_WRITE_DROPIN" >/dev/null <<'EOF'
+# Written by Qidi Q2 Superuser AIO.
+# Enables HelixScreen's experimental Qidi Box write ops
+# (load_filament T<N>, unload_filament, change_tool, set_tool_mapping).
+[Service]
+Environment="HELIX_QIDI_BOX_WRITE=1"
+EOF
+    sudo systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl restart helixscreen 2>/dev/null || true
+    ok "HELIX_QIDI_BOX_WRITE=1 set; helixscreen restarted"
+}
+
+uninstall_qidi_box_write() {
+    if [ ! -f "$QIDI_BOX_WRITE_DROPIN" ]; then
+        return 0
+    fi
+    info "Removing HELIX_QIDI_BOX_WRITE drop-in..."
+    sudo rm -f "$QIDI_BOX_WRITE_DROPIN"
+    # Tidy the dir if empty
+    sudo rmdir "$(dirname "$QIDI_BOX_WRITE_DROPIN")" 2>/dev/null || true
+    sudo systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl restart helixscreen 2>/dev/null || true
+    ok "HELIX_QIDI_BOX_WRITE disabled"
+}
+
 idle_fan_shutdown_installed() {
     [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] && \
     grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null
@@ -408,6 +451,9 @@ uninstall_bunnybox() {
 uninstall_helixscreen() {
     banner "Uninstalling HelixScreen"
 
+    # Remove our Qidi Box write env override before touching the service.
+    uninstall_qidi_box_write
+
     # Try HelixScreen's own remove path first so its installer can do
     # whatever cleanup it expects (releases.helixscreen.org honors
     # --remove). Fall back to manual systemd teardown if that fails.
@@ -526,6 +572,9 @@ revert_to_backup() {
         if [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] || \
            grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
             uninstall_idle_fan_shutdown
+        fi
+        if qidi_box_write_enabled; then
+            uninstall_qidi_box_write
         fi
 
         banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
@@ -764,6 +813,8 @@ install_bunnybox_helixscreen() {
               "${HELIX_CONFIG_DIR}/settings.json" || return 1
         ok "HelixScreen settings applied"
 
+        install_qidi_box_write
+
         verify_qidi_box_helixscreen
 
         verify_bunnybox_install
@@ -892,7 +943,7 @@ EOF
 
 # ---------- main menu ------------------------------------------------
 show_status_line() {
-    local bb_status hs_status idle_status
+    local bb_status hs_status idle_status box_write_status
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
     else
@@ -908,8 +959,13 @@ show_status_line() {
     else
         idle_status="${C_YELLOW}off${C_RESET}"
     fi
-    printf '  BunnyBox: %b   |   HelixScreen: %b   |   IdleFan: %b\n' \
-           "$bb_status" "$hs_status" "$idle_status"
+    if qidi_box_write_enabled; then
+        box_write_status="${C_GREEN}on${C_RESET}"
+    else
+        box_write_status="${C_YELLOW}off${C_RESET}"
+    fi
+    printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b\n' \
+           "$bb_status" "$hs_status" "$idle_status" "$box_write_status"
 }
 
 draw_menu() {
