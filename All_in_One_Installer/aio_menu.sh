@@ -119,7 +119,7 @@ qidi_box_write_enabled() {
 
 # Enable HelixScreen's experimental Qidi Box WRITE ops (load_filament,
 # unload_filament, change_tool, set_tool_mapping). Upstream flags this
-# as field-testing - per RC1 policy it ships enabled by default.
+# as field-testing; a confirm prompt (5s default yes) gates the install.
 install_qidi_box_write() {
     banner "Enabling HELIX_QIDI_BOX_WRITE (Qidi Box interactive control)"
     warn "Upstream marks this as field-testing. Read/write Qidi Box ops"
@@ -297,7 +297,7 @@ purge_happy_hare_all() {
 
     # Moonraker update_manager / mmu sections - delete the section and
     # its body up to the next section header or EOF.
-    local moon_conf="${HOME}/printer_data/config/moonraker.conf"
+    local moon_conf="${CONFIG_DIR}/moonraker.conf"
     if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
         cp "$moon_conf" "${moon_conf}.aio-bak"
         sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
@@ -353,16 +353,42 @@ fi
 fetch() {
     local url="$1"
     local dest="$2"
-    if ! curl --fail --silent --show-error --location "$url" --output "$dest"; then
+    local dest_dir
+    dest_dir=$(dirname "$dest")
+
+    # Ensure parent directory exists (try user first, then sudo).
+    if [ ! -d "$dest_dir" ]; then
+        mkdir -p "$dest_dir" 2>/dev/null || sudo mkdir -p "$dest_dir" 2>/dev/null
+    fi
+
+    # Download to /tmp first so the network step is isolated from the
+    # write step. Lets us retry the install with sudo when the destination
+    # is owned by root from a previous install (e.g. BunnyBox creates
+    # KAMP_Settings.cfg as root, then curl --output to it gets EACCES).
+    local tmp
+    tmp=$(mktemp /tmp/aio_fetch.XXXXXX) || { err "mktemp failed"; return 1; }
+    if ! curl --fail --silent --show-error --location "$url" --output "$tmp"; then
+        rm -f "$tmp"
         err "Download failed: $url"
         return 1
     fi
-    if [ ! -s "$dest" ]; then
-        err "Downloaded file is empty: $dest"
-        err "URL: $url"
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        err "Downloaded file is empty (URL: $url)"
         return 1
     fi
-    return 0
+
+    # Try installing as the current user; fall back to sudo if the
+    # destination is root-owned. `install` handles mode + atomic replace.
+    if install -m 0644 "$tmp" "$dest" 2>/dev/null || \
+       sudo install -m 0644 "$tmp" "$dest" 2>/dev/null; then
+        rm -f "$tmp"
+        return 0
+    fi
+
+    rm -f "$tmp"
+    err "Failed to write $dest (tried as user and via sudo)"
+    return 1
 }
 
 bunnybox_installed() {
@@ -691,7 +717,61 @@ run_all_verifiers() {
     else
         info "HELIX_QIDI_BOX_WRITE not enabled"
     fi
+    find_duplicate_macros
     press_enter
+}
+
+# Scan every .cfg under CONFIG_DIR for duplicate [gcode_macro NAME] decls.
+# Klipper refuses to start with "gcode command X already registered" if any
+# macro name is defined twice across included files. This pinpoints exactly
+# which file pair is the conflict so the user can comment one out.
+find_duplicate_macros() {
+    banner "Scanning for duplicate gcode_macro declarations"
+
+    if [ ! -d "$CONFIG_DIR" ]; then
+        warn "Config directory not found - skipping scan"
+        return 0
+    fi
+
+    local tmp
+    tmp=$(mktemp /tmp/aio_macros.XXXXXX) || return 0
+
+    # Skip backup dirs Klipper does not load (Happy Hare's backup_hh_*,
+    # AIO's mmu-YYYYMMDD_HHMMSS, _FIRST_STOCK snapshot, install backups).
+    find "$CONFIG_DIR" -maxdepth 4 -type f -name '*.cfg' \
+        -not -path '*/backup_*/*' \
+        -not -path '*/mmu-2*/*' \
+        -not -path '*/_FIRST_STOCK/*' \
+        -print0 2>/dev/null | \
+    xargs -0 grep -Hn -E '^\[gcode_macro [^]]+\]' 2>/dev/null > "$tmp" || true
+
+    if [ ! -s "$tmp" ]; then
+        info "No gcode_macro declarations found under ${CONFIG_DIR}"
+        rm -f "$tmp"
+        return 0
+    fi
+
+    local dup_names
+    dup_names=$(awk -F'[][]' '{print $2}' "$tmp" | sed 's/^gcode_macro //' | \
+                sort | uniq -d)
+
+    if [ -z "$dup_names" ]; then
+        ok "No duplicate gcode_macro declarations"
+        rm -f "$tmp"
+        return 0
+    fi
+
+    warn "Duplicate gcode_macro declarations detected — Klipper will refuse to load:"
+    while IFS= read -r name; do
+        warn "  [gcode_macro ${name}]:"
+        grep -F "[gcode_macro ${name}]" "$tmp" | while IFS=: read -r path line _; do
+            warn "    ${path}:${line}"
+        done
+    done <<< "$dup_names"
+    warn "Comment out one of each duplicate, then FIRMWARE_RESTART."
+
+    rm -f "$tmp"
+    return 1
 }
 
 # ---------- install: BunnyBox & HelixScreen --------------------------
@@ -716,26 +796,49 @@ install_bunnybox_helixscreen() {
     info "Install log: ${INSTALL_LOG}"
 
     {
-        banner "Pre-install: scanning for stale BunnyBox artifacts"
-        if detect_bunnybox_artifacts; then
-            warn "Stale BunnyBox artifacts found (listed above)."
-            warn "Their presence will make BunnyBox's installer think an"
-            warn "install already exists and prompt you for Reinstall / Revert."
-            if confirm "Remove all stale artifacts now for a clean install?"; then
+        banner "Pre-install: checking for existing Happy Hare install"
+        if bunnybox_installed; then
+            warn "An existing Happy Hare / BunnyBox install was found."
+            warn "${CONFIG_DIR}/mmu/ is present with mmu_parameters.cfg."
+            echo ""
+            printf '  %s1)%s Upgrade       — keep hardware configs, update firmware macros\n' "$C_CYAN" "$C_RESET"
+            printf '  %s2)%s Fresh install — erase all MMU files and start completely clean\n' "$C_CYAN" "$C_RESET"
+            printf '  %s0)%s Cancel\n' "$C_CYAN" "$C_RESET"
+            echo ""
+            local hh_choice=""
+            printf '%sSelection: %s' "$C_BOLD" "$C_RESET"
+            read -r hh_choice </dev/tty || hh_choice="0"
+            case "$hh_choice" in
+                1)
+                    info "Upgrade selected — BunnyBox will update macros and keep your hardware config"
+                    ;;
+                2)
+                    warn "Fresh install selected — purging all Happy Hare / BunnyBox files..."
+                    purge_happy_hare_all
+                    ok "MMU files cleared — BunnyBox will install fresh"
+                    ;;
+                *)
+                    info "Cancelled. Returning to the main menu."
+                    exit 99
+                    ;;
+            esac
+        elif detect_bunnybox_artifacts; then
+            warn "Partial/stale BunnyBox artifacts found (listed above)."
+            warn "Their presence may cause BunnyBox to behave unexpectedly."
+            if confirm "Remove stale artifacts for a clean install?"; then
                 rm -rf "${CONFIG_DIR}/mmu"
                 sudo rm -rf "$HAPPY_HARE_DIR"
                 rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
-                rm -f "${CONFIG_DIR}/box_drying.cfg"
                 for f in mmu.py mmu_machine.py mmu_leds.py; do
                     rm -f "${HOME}/klipper/klippy/extras/${f}"
                 done
                 rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
-                ok "Stale artifacts removed - BunnyBox installer will run as a fresh install"
+                ok "Stale artifacts removed — BunnyBox will install fresh"
             else
-                info "Leaving artifacts in place - BunnyBox will offer its own Reinstall/Revert menu"
+                info "Leaving artifacts — BunnyBox will offer its own Reinstall/Revert menu"
             fi
         else
-            ok "No stale artifacts - clean slate"
+            ok "No existing install found — clean slate"
         fi
 
         banner "Installing BunnyBox (Happy Hare MMU)"
