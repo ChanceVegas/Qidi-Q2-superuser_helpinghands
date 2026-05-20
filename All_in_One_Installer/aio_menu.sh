@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC3'
+AIO_VERSION='RC4'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -263,6 +263,22 @@ find_mmu_params() {
     return 1
 }
 
+# Reverse the ## AIO_DISABLED: comments that fix_known_klipper_conflicts()
+# applied to Qidi stock files (box1.cfg, gcode_macro.cfg) when BunnyBox was
+# installed. Called during uninstall so Qidi's native T0-T3/UNLOAD_T0-T3 and
+# EXTRUSION_AND_FLUSH macros are active again once Happy Hare is removed.
+restore_aio_disabled_macros() {
+    local changed=0
+    for cfg in "${CONFIG_DIR}/box1.cfg" "${CONFIG_DIR}/gcode_macro.cfg"; do
+        if [ -f "$cfg" ] && grep -q '^## AIO_DISABLED: ' "$cfg" 2>/dev/null; then
+            sed -i 's/^## AIO_DISABLED: //' "$cfg"
+            ok "Restored AIO_DISABLED macros in $(basename "$cfg")"
+            changed=1
+        fi
+    done
+    [ "$changed" -eq 0 ] && info "No AIO_DISABLED macros to restore"
+}
+
 # Exhaustively remove every Happy Hare / BunnyBox footprint we know
 # about, regardless of whether the upstream uninstallers ran. Called
 # from revert_to_backup() and uninstall_bunnybox().
@@ -336,6 +352,8 @@ purge_happy_hare_all() {
         sed -i '/^\[mmu_server\]$/d' "$moon_conf"
         ok "Cleaned Happy Hare sections from moonraker.conf (backup: ${moon_conf}.aio-bak)"
     fi
+
+    restore_aio_disabled_macros
 
     ok "Happy Hare / BunnyBox purge complete"
 }
@@ -603,31 +621,18 @@ uninstall_helixscreen() {
 revert_to_backup() {
     banner "Revert to Backup (full stock restore)"
 
-    if [ -d "$HELIX_DIR" ]; then
-        info "HelixScreen detected - removing..."
-        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --uninstall || \
-            warn "HelixScreen uninstaller returned non-zero"
-
-        info "Re-enabling stock Qidi screen services..."
-        sudo systemctl stop helixscreen     2>/dev/null || true
-        sudo systemctl disable helixscreen  2>/dev/null || true
-        sudo systemctl mask helixscreen     2>/dev/null || true
-        sudo systemctl enable lightdm       2>/dev/null || true
-        sudo systemctl restart lightdm      2>/dev/null || true
-        sudo systemctl enable makerbase-client  2>/dev/null || true
-        sudo systemctl restart makerbase-client 2>/dev/null || true
-        ok "Stock screen restored"
+    # Delegate to the dedicated uninstall functions so revert picks up every
+    # cleanup step they do (qidi-box-write systemd drop-in, helixscreen state
+    # dir, moonraker bak, restore_aio_disabled_macros, fix_printer_cfg_after_uninstall,
+    # etc.) without duplicating logic here.
+    if helixscreen_installed; then
+        uninstall_helixscreen
     else
         info "HelixScreen not present, skipping"
     fi
 
     if [ -d "$HAPPY_HARE_DIR" ] || bunnybox_installed; then
-        info "BunnyBox / Happy Hare detected - removing..."
-        # purge_happy_hare_all handles the full teardown: Happy Hare source,
-        # mmu/, dated backups, klipper extras, moonraker components and
-        # moonraker.conf sections. BunnyBox's own installer has no --revert
-        # flag, so calling it would only print usage.
-        purge_happy_hare_all
+        uninstall_bunnybox
     else
         info "BunnyBox / Happy Hare not present, skipping"
     fi
@@ -1287,15 +1292,12 @@ draw_menu() {
     printf '   %s1)%s Install BunnyBox & HelixScreen   (Q2 with Qidi Box)\n'    "$C_CYAN" "$C_RESET"
     printf '   %s2)%s Install Just Faster Printer      (Q2 without Box)\n'      "$C_CYAN" "$C_RESET"
     printf '  %sUNINSTALL%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
-    printf '   %s3)%s Uninstall BunnyBox only\n'                                 "$C_CYAN" "$C_RESET"
-    printf '   %s4)%s Uninstall HelixScreen only\n'                              "$C_CYAN" "$C_RESET"
-    printf '   %s5)%s Uninstall Both\n'                                          "$C_CYAN" "$C_RESET"
-    printf '   %s6)%s Revert to Backup                 (uninstall both + restore)\n' "$C_CYAN" "$C_RESET"
+    printf '   %s3)%s Revert to Backup                 (full uninstall + restore stock)\n' "$C_CYAN" "$C_RESET"
     printf '  %sADDONS%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
-    printf '   %s7)%s Idle Fan Shutdown                (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
+    printf '   %s4)%s Idle Fan Shutdown                (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
-    printf '   %s8)%s About\n'                                                   "$C_CYAN" "$C_RESET"
-    printf '   %s9)%s Run all verifiers\n'                                       "$C_CYAN" "$C_RESET"
+    printf '   %s5)%s About\n'                                                   "$C_CYAN" "$C_RESET"
+    printf '   %s6)%s Run all verifiers\n'                                       "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -1321,36 +1323,16 @@ main_loop() {
             1) install_bunnybox_helixscreen ;;
             2) install_just_faster ;;
             3)
-                if confirm "Uninstall BunnyBox only?"; then
-                    do_backup && uninstall_bunnybox
-                    press_enter
-                fi
-                ;;
-            4)
-                if confirm "Uninstall HelixScreen only?"; then
-                    do_backup && uninstall_helixscreen
-                    press_enter
-                fi
-                ;;
-            5)
-                if confirm "Uninstall BOTH BunnyBox and HelixScreen?"; then
-                    do_backup
-                    if bunnybox_installed;    then uninstall_bunnybox;    fi
-                    if helixscreen_installed; then uninstall_helixscreen; fi
-                    press_enter
-                fi
-                ;;
-            6)
-                warn "Revert to Backup will uninstall BunnyBox + HelixScreen"
+                warn "Revert to Backup will fully uninstall BunnyBox + HelixScreen"
                 warn "and restore configs from ${BACKUP_ROOT}/."
                 if confirm "Proceed with full revert?"; then
                     revert_to_backup
                     press_enter
                 fi
                 ;;
-            7) menu_idle_fan_shutdown ;;
-            8) show_about ;;
-            9) run_all_verifiers ;;
+            4) menu_idle_fan_shutdown ;;
+            5) show_about ;;
+            6) run_all_verifiers ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
