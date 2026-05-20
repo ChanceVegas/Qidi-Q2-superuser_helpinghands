@@ -124,11 +124,26 @@ Merged to `main` via PR #1 (2026-05-20):
 
 ## RC2 — Candidate Features (not yet implemented)
 
-- Confirm-on-first-run gate for `HELIX_QIDI_BOX_WRITE` (y/N with 5s default-yes timeout)
 - HelixScreen version pinning to a tagged release instead of `main`
 - `update_qidi_box_dropin` migration helper
-- "9) Run all verifiers" self-test menu item
 - `/release` slash command for version bump + changelog + tag + push
+
+## RC3 — Candidate Features (not yet implemented)
+
+- Automate Mainsail install (add as a new menu option)
+- Investigate whether `HELIX_QIDI_BOX_WRITE` drop-in is still needed when BunnyBox is installed (box drying via Klipper macros vs native box protocol)
+
+## Known Bugs Fixed in RC2 (merged)
+
+| PR | Fix |
+|---|---|
+| #7 | Duplicate gcode_macro conflict resolver (`fix_known_klipper_conflicts`) |
+| #8 | Install KAMP sub-files alongside `KAMP_Settings.cfg` |
+| #9 | Fix bogus flags to Happy Hare (`-u`) and HelixScreen (`--remove`) uninstallers |
+| #10 | Clean backup dirs, HelixScreen dir, moonraker bak on uninstall |
+| #11 | Patch `printer.cfg` broken includes after uninstall; drop pre-revert backup |
+| #12 | Comment out `TOOL_CHANGE_START/END` in `bunnybox_macros.cfg` (Qidi Python plugin owns them) |
+| #13 | Detect `box_extras.so` (Qidi ships compiled `.so`, not `.py`) |
 
 ## External Resources
 
