@@ -891,7 +891,8 @@ fix_known_klipper_conflicts() {
     #    Comment them out so box_extras.py's implementation is used.
     local bbmacros="${CONFIG_DIR}/bunnybox_macros.cfg"
     if [ -f "$bbmacros" ] && \
-       [ -f "${HOME}/klipper/klippy/extras/box_extras.py" ]; then
+       { [ -f "${HOME}/klipper/klippy/extras/box_extras.py" ] || \
+         [ -f "${HOME}/klipper/klippy/extras/box_extras.so" ]; }; then
         local bb_changed=0
         for macro in TOOL_CHANGE_START TOOL_CHANGE_END; do
             if grep -q "^\[gcode_macro ${macro}\]" "$bbmacros" 2>/dev/null; then
