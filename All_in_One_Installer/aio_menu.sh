@@ -20,6 +20,9 @@
 
 set -uo pipefail
 
+# ---------- version --------------------------------------------------
+AIO_VERSION='RC1'
+
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
 BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
@@ -769,6 +772,7 @@ show_about() {
     banner "About - Qidi Q2 Superuser AIO"
     cat <<EOF
 ${C_CYAN}Qidi Q2 Superuser - All-in-One Installer${C_RESET}
+${C_BOLD}Version:${C_RESET} ${AIO_VERSION}
 
 A community-built toolkit to unlock advanced features on the Qidi Q2
 3D printer beyond stock Qidi firmware. This menu is the single entry
@@ -840,7 +844,7 @@ show_status_line() {
 draw_menu() {
     clear 2>/dev/null || true
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
-    printf '%s   Qidi Q2 Superuser - AIO Setup Menu%s\n'        "$C_BOLD$C_MAGENTA" "$C_RESET"
+    printf '%s   Qidi Q2 Superuser - AIO Setup Menu (%s)%s\n'   "$C_BOLD$C_MAGENTA" "$AIO_VERSION" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     show_status_line
     printf '%s--------------------------------------------%s\n' "$C_BOLD" "$C_RESET"
