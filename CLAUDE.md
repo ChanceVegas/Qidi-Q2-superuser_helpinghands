@@ -52,7 +52,7 @@ Plugins/                   ← Stock plugin reference. DO NOT MODIFY.
 
 1. **Never modify** `Configurations/` or `Plugins/` — read-only stock Qidi mirrors.
 2. **Never push to `main` directly** — all work goes on a `claude/*` branch; merge via PR.
-3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC4`).
+3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC5`).
 4. **`bash -n` before every commit** touching any `.sh` file.
 5. **`python3 -m json.tool` before every commit** touching any `.json` file.
 6. **Do not run `aio_menu.sh` as root** — the script self-enforces this.
@@ -128,10 +128,18 @@ Merged to `main` via PR #1 (2026-05-20):
 - `update_qidi_box_dropin` migration helper
 - `/release` slash command for version bump + changelog + tag + push
 
-## RC4 — Candidate Features (not yet implemented)
+## RC5 — Candidate Features (not yet implemented)
 
 - Automate Mainsail install (add as a new menu option)
 - Symmetric `uninstall_just_faster()` (option 2 currently has no individual uninstall path; Revert to Backup is the only way to undo it)
+
+## RC5 — What's In It
+
+- `AIO_VERSION='RC5'`
+- **Fresh-install crash fixed**: `install_bunnybox_helixscreen()` no longer re-enables `[include box.cfg]` in `printer.cfg`. Including `box.cfg` loads Qidi's `box_extras.so` plugin, which registers `CLEAR_TOOLCHANGE_STATE` — the same gcode command Happy Hare's `mmu/` package registers. Loading both crashes Klipper on startup. The shipped `printer(BunnyBox&HelixScreen).cfg` template already ships with the include commented out (BunnyBox's installer disables it); RC1–RC4 had explicit code to re-enable it for the Qidi UI "Control Box" panel, which was the source of the crash.
+- **Trade-off documented**: while BunnyBox is installed, the Qidi UI's "Control Box" panel does NOT work — Happy Hare owns box hardware via `[mmu]` steppers and its own gcode commands. Revert to Backup restores stock `printer.cfg` with `[include box.cfg]` active, bringing the Qidi UI panel back.
+- **Defensive disable**: install now also comments out any existing `^[include box.cfg]` line in `printer.cfg`, so users carrying state from RC1–RC4 are healed by re-running option 1.
+- **`verify_qidi_box_helixscreen()` flipped**: with BunnyBox installed, `[include box.cfg]` active is now flagged as an error (it WILL crash Klipper) instead of being treated as the desired state.
 
 ## RC4 — What's In It
 
