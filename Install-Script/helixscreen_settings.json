@@ -1,5 +1,8 @@
 {
   "active_printer_id": "default",
+  "ams": {
+    "spool_style": "3d"
+  },
   "config_version": 16,
   "dark_mode": true,
   "display": {
