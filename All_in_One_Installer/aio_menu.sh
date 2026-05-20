@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC5'
+AIO_VERSION='RC6'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -790,8 +790,8 @@ run_all_verifiers() {
             info "HELIX_QIDI_BOX_WRITE not enabled"
         fi
     fi
-    find_duplicate_macros
     fix_known_klipper_conflicts
+    find_duplicate_macros
     press_enter
 }
 
@@ -934,6 +934,20 @@ fix_known_klipper_conflicts() {
         if [ $bb_changed -eq 1 ]; then
             ok "Commented out TOOL_CHANGE_START/END in bunnybox_macros.cfg (box_extras.py owns them)"
         fi
+    fi
+
+    # 6. BED_MESH_CALIBRATE duplicate: older KAMP_Settings.cfg versions
+    #    defined [gcode_macro BED_MESH_CALIBRATE] inline (line ~46). Current
+    #    KAMP splits that into Adaptive_Meshing.cfg (the real definition) with
+    #    KAMP_Settings.cfg only doing [include ./Adaptive_Meshing.cfg]. Having
+    #    both the inline copy AND the include active crashes Klipper with
+    #    "gcode macro BED_MESH_CALIBRATE already registered". Re-fetch our
+    #    correct KAMP_Settings.cfg to replace the old version.
+    if grep -q '^\[gcode_macro BED_MESH_CALIBRATE\]' "${CONFIG_DIR}/KAMP_Settings.cfg" 2>/dev/null && \
+       [ -f "${CONFIG_DIR}/Adaptive_Meshing.cfg" ]; then
+        fetch "${REPO_BASE}/KAMP_settings.cfg" "${CONFIG_DIR}/KAMP_Settings.cfg" \
+            && ok "Re-fetched KAMP_Settings.cfg (removed stale inline BED_MESH_CALIBRATE)" \
+            || warn "Could not re-fetch KAMP_Settings.cfg — comment out [gcode_macro BED_MESH_CALIBRATE] in it manually"
     fi
 
     ok "Conflict resolution complete — FIRMWARE_RESTART to apply"

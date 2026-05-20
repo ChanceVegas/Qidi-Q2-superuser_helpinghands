@@ -52,7 +52,7 @@ Plugins/                   ← Stock plugin reference. DO NOT MODIFY.
 
 1. **Never modify** `Configurations/` or `Plugins/` — read-only stock Qidi mirrors.
 2. **Never push to `main` directly** — all work goes on a `claude/*` branch; merge via PR.
-3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC5`).
+3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC6`).
 4. **`bash -n` before every commit** touching any `.sh` file.
 5. **`python3 -m json.tool` before every commit** touching any `.json` file.
 6. **Do not run `aio_menu.sh` as root** — the script self-enforces this.
@@ -128,10 +128,16 @@ Merged to `main` via PR #1 (2026-05-20):
 - `update_qidi_box_dropin` migration helper
 - `/release` slash command for version bump + changelog + tag + push
 
-## RC5 — Candidate Features (not yet implemented)
+## RC6 — Candidate Features (not yet implemented)
 
 - Automate Mainsail install (add as a new menu option)
 - Symmetric `uninstall_just_faster()` (option 2 currently has no individual uninstall path; Revert to Backup is the only way to undo it)
+
+## RC6 — What's In It
+
+- `AIO_VERSION='RC6'`
+- **`BED_MESH_CALIBRATE` duplicate fixed**: `fix_known_klipper_conflicts()` now detects when `KAMP_Settings.cfg` defines `[gcode_macro BED_MESH_CALIBRATE]` inline (older BunnyBox/KAMP versions put this at line ~46) while `Adaptive_Meshing.cfg` also defines it. The correct structure has `KAMP_Settings.cfg` using `[include ./Adaptive_Meshing.cfg]` only — not redefining the macro inline. When the conflict is detected, AIO re-fetches the correct `KAMP_Settings.cfg` from the repo, resolving the duplicate without manual intervention.
+- **Verifier order fixed**: `run_all_verifiers()` (option 6) now runs `fix_known_klipper_conflicts` *before* `find_duplicate_macros` so conflicts are healed before the scan report. Previously the scan ran first, showing problems that `fix_known_klipper_conflicts` would have fixed a moment later.
 
 ## RC5 — What's In It
 
