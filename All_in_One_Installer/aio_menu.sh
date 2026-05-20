@@ -281,6 +281,17 @@ purge_happy_hare_all() {
     sudo rm -rf "${CONFIG_DIR}/mmu"
     sudo rm -rf "${CONFIG_DIR}"/mmu-* 2>/dev/null || true
 
+    # Timestamped backup directories Happy Hare and BunnyBox drop into the
+    # config root (backup_hh_<ts>, backup_revert_<ts>). These pile up across
+    # repeated installs and are not restored by any uninstall flow.
+    find "$CONFIG_DIR" -maxdepth 1 -type d \
+        \( -name 'backup_hh_*' -o -name 'backup_revert_*' \) \
+        -exec sudo rm -rf {} + 2>/dev/null || true
+
+    # BunnyBox's KAMP/ subdirectory. We install KAMP files at the config
+    # root (PR #8); BunnyBox's KAMP/ copy is no longer referenced.
+    sudo rm -rf "${CONFIG_DIR}/KAMP"
+
     # Config files Happy Hare / BunnyBox may have written at config root
     rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
     rm -f "${CONFIG_DIR}/box_drying.cfg"
@@ -515,6 +526,12 @@ uninstall_helixscreen() {
     sudo rm -f /etc/systemd/system/helixscreen.service
     sudo systemctl daemon-reload        2>/dev/null || true
     sudo rm -rf "$HELIX_DIR"
+
+    # HelixScreen also drops a config-root state dir and a moonraker.conf
+    # backup. Clean both — they pile up across reinstalls and confuse
+    # post-uninstall diffs.
+    sudo rm -rf "${CONFIG_DIR}/helixscreen"
+    rm -f "${CONFIG_DIR}/moonraker.conf.bak.helixscreen"
 
     # Re-enable the Qidi stock display services. Without this, removing
     # HelixScreen leaves the printer with NO running display - the user
