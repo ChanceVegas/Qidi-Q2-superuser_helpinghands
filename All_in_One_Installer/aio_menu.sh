@@ -28,8 +28,9 @@ REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpi
 BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 # Pinned to the minimum required release (>= v0.99.66 for Qidi Box support).
 # Update HELIXSCREEN_PIN when a newer stable release ships.
+# The installer script is always fetched from main; --version pins the binary.
 HELIXSCREEN_PIN='v0.99.66'
-HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
+HELIXSCREEN_INSTALLER='https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh'
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 
@@ -761,7 +762,7 @@ install_bunnybox_helixscreen() {
 
         banner "Installing HelixScreen"
         set +e
-        curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh
+        curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh -s -- --version "${HELIXSCREEN_PIN}"
         local hs_exit=$?
         set -e
         if [ $hs_exit -ne 0 ]; then
