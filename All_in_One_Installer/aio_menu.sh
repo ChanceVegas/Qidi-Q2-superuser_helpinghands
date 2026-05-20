@@ -21,12 +21,15 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1'
+AIO_VERSION='RC2'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
 BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
-HELIXSCREEN_INSTALLER='https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh'
+# Pinned to the minimum required release (>= v0.99.66 for Qidi Box support).
+# Update HELIXSCREEN_PIN when a newer stable release ships.
+HELIXSCREEN_PIN='v0.99.66'
+HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 
@@ -122,6 +125,21 @@ install_qidi_box_write() {
     warn "will run from HelixScreen; misbehavior could send a bad command"
     warn "to the Box hardware. Disable via Revert to Backup or by removing"
     warn "${QIDI_BOX_WRITE_DROPIN}"
+
+    local ans=""
+    printf '%sEnable HELIX_QIDI_BOX_WRITE? [Y/n, 5s default yes]: %s' "$C_YELLOW" "$C_RESET"
+    if read -t 5 -r ans </dev/tty 2>/dev/null; then
+        case "$ans" in
+            n|N|no|NO)
+                echo
+                info "HELIX_QIDI_BOX_WRITE skipped — re-run or remove ${QIDI_BOX_WRITE_DROPIN} to change"
+                return 0
+                ;;
+        esac
+    else
+        echo
+        info "No response — enabling HELIX_QIDI_BOX_WRITE by default"
+    fi
 
     sudo mkdir -p "$(dirname "$QIDI_BOX_WRITE_DROPIN")"
     sudo tee "$QIDI_BOX_WRITE_DROPIN" >/dev/null <<'EOF'
@@ -654,6 +672,27 @@ verify_jfp_install() {
     fi
 }
 
+run_all_verifiers() {
+    banner "Running all verifiers"
+    if bunnybox_installed; then
+        verify_bunnybox_install
+        verify_qidi_box_helixscreen
+    else
+        info "BunnyBox/HelixScreen not installed — skipping MMU + Qidi Box checks"
+    fi
+    if idle_fan_shutdown_installed; then
+        ok "idle_fan_shutdown.cfg installed and included in printer.cfg"
+    else
+        info "Idle Fan Shutdown not installed"
+    fi
+    if qidi_box_write_enabled; then
+        ok "HELIX_QIDI_BOX_WRITE drop-in present"
+    else
+        info "HELIX_QIDI_BOX_WRITE not enabled"
+    fi
+    press_enter
+}
+
 # ---------- install: BunnyBox & HelixScreen --------------------------
 install_bunnybox_helixscreen() {
     banner "Install: BunnyBox & HelixScreen (Q2 with Qidi Box)"
@@ -904,13 +943,22 @@ ${C_BOLD}What it can install:${C_RESET}
 
   ${C_GREEN}BunnyBox & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
     - Happy Hare MMU firmware/macros for multi-material printing
-    - HelixScreen replacement touchscreen UI
+    - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
     - Unified printer.cfg + gcode_macro.cfg
     - box_drying.cfg: spool rotation during filament drying using
       Happy Hare's Environment Manager, with humidity-based early
       termination via the AHT2X sensor
     - Patches mmu_parameters.cfg (heater_vent_macro + interval)
     - KAMP adaptive bed meshing
+    - ${C_CYAN}Qidi Box write support${C_RESET}: installs a systemd drop-in that sets
+      HELIX_QIDI_BOX_WRITE=1, enabling interactive Box control from
+      HelixScreen (load/unload filament, change_tool, set_tool_mapping).
+      Upstream flags this as field-testing; a confirm prompt is shown
+      during install with a 5-second default-yes timeout.
+    - helixscreen_settings.json: AMS spool style set to '3d' for
+      Qidi Box slot visualization in the HelixScreen AMS panel
+    - Post-install verification: checks box.cfg, [box_stepper] sections,
+      officiall_filas_list.cfg, and HelixScreen version compatibility
 
   ${C_GREEN}Just Faster Printer${C_RESET}    (Q2 ${C_BOLD}without${C_RESET} the Box, stock screen)
     - Faster, cleaner PRINT_START / PRINT_END macros
@@ -922,6 +970,8 @@ ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' performs a full upstream-style restore:
     re-enables lightdm + makerbase-client, then rsyncs the newest
     timestamped backup from ${BACKUP_ROOT}/ back into place.
+  - Uninstall also removes the HELIX_QIDI_BOX_WRITE drop-in and
+    restarts the helixscreen service.
 
 ${C_BOLD}Safety:${C_RESET}
   Every install and uninstall first writes a timestamped backup of
@@ -929,8 +979,10 @@ ${C_BOLD}Safety:${C_RESET}
   Refuses to run as root.
 
 ${C_BOLD}Known limitations:${C_RESET}
-  - HelixScreen has ${C_YELLOW}no native UI panel${C_RESET} for Happy Hare's dryer yet.
-    Use the BOX_DRY macro (or Klipper console) as a workaround.
+  - ${C_YELLOW}HELIX_QIDI_BOX_WRITE${C_RESET} is field-testing per upstream HelixScreen.
+    Bad commands to the Box hardware are possible. Review before enabling.
+  - HelixScreen has ${C_YELLOW}no native dryer progress UI${C_RESET} yet.
+    Use the BOX_DRY macro (or Klipper console) to trigger drying.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
   - BunnyBox currently requires HelixScreen for MMU workflows; the
     stock Qidi screen does not yet expose the MMU UI.
@@ -987,6 +1039,7 @@ draw_menu() {
     printf '   %s7)%s Idle Fan Shutdown                (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
     printf '   %s8)%s About\n'                                                   "$C_CYAN" "$C_RESET"
+    printf '   %s9)%s Run all verifiers\n'                                       "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -1041,6 +1094,7 @@ main_loop() {
                 ;;
             7) menu_idle_fan_shutdown ;;
             8) show_about ;;
+            9) run_all_verifiers ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
