@@ -353,16 +353,42 @@ fi
 fetch() {
     local url="$1"
     local dest="$2"
-    if ! curl --fail --silent --show-error --location "$url" --output "$dest"; then
+    local dest_dir
+    dest_dir=$(dirname "$dest")
+
+    # Ensure parent directory exists (try user first, then sudo).
+    if [ ! -d "$dest_dir" ]; then
+        mkdir -p "$dest_dir" 2>/dev/null || sudo mkdir -p "$dest_dir" 2>/dev/null
+    fi
+
+    # Download to /tmp first so the network step is isolated from the
+    # write step. Lets us retry the install with sudo when the destination
+    # is owned by root from a previous install (e.g. BunnyBox creates
+    # KAMP_Settings.cfg as root, then curl --output to it gets EACCES).
+    local tmp
+    tmp=$(mktemp /tmp/aio_fetch.XXXXXX) || { err "mktemp failed"; return 1; }
+    if ! curl --fail --silent --show-error --location "$url" --output "$tmp"; then
+        rm -f "$tmp"
         err "Download failed: $url"
         return 1
     fi
-    if [ ! -s "$dest" ]; then
-        err "Downloaded file is empty: $dest"
-        err "URL: $url"
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        err "Downloaded file is empty (URL: $url)"
         return 1
     fi
-    return 0
+
+    # Try installing as the current user; fall back to sudo if the
+    # destination is root-owned. `install` handles mode + atomic replace.
+    if install -m 0644 "$tmp" "$dest" 2>/dev/null || \
+       sudo install -m 0644 "$tmp" "$dest" 2>/dev/null; then
+        rm -f "$tmp"
+        return 0
+    fi
+
+    rm -f "$tmp"
+    err "Failed to write $dest (tried as user and via sudo)"
+    return 1
 }
 
 bunnybox_installed() {
