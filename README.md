@@ -63,16 +63,26 @@ This becomes especially useful once Bunny Box is installed on the Qidi Box.
 
 ---
 
+# All-in-One Installer (AIO)
+
+The AIO is a single ANSI-colored bash menu that handles every supported install and uninstall path for the Q2 — no need to remember which `.sh` to run for which variant.
+
+SSH into the Q2 as `mks`, then run:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/All_in_One_Installer/aio_menu.sh | bash
+```
+
+Full documentation → [All_in_One_Installer/README.md](All_in_One_Installer/README.md)
+
+---
+
 # Printer Configs
 
 The Q2 ships with a very heavy PRINT_START macro and a lot of vendor‑specific glue code.  
 This repo documents what those macros do and provides faster, cleaner replacements.
 
-All macro adjustments are now handled by my one‑line install tool:
-
-[Install Script Instructions](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Install-Script/Instructions.md)
-
-Additional config resources:
+All macro adjustments are handled by the AIO installer above. For reference configs and additional resources:
 
 - [My Resources](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/My%20Resources.md)  
 - [Filament Configurations](https://github.com/Camden-Winder/Qidi-Q2-superuser/blob/main/Configurations/Filamet%20Configurations.md)
