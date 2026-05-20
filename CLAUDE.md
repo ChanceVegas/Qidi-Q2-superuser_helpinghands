@@ -52,7 +52,7 @@ Plugins/                   ← Stock plugin reference. DO NOT MODIFY.
 
 1. **Never modify** `Configurations/` or `Plugins/` — read-only stock Qidi mirrors.
 2. **Never push to `main` directly** — all work goes on a `claude/*` branch; merge via PR.
-3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC1`; next is `RC2`).
+3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC3`).
 4. **`bash -n` before every commit** touching any `.sh` file.
 5. **`python3 -m json.tool` before every commit** touching any `.json` file.
 6. **Do not run `aio_menu.sh` as root** — the script self-enforces this.
@@ -131,7 +131,14 @@ Merged to `main` via PR #1 (2026-05-20):
 ## RC3 — Candidate Features (not yet implemented)
 
 - Automate Mainsail install (add as a new menu option)
-- Investigate whether `HELIX_QIDI_BOX_WRITE` drop-in is still needed when BunnyBox is installed (box drying via Klipper macros vs native box protocol)
+
+## RC3 — What's In It
+
+- `AIO_VERSION='RC3'`
+- Removed `heater_vent_macro` / `heater_vent_interval` patching in `mmu_parameters.cfg`. Happy Hare's vent macro is for MMU enclosures with motorized vents; Q2's box has a manual vent.
+- Removed the `wget | bash -- --revert` call in `revert_to_backup()` — Camden-Winder's BunnyBox installer has no `--revert` flag. `purge_happy_hare_all()` handles the full teardown.
+- `install_bunnybox_helixscreen()` now strips the `HELIX_QIDI_BOX_WRITE` drop-in (instead of installing it). HelixScreen ENV docs confirm the flag gates `load_filament`, `unload_filament`, `change_tool`, `set_tool_mapping` on the **native Qidi Box AMS backend** — exactly what BunnyBox + Happy Hare own when installed.
+- Verifier and status line flipped: with BunnyBox installed, drop-in **absent** is the desired state (`BoxWrite: off` shown green).
 
 ## Known Bugs Fixed in RC2 (merged)
 
