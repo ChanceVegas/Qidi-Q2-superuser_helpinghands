@@ -29,11 +29,75 @@ BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/
 
 # ---------- paths ----------------------------------------------------
 CONFIG_DIR='/home/mks/printer_data/config'
-MMU_PARAMS="${CONFIG_DIR}/mmu/base/mmu_parameters.cfg"
 BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
+
+# Locate mmu_parameters.cfg at runtime - Happy Hare puts it directly
+# under ${CONFIG_DIR}/mmu/ in current versions, but older installs and
+# the original handoff doc reference ${CONFIG_DIR}/mmu/base/. Check both.
+find_mmu_params() {
+    for p in "${CONFIG_DIR}/mmu/mmu_parameters.cfg" \
+             "${CONFIG_DIR}/mmu/base/mmu_parameters.cfg"; do
+        if [ -f "$p" ]; then
+            echo "$p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Exhaustively remove every Happy Hare / BunnyBox footprint we know
+# about, regardless of whether the upstream uninstallers ran. Called
+# from revert_to_backup() and uninstall_bunnybox().
+purge_happy_hare_all() {
+    info "Purging all Happy Hare / BunnyBox artifacts..."
+
+    # Run upstream uninstallers if they're present. Don't trust their
+    # exit codes - we'll force-clean afterwards regardless.
+    if [ -f "${HAPPY_HARE_DIR}/install.sh" ]; then
+        info "Running Happy Hare uninstaller (-d)..."
+        sudo bash "${HAPPY_HARE_DIR}/install.sh" -d 2>/dev/null || true
+        info "Running Happy Hare uninstaller (-u)..."
+        sudo bash "${HAPPY_HARE_DIR}/install.sh" -u 2>/dev/null || true
+    fi
+
+    # Happy Hare source tree + config dirs (incl. its own dated backups)
+    sudo rm -rf "$HAPPY_HARE_DIR"
+    sudo rm -rf "${CONFIG_DIR}/mmu"
+    sudo rm -rf "${CONFIG_DIR}"/mmu-* 2>/dev/null || true
+
+    # Config files Happy Hare / BunnyBox may have written at config root
+    rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
+    rm -f "${CONFIG_DIR}/box_drying.cfg"
+    rm -f "${CONFIG_DIR}/mmu_parameters.cfg"
+    rm -f "${CONFIG_DIR}/mmu_macro_vars.cfg"
+    rm -f "${CONFIG_DIR}/mmu_hardware.cfg"
+    rm -f "${CONFIG_DIR}/mmu.cfg"
+    find "$CONFIG_DIR" -maxdepth 1 -name 'mmu*.cfg' -type f -delete 2>/dev/null || true
+
+    # Klipper + Moonraker extras
+    for f in mmu.py mmu_machine.py mmu_leds.py mmu_sensors.py mmu_encoder.py; do
+        rm -f "${HOME}/klipper/klippy/extras/${f}"
+    done
+    rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
+
+    # Moonraker update_manager / mmu sections - delete the section and
+    # its body up to the next section header or EOF.
+    local moon_conf="${HOME}/printer_data/config/moonraker.conf"
+    if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
+        cp "$moon_conf" "${moon_conf}.aio-bak"
+        sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
+        # Above leaves the next [section] header intact but blanks the body.
+        # Then drop the offending headers themselves:
+        sed -i '/^\[update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\]$/d' "$moon_conf"
+        sed -i '/^\[mmu_server\]$/d' "$moon_conf"
+        ok "Cleaned Happy Hare sections from moonraker.conf (backup: ${moon_conf}.aio-bak)"
+    fi
+
+    ok "Happy Hare / BunnyBox purge complete"
+}
 
 # ---------- ANSI colors ----------------------------------------------
 if [ -t 1 ]; then
@@ -90,7 +154,11 @@ fetch() {
 }
 
 bunnybox_installed() {
-    [ -d "${CONFIG_DIR}/mmu" ] && [ -f "${CONFIG_DIR}/mmu/base/mmu_machine.cfg" ]
+    # Look for mmu_parameters.cfg anywhere under ${CONFIG_DIR}/mmu/ so
+    # we work with both flat (current) and base/ (legacy) layouts.
+    [ -d "${CONFIG_DIR}/mmu" ] && \
+    [ -n "$(find "${CONFIG_DIR}/mmu" -maxdepth 3 -name 'mmu_parameters.cfg' \
+            -print -quit 2>/dev/null)" ]
 }
 
 # Scan every path the BunnyBox installer's own detection logic looks at,
@@ -179,28 +247,10 @@ do_backup() {
 # ---------- uninstall primitives -------------------------------------
 uninstall_bunnybox() {
     banner "Uninstalling BunnyBox / Happy Hare"
-
-    if [ -f "${HAPPY_HARE_DIR}/install.sh" ]; then
-        info "Running Happy Hare uninstaller..."
-        sudo bash "${HAPPY_HARE_DIR}/install.sh" -d || \
-            warn "Happy Hare uninstaller returned non-zero"
-    fi
-
-    # Belt-and-braces: even if the uninstaller ran, force-remove the dir
-    # so no trace is left.
-    info "Removing leftover files..."
-    rm -rf "${CONFIG_DIR}/mmu"
-    sudo rm -rf "${HAPPY_HARE_DIR}"
-    for f in mmu.py mmu_machine.py mmu_leds.py; do
-        rm -f "${HOME}/klipper/klippy/extras/${f}"
-    done
-    rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
-    rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
-    rm -f "${CONFIG_DIR}/box_drying.cfg"
-
-    ok "BunnyBox / Happy Hare uninstalled (directory removed)"
-    warn "printer.cfg may still reference [include mmu/base/*.cfg]"
-    warn "and [include bunnybox_macros.cfg]. Klipper will error until you"
+    purge_happy_hare_all
+    ok "BunnyBox / Happy Hare uninstalled"
+    warn "printer.cfg may still reference [include mmu/*.cfg] and"
+    warn "[include bunnybox_macros.cfg]. Klipper will error until you"
     warn "restore stock printer.cfg from backup or reinstall."
     info "Backups: ${BACKUP_ROOT}/"
 }
@@ -268,21 +318,18 @@ revert_to_backup() {
         info "HelixScreen not present, skipping"
     fi
 
-    if [ -d "/home/mks/Happy-Hare" ] || bunnybox_installed; then
+    if [ -d "$HAPPY_HARE_DIR" ] || bunnybox_installed; then
         info "BunnyBox / Happy Hare detected - removing..."
+        # Run BunnyBox's own --revert first (it knows how to back out
+        # its own moonraker/printer.cfg edits cleanly).
         wget -qO - "$BUNNYBOX_UNINSTALLER" | bash -s -- --revert || \
             warn "BunnyBox revert returned non-zero"
-
-        if [ -f "/home/mks/Happy-Hare/install.sh" ]; then
-            sudo bash /home/mks/Happy-Hare/install.sh -d || \
-                warn "Happy Hare -d returned non-zero"
-        fi
-        # Belt-and-braces cleanup
-        rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
-        rm -f "${CONFIG_DIR}/box_drying.cfg"
-        ok "BunnyBox removed"
+        # Then exhaustive purge - removes Happy Hare source, mmu/,
+        # mmu-<date>/ dated backups Happy Hare itself creates, klipper
+        # extras, moonraker components and moonraker.conf sections.
+        purge_happy_hare_all
     else
-        info "BunnyBox not present, skipping"
+        info "BunnyBox / Happy Hare not present, skipping"
     fi
 
     info "Restoring configs from ${BACKUP_ROOT}..."
@@ -355,16 +402,18 @@ verify_bunnybox_install() {
         fi
     done
 
-    if [ -f "$MMU_PARAMS" ]; then
-        if grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$MMU_PARAMS" && \
-           grep -q '^heater_vent_interval: 5' "$MMU_PARAMS"; then
-            ok "mmu_parameters.cfg (vent macro configured)"
+    local mmu_params
+    mmu_params="$(find_mmu_params)" || mmu_params=""
+    if [ -n "$mmu_params" ] && [ -f "$mmu_params" ]; then
+        if grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$mmu_params" && \
+           grep -q '^heater_vent_interval: 5' "$mmu_params"; then
+            ok "mmu_parameters.cfg (vent macro configured) at $mmu_params"
         else
             warn "mmu_parameters.cfg - vent macro not set correctly"
             all_ok=false
         fi
     else
-        err "mmu_parameters.cfg missing"
+        err "mmu_parameters.cfg missing under ${CONFIG_DIR}/mmu/"
         all_ok=false
     fi
 
@@ -516,24 +565,27 @@ install_bunnybox_helixscreen() {
         ok "box_drying.cfg installed"
 
         banner "Configuring Happy Hare Environment Manager"
-        if [ -f "$MMU_PARAMS" ]; then
+        local mmu_params
+        mmu_params="$(find_mmu_params)" || mmu_params=""
+        if [ -n "$mmu_params" ] && [ -f "$mmu_params" ]; then
+            info "mmu_parameters.cfg found at: $mmu_params"
             local changed=0
-            if grep -q '^heater_vent_macro:' "$MMU_PARAMS"; then
-                if ! grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$MMU_PARAMS"; then
-                    sed -i 's/^heater_vent_macro:.*/heater_vent_macro: _QIDI_BOX_VENT/' "$MMU_PARAMS"
+            if grep -q '^heater_vent_macro:' "$mmu_params"; then
+                if ! grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$mmu_params"; then
+                    sed -i 's/^heater_vent_macro:.*/heater_vent_macro: _QIDI_BOX_VENT/' "$mmu_params"
                     changed=1
                 fi
             else
-                echo "heater_vent_macro: _QIDI_BOX_VENT" >> "$MMU_PARAMS"
+                echo "heater_vent_macro: _QIDI_BOX_VENT" >> "$mmu_params"
                 changed=1
             fi
-            if grep -q '^heater_vent_interval:' "$MMU_PARAMS"; then
-                if ! grep -q '^heater_vent_interval: 5' "$MMU_PARAMS"; then
-                    sed -i 's/^heater_vent_interval:.*/heater_vent_interval: 5/' "$MMU_PARAMS"
+            if grep -q '^heater_vent_interval:' "$mmu_params"; then
+                if ! grep -q '^heater_vent_interval: 5' "$mmu_params"; then
+                    sed -i 's/^heater_vent_interval:.*/heater_vent_interval: 5/' "$mmu_params"
                     changed=1
                 fi
             else
-                echo "heater_vent_interval: 5" >> "$MMU_PARAMS"
+                echo "heater_vent_interval: 5" >> "$mmu_params"
                 changed=1
             fi
             if [ $changed -eq 1 ]; then
@@ -542,7 +594,7 @@ install_bunnybox_helixscreen() {
                 ok "mmu_parameters.cfg already correct"
             fi
         else
-            warn "${MMU_PARAMS} not found"
+            warn "mmu_parameters.cfg not found under ${CONFIG_DIR}/mmu/"
             warn "Manually set heater_vent_macro: _QIDI_BOX_VENT and heater_vent_interval: 5"
         fi
 
