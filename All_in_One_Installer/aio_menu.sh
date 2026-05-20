@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2'
+AIO_VERSION='RC3'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -606,13 +606,10 @@ revert_to_backup() {
 
     if [ -d "$HAPPY_HARE_DIR" ] || bunnybox_installed; then
         info "BunnyBox / Happy Hare detected - removing..."
-        # Run BunnyBox's own --revert first (it knows how to back out
-        # its own moonraker/printer.cfg edits cleanly).
-        wget -qO - "$BUNNYBOX_UNINSTALLER" | bash -s -- --revert || \
-            warn "BunnyBox revert returned non-zero"
-        # Then exhaustive purge - removes Happy Hare source, mmu/,
-        # mmu-<date>/ dated backups Happy Hare itself creates, klipper
-        # extras, moonraker components and moonraker.conf sections.
+        # purge_happy_hare_all handles the full teardown: Happy Hare source,
+        # mmu/, dated backups, klipper extras, moonraker components and
+        # moonraker.conf sections. BunnyBox's own installer has no --revert
+        # flag, so calling it would only print usage.
         purge_happy_hare_all
     else
         info "BunnyBox / Happy Hare not present, skipping"
@@ -700,13 +697,7 @@ verify_bunnybox_install() {
     local mmu_params
     mmu_params="$(find_mmu_params)" || mmu_params=""
     if [ -n "$mmu_params" ] && [ -f "$mmu_params" ]; then
-        if grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$mmu_params" && \
-           grep -q '^heater_vent_interval: 5' "$mmu_params"; then
-            ok "mmu_parameters.cfg (vent macro configured) at $mmu_params"
-        else
-            warn "mmu_parameters.cfg - vent macro not set correctly"
-            all_ok=false
-        fi
+        ok "mmu_parameters.cfg present at $mmu_params"
     else
         err "mmu_parameters.cfg missing under ${CONFIG_DIR}/mmu/"
         all_ok=false
@@ -758,9 +749,19 @@ run_all_verifiers() {
         info "Idle Fan Shutdown not installed"
     fi
     if qidi_box_write_enabled; then
-        ok "HELIX_QIDI_BOX_WRITE drop-in present"
+        if bunnybox_installed; then
+            warn "HELIX_QIDI_BOX_WRITE drop-in present while BunnyBox is installed"
+            warn "  → HelixScreen and Happy Hare will both try to drive the Box."
+            warn "  → Remove with: sudo rm ${QIDI_BOX_WRITE_DROPIN} && sudo systemctl daemon-reload && sudo systemctl restart helixscreen"
+        else
+            ok "HELIX_QIDI_BOX_WRITE drop-in present"
+        fi
     else
-        info "HELIX_QIDI_BOX_WRITE not enabled"
+        if bunnybox_installed; then
+            ok "HELIX_QIDI_BOX_WRITE drop-in absent (BunnyBox owns the Box write path)"
+        else
+            info "HELIX_QIDI_BOX_WRITE not enabled"
+        fi
     fi
     find_duplicate_macros
     fix_known_klipper_conflicts
@@ -891,7 +892,8 @@ fix_known_klipper_conflicts() {
     #    Comment them out so box_extras.py's implementation is used.
     local bbmacros="${CONFIG_DIR}/bunnybox_macros.cfg"
     if [ -f "$bbmacros" ] && \
-       [ -f "${HOME}/klipper/klippy/extras/box_extras.py" ]; then
+       { [ -f "${HOME}/klipper/klippy/extras/box_extras.py" ] || \
+         [ -f "${HOME}/klipper/klippy/extras/box_extras.so" ]; }; then
         local bb_changed=0
         for macro in TOOL_CHANGE_START TOOL_CHANGE_END; do
             if grep -q "^\[gcode_macro ${macro}\]" "$bbmacros" 2>/dev/null; then
@@ -1048,39 +1050,11 @@ install_bunnybox_helixscreen() {
         fetch "${REPO_BASE}/box_drying.cfg" "${CONFIG_DIR}/box_drying.cfg" || return 1
         ok "box_drying.cfg installed"
 
-        banner "Configuring Happy Hare Environment Manager"
-        local mmu_params
-        mmu_params="$(find_mmu_params)" || mmu_params=""
-        if [ -n "$mmu_params" ] && [ -f "$mmu_params" ]; then
-            info "mmu_parameters.cfg found at: $mmu_params"
-            local changed=0
-            if grep -q '^heater_vent_macro:' "$mmu_params"; then
-                if ! grep -q '^heater_vent_macro: _QIDI_BOX_VENT' "$mmu_params"; then
-                    sed -i 's/^heater_vent_macro:.*/heater_vent_macro: _QIDI_BOX_VENT/' "$mmu_params"
-                    changed=1
-                fi
-            else
-                echo "heater_vent_macro: _QIDI_BOX_VENT" >> "$mmu_params"
-                changed=1
-            fi
-            if grep -q '^heater_vent_interval:' "$mmu_params"; then
-                if ! grep -q '^heater_vent_interval: 5' "$mmu_params"; then
-                    sed -i 's/^heater_vent_interval:.*/heater_vent_interval: 5/' "$mmu_params"
-                    changed=1
-                fi
-            else
-                echo "heater_vent_interval: 5" >> "$mmu_params"
-                changed=1
-            fi
-            if [ $changed -eq 1 ]; then
-                ok "mmu_parameters.cfg patched (heater_vent_macro + interval)"
-            else
-                ok "mmu_parameters.cfg already correct"
-            fi
-        else
-            warn "mmu_parameters.cfg not found under ${CONFIG_DIR}/mmu/"
-            warn "Manually set heater_vent_macro: _QIDI_BOX_VENT and heater_vent_interval: 5"
-        fi
+        # NOTE: We deliberately do NOT patch heater_vent_macro /
+        # heater_vent_interval in mmu_parameters.cfg. Happy Hare's vent
+        # feature is for MMU enclosures with motorized (servo-controlled)
+        # vents; the Qidi Box has a manual vent so the periodic macro fire
+        # would do nothing useful and only add background overhead.
 
         banner "Applying KAMP settings"
         fetch "${REPO_BASE}/KAMP_settings.cfg" "${CONFIG_DIR}/KAMP_Settings.cfg" || return 1
@@ -1101,7 +1075,15 @@ install_bunnybox_helixscreen() {
 
         fix_known_klipper_conflicts
 
-        install_qidi_box_write
+        # HELIX_QIDI_BOX_WRITE gates HelixScreen's native AMS write path
+        # (load_filament, unload_filament, change_tool, set_tool_mapping).
+        # With BunnyBox + Happy Hare driving the Box via MMU macros, having
+        # HelixScreen also drive the Box natively causes contention. Strip
+        # the drop-in if it exists; do not install it.
+        if qidi_box_write_enabled; then
+            info "Removing HELIX_QIDI_BOX_WRITE drop-in (BunnyBox owns the Box write path)..."
+            uninstall_qidi_box_write
+        fi
 
         verify_qidi_box_helixscreen
 
@@ -1197,13 +1179,12 @@ ${C_BOLD}What it can install:${C_RESET}
     - box_drying.cfg: spool rotation during filament drying using
       Happy Hare's Environment Manager, with humidity-based early
       termination via the AHT2X sensor
-    - Patches mmu_parameters.cfg (heater_vent_macro + interval)
     - KAMP adaptive bed meshing
-    - ${C_CYAN}Qidi Box write support${C_RESET}: installs a systemd drop-in that sets
-      HELIX_QIDI_BOX_WRITE=1, enabling interactive Box control from
-      HelixScreen (load/unload filament, change_tool, set_tool_mapping).
-      Upstream flags this as field-testing; a confirm prompt is shown
-      during install with a 5-second default-yes timeout.
+    - ${C_CYAN}Strips the HELIX_QIDI_BOX_WRITE drop-in${C_RESET} if present.
+      That env var lets HelixScreen drive the Qidi Box natively
+      (load_filament, unload_filament, change_tool, set_tool_mapping).
+      With BunnyBox + Happy Hare driving the Box via MMU macros, having
+      HelixScreen also drive it natively causes contention.
     - helixscreen_settings.json: AMS spool style set to '3d' for
       Qidi Box slot visualization in the HelixScreen AMS panel
     - Post-install verification: checks box.cfg, [box_stepper] sections,
@@ -1219,8 +1200,8 @@ ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' performs a full upstream-style restore:
     re-enables lightdm + makerbase-client, then rsyncs the newest
     timestamped backup from ${BACKUP_ROOT}/ back into place.
-  - Uninstall also removes the HELIX_QIDI_BOX_WRITE drop-in and
-    restarts the helixscreen service.
+  - Uninstall also removes the HELIX_QIDI_BOX_WRITE drop-in (if any)
+    and restarts the helixscreen service.
 
 ${C_BOLD}Safety:${C_RESET}
   Every install and uninstall first writes a timestamped backup of
@@ -1228,8 +1209,6 @@ ${C_BOLD}Safety:${C_RESET}
   Refuses to run as root.
 
 ${C_BOLD}Known limitations:${C_RESET}
-  - ${C_YELLOW}HELIX_QIDI_BOX_WRITE${C_RESET} is field-testing per upstream HelixScreen.
-    Bad commands to the Box hardware are possible. Review before enabling.
   - HelixScreen has ${C_YELLOW}no native dryer progress UI${C_RESET} yet.
     Use the BOX_DRY macro (or Klipper console) to trigger drying.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
@@ -1260,10 +1239,21 @@ show_status_line() {
     else
         idle_status="${C_YELLOW}off${C_RESET}"
     fi
-    if qidi_box_write_enabled; then
-        box_write_status="${C_GREEN}on${C_RESET}"
+    # With BunnyBox installed, the HELIX_QIDI_BOX_WRITE drop-in conflicts
+    # with Happy Hare's MMU control of the Box — so "off" is the desired
+    # state. Without BunnyBox, "on" is fine for native HelixScreen control.
+    if bunnybox_installed; then
+        if qidi_box_write_enabled; then
+            box_write_status="${C_YELLOW}on (conflict)${C_RESET}"
+        else
+            box_write_status="${C_GREEN}off${C_RESET}"
+        fi
     else
-        box_write_status="${C_YELLOW}off${C_RESET}"
+        if qidi_box_write_enabled; then
+            box_write_status="${C_GREEN}on${C_RESET}"
+        else
+            box_write_status="${C_YELLOW}off${C_RESET}"
+        fi
     fi
     printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b\n' \
            "$bb_status" "$hs_status" "$idle_status" "$box_write_status"
