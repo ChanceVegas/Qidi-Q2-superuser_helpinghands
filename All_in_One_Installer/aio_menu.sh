@@ -119,7 +119,7 @@ qidi_box_write_enabled() {
 
 # Enable HelixScreen's experimental Qidi Box WRITE ops (load_filament,
 # unload_filament, change_tool, set_tool_mapping). Upstream flags this
-# as field-testing - per RC1 policy it ships enabled by default.
+# as field-testing; a confirm prompt (5s default yes) gates the install.
 install_qidi_box_write() {
     banner "Enabling HELIX_QIDI_BOX_WRITE (Qidi Box interactive control)"
     warn "Upstream marks this as field-testing. Read/write Qidi Box ops"
@@ -297,7 +297,7 @@ purge_happy_hare_all() {
 
     # Moonraker update_manager / mmu sections - delete the section and
     # its body up to the next section header or EOF.
-    local moon_conf="${HOME}/printer_data/config/moonraker.conf"
+    local moon_conf="${CONFIG_DIR}/moonraker.conf"
     if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
         cp "$moon_conf" "${moon_conf}.aio-bak"
         sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"

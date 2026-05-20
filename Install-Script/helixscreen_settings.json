@@ -22,14 +22,14 @@
   },
   "input": {
     "calibration": {
-      "a": 1.7055838108062744,
-      "b": -0.009690816514194012,
-      "c": -7.862023830413818,
-      "d": -0.0,
-      "e": 1.795454502105713,
-      "f": -1.6590895652770996,
+      "a": 1.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "e": 1.0,
+      "f": 0.0,
       "swap_axes": false,
-      "valid": true
+      "valid": false
     },
     "jitter_threshold": 5,
     "scroll_limit": 10,
@@ -37,7 +37,7 @@
     "touch_device": ""
   },
   "label_printer": {
-    "address": "192.168.254.33",
+    "address": "",
     "port": 631,
     "protocol": "ipp"
   },
@@ -79,17 +79,17 @@
       },
       "filament": {
         "external_spool": {
-          "assigned": true,
-          "bed_temp": 100,
-          "brand": "Qidi",
+          "assigned": false,
+          "bed_temp": 0,
+          "brand": "",
           "color_rgb": 0,
-          "material": "ABS",
+          "material": "",
           "nozzle_temp_max": 0,
           "nozzle_temp_min": 0,
-          "remaining_weight_g": 541.3094482421875,
-          "spool_name": "Qidi ABS - ABS Rapido",
-          "spoolman_id": 3,
-          "total_weight_g": 1220.0
+          "remaining_weight_g": 0.0,
+          "spool_name": "",
+          "spoolman_id": -1,
+          "total_weight_g": 0.0
         }
       },
       "filament_sensors": {
@@ -236,7 +236,7 @@
         "strip": "output_pin caselight"
       },
       "moonraker_api_key": false,
-      "moonraker_host": "192.168.254.210",
+      "moonraker_host": "127.0.0.1",
       "moonraker_port": 100,
       "panel_widgets": {
         "home": {
