@@ -52,7 +52,7 @@ Plugins/                   ← Stock plugin reference. DO NOT MODIFY.
 
 1. **Never modify** `Configurations/` or `Plugins/` — read-only stock Qidi mirrors.
 2. **Never push to `main` directly** — all work goes on a `claude/*` branch; merge via PR.
-3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC3`).
+3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC4`).
 4. **`bash -n` before every commit** touching any `.sh` file.
 5. **`python3 -m json.tool` before every commit** touching any `.json` file.
 6. **Do not run `aio_menu.sh` as root** — the script self-enforces this.
@@ -88,14 +88,14 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 ```
 1) Install BunnyBox & HelixScreen   (Q2 with Qidi Box)
 2) Install Just Faster Printer      (Q2 without Box)
-3) Uninstall BunnyBox only
-4) Uninstall HelixScreen only
-5) Uninstall Both
-6) Revert to Backup                 (uninstall both + restore)
-7) Idle Fan Shutdown                (10m idle, temp-gated)
-8) About
+3) Revert to Backup                 (full uninstall + restore stock)
+4) Idle Fan Shutdown                (10m idle, temp-gated)
+5) About
+6) Run all verifiers
 0) Exit
 ```
+
+Per-component uninstall options (BunnyBox-only / HelixScreen-only / Both) were removed in RC4. Revert to Backup is the single uninstall path and delegates to `uninstall_bunnybox()` and `uninstall_helixscreen()` internally before restoring from `_FIRST_STOCK`.
 
 ## Autonomous-Session Policy
 
@@ -128,9 +128,19 @@ Merged to `main` via PR #1 (2026-05-20):
 - `update_qidi_box_dropin` migration helper
 - `/release` slash command for version bump + changelog + tag + push
 
-## RC3 — Candidate Features (not yet implemented)
+## RC4 — Candidate Features (not yet implemented)
 
 - Automate Mainsail install (add as a new menu option)
+- Symmetric `uninstall_just_faster()` (option 2 currently has no individual uninstall path; Revert to Backup is the only way to undo it)
+
+## RC4 — What's In It
+
+- `AIO_VERSION='RC4'`
+- **`purge_happy_hare_all()`** now removes Happy Hare v3's package layout: `~/klipper/klippy/extras/mmu/` directory and all `mmu_*.py` symlinks (mmu_espooler, mmu_servo, mmu_led_effect). The previous v2-style file list missed everything in v3, leaving the mmu package live in Klipper after uninstall — which caused `CLEAR_TOOLCHANGE_STATE already registered` crashes when `box_extras.so` tried to re-register the same command.
+- **`purge_happy_hare_all()`** now removes root-level KAMP files (`KAMP_Settings.cfg`, `Adaptive_Meshing.cfg`, `Line_Purge.cfg`, `Smart_Park.cfg`). The stale BunnyBox-shipped `KAMP_Settings.cfg` was defining `BED_MESH_CALIBRATE` and clashing with `Adaptive_Meshing.cfg`. `fix_printer_cfg_after_uninstall()` handles the resulting orphan `[include]` lines.
+- **`restore_aio_disabled_macros()`** (new) — reverses the `## AIO_DISABLED:` prefixes that `fix_known_klipper_conflicts()` applies to `box1.cfg` (T0-T3, UNLOAD_T0-T3) and `gcode_macro.cfg` (EXTRUSION_AND_FLUSH). Called from `purge_happy_hare_all()` so uninstall restores Qidi's native tool-change buttons and the flush macro.
+- **Menu simplified**: options 3 (Uninstall BunnyBox), 4 (Uninstall HelixScreen), 5 (Uninstall Both) removed. Revert to Backup is the single uninstall path; it now delegates to `uninstall_helixscreen()` and `uninstall_bunnybox()` internally so it picks up every cleanup step (qidi-box-write systemd drop-in, helixscreen state dir, moonraker bak, restore_aio_disabled_macros, fix_printer_cfg_after_uninstall).
+- Remaining menu numbers: `3) Revert`, `4) Idle Fan Shutdown`, `5) About`, `6) Run all verifiers`.
 
 ## RC3 — What's In It
 
