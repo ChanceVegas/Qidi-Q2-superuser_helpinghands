@@ -111,7 +111,13 @@ chmod +x aio_menu.sh
 
 ## Known limitations
 
-- **HelixScreen has no native UI panel for Happy Hare's dryer yet.** Use the `BOX_DRY` macro or the Klipper console as a workaround.
+- **HelixScreen has no native UI panel for Happy Hare's dryer yet.** Workaround: add a HelixScreen macro shortcut to the main menu touchscreen that fires `BOX_DRY`. From the HelixScreen settings (gear icon → Macros → Add), create entries like:
+  - **"Dry PLA"** → `BOX_DRY TEMP=45 TIME=240`
+  - **"Dry PETG"** → `BOX_DRY TEMP=55 TIME=300`
+  - **"Dry ABS"** → `BOX_DRY TEMP=60 TIME=360`
+  - **"Stop Drying"** → `BOX_DRY_STOP`
+
+  They'll then appear as one-tap buttons on the HelixScreen main menu. You can also run them from the Klipper console at any time.
 - **`MMU_CALIBRATE_GEAR` is required after clean installs.**
 - **BunnyBox currently requires HelixScreen for MMU workflows** — the stock Qidi screen does not yet expose the MMU UI.
 
