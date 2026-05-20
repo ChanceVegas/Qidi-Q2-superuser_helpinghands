@@ -6,7 +6,7 @@ A single ANSI-colored bash menu that drives every supported install and uninstal
 ============================================
    Qidi Q2 Superuser - AIO Setup Menu
 ============================================
-  BunnyBox: not found   |   HelixScreen: not found
+  BunnyBox: not found   |   HelixScreen: not found   |   IdleFan: off
 --------------------------------------------
   INSTALL
    1) Install BunnyBox & HelixScreen   (Q2 with Qidi Box)
@@ -16,8 +16,10 @@ A single ANSI-colored bash menu that drives every supported install and uninstal
    4) Uninstall HelixScreen only
    5) Uninstall Both
    6) Revert to Backup                 (uninstall both + restore)
+  ADDONS
+   7) Idle Fan Shutdown                (10m idle, temp-gated)
   INFO
-   7) About
+   8) About
    0) Exit
 ============================================
 Enter selection:
@@ -35,10 +37,10 @@ Enter selection:
 SSH into the Q2 as `mks`, then:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/All_in_One_Installer/aio_menu.sh)
+curl -sSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/All_in_One_Installer/aio_menu.sh | bash
 ```
 
-That fetches the latest `aio_menu.sh` and runs it interactively. The menu reads from `/dev/tty`, so prompts work correctly under `curl | bash`.
+That fetches the latest `aio_menu.sh` and runs it interactively. All menu prompts read from `/dev/tty`, so they still work correctly under `curl | bash`.
 
 > **Tip:** prefer to review before running? Use the "Download then run" path below.
 
@@ -71,8 +73,9 @@ chmod +x aio_menu.sh
 | 3 | Uninstall **BunnyBox only** | Remove Happy Hare MMU but keep HelixScreen. |
 | 4 | Uninstall **HelixScreen only** | Restore stock screen but keep BunnyBox. |
 | 5 | Uninstall **Both** | Remove BunnyBox and HelixScreen. Does **not** restore stock configs. |
-| 6 | **Revert to Backup** | Full upstream-style stock restore: removes BunnyBox + HelixScreen, re-enables `lightdm` + `makerbase-client`, then rsyncs the newest timestamped backup from `/home/mks/mudstockbackups/` back into `/home/mks/printer_data/config/`. |
-| 7 | About | Plain-text explanation of what the AIO does. |
+| 6 | **Revert to Backup** | Full upstream-style stock restore: explicitly purges every install-managed path (Happy Hare source, `mmu/`, klipper/moonraker extras, moonraker.conf sections, Idle Fan Shutdown), re-enables `lightdm` + `makerbase-client`, restores from `_FIRST_STOCK` (or oldest timestamped backup) under `/home/mks/mudstockbackups/`, then removes all backup directories. |
+| 7 | **Idle Fan Shutdown** (addon) | Toggle. After 10 minutes idle, powers down fans + heaters unless extruder/bed/chamber temps are still above safe thresholds. Re-checks every 60 s while temps remain unsafe. |
+| 8 | About | Plain-text explanation of what the AIO does. |
 | 0 | Exit | Quit. |
 
 ## Safety net
