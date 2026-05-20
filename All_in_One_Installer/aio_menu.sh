@@ -34,6 +34,84 @@ HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
 
+idle_fan_shutdown_installed() {
+    [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] && \
+    grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null
+}
+
+uninstall_idle_fan_shutdown() {
+    banner "Removing idle_fan_shutdown addon"
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    if [ -f "$pcfg" ]; then
+        if grep -q '^\[include idle_fan_shutdown\.cfg\]' "$pcfg"; then
+            sed -i '/^\[include idle_fan_shutdown\.cfg\]/d' "$pcfg"
+            ok "Removed [include idle_fan_shutdown.cfg] from printer.cfg"
+        fi
+        # Re-enable any [idle_timeout] section we previously disabled.
+        if grep -q '^#\[idle_timeout\] # disabled by AIO' "$pcfg"; then
+            sed -i 's|^#\[idle_timeout\] # disabled by AIO - see idle_fan_shutdown.cfg|[idle_timeout]|' "$pcfg"
+            ok "Re-enabled previously-disabled [idle_timeout] in printer.cfg"
+        fi
+    fi
+    rm -f "${CONFIG_DIR}/idle_fan_shutdown.cfg"
+    ok "idle_fan_shutdown addon removed"
+}
+
+# Menu wrapper - present an install/uninstall/cancel choice depending
+# on current state.
+menu_idle_fan_shutdown() {
+    banner "Idle Fan Shutdown addon"
+    if idle_fan_shutdown_installed; then
+        info "Status: INSTALLED"
+        info "After 10 minutes idle, fans + heaters power down unless"
+        info "any temperature sensor reports an unsafe value."
+        if confirm "Uninstall Idle Fan Shutdown addon?"; then
+            uninstall_idle_fan_shutdown
+        fi
+    else
+        info "Status: not installed"
+        info "Powers down all fans + heaters after 10 minutes idle,"
+        info "unless extruder/bed/chamber temps are still hot."
+        info "Re-checks every 60s while temps remain unsafe."
+        if confirm "Install Idle Fan Shutdown addon now?"; then
+            preflight || { press_enter; return 1; }
+            install_idle_fan_shutdown || warn "Setup had problems (see above)"
+            info "FIRMWARE_RESTART to activate."
+        fi
+    fi
+    press_enter
+}
+
+# Drop idle_fan_shutdown.cfg into CONFIG_DIR and patch printer.cfg so
+# it's included. Idempotent - safe to re-run. Comments out any
+# pre-existing [idle_timeout] section in printer.cfg first because
+# Klipper errors on duplicate sections.
+install_idle_fan_shutdown() {
+    banner "Installing idle_fan_shutdown.cfg (10m idle → fans off, temp-gated)"
+    fetch "${REPO_BASE}/idle_fan_shutdown.cfg" \
+          "${CONFIG_DIR}/idle_fan_shutdown.cfg" || return 1
+
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    if [ -f "$pcfg" ]; then
+        # Neutralise any existing [idle_timeout] - our include owns it.
+        if grep -q '^\[idle_timeout\]' "$pcfg"; then
+            sed -i 's/^\[idle_timeout\]/#[idle_timeout] # disabled by AIO - see idle_fan_shutdown.cfg/' "$pcfg"
+            ok "Disabled pre-existing [idle_timeout] in printer.cfg"
+        fi
+        if ! grep -q '^\[include idle_fan_shutdown\.cfg\]' "$pcfg"; then
+            # Insert near the other [include ...] lines at the top.
+            sed -i '0,/^\[include /{ /^\[include / i\
+[include idle_fan_shutdown.cfg]  # 10m idle fan/heater shutdown (AIO)
+}' "$pcfg"
+            ok "Added [include idle_fan_shutdown.cfg] to printer.cfg"
+        else
+            ok "[include idle_fan_shutdown.cfg] already present"
+        fi
+    else
+        warn "printer.cfg not found - idle_fan_shutdown.cfg installed but not included"
+    fi
+}
+
 # Locate mmu_parameters.cfg at runtime - Happy Hare puts it directly
 # under ${CONFIG_DIR}/mmu/ in current versions, but older installs and
 # the original handoff doc reference ${CONFIG_DIR}/mmu/base/. Check both.
@@ -372,6 +450,12 @@ revert_to_backup() {
     # succeeded (or there was nothing to restore from) - we don't want
     # to nuke the only safety net after a failed restore.
     if [ "$restore_ok" = true ] || [ ! -d "$BACKUP_ROOT" ]; then
+        # Optional addons that might be installed outside Happy Hare
+        if [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] || \
+           grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
+            uninstall_idle_fan_shutdown
+        fi
+
         banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
         for d in "$HAPPY_HARE_DIR" "$HELIX_DIR" \
                  /home/mks/mudstockbackups /home/mks/mudinstallbackups; do
@@ -733,7 +817,7 @@ EOF
 
 # ---------- main menu ------------------------------------------------
 show_status_line() {
-    local bb_status hs_status
+    local bb_status hs_status idle_status
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
     else
@@ -744,7 +828,13 @@ show_status_line() {
     else
         hs_status="${C_YELLOW}not found${C_RESET}"
     fi
-    printf '  BunnyBox: %b   |   HelixScreen: %b\n' "$bb_status" "$hs_status"
+    if idle_fan_shutdown_installed; then
+        idle_status="${C_GREEN}on${C_RESET}"
+    else
+        idle_status="${C_YELLOW}off${C_RESET}"
+    fi
+    printf '  BunnyBox: %b   |   HelixScreen: %b   |   IdleFan: %b\n' \
+           "$bb_status" "$hs_status" "$idle_status"
 }
 
 draw_menu() {
@@ -762,8 +852,10 @@ draw_menu() {
     printf '   %s4)%s Uninstall HelixScreen only\n'                              "$C_CYAN" "$C_RESET"
     printf '   %s5)%s Uninstall Both\n'                                          "$C_CYAN" "$C_RESET"
     printf '   %s6)%s Revert to Backup                 (uninstall both + restore)\n' "$C_CYAN" "$C_RESET"
+    printf '  %sADDONS%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
+    printf '   %s7)%s Idle Fan Shutdown                (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
-    printf '   %s7)%s About\n'                                                   "$C_CYAN" "$C_RESET"
+    printf '   %s8)%s About\n'                                                   "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -816,7 +908,8 @@ main_loop() {
                     press_enter
                 fi
                 ;;
-            7) show_about ;;
+            7) menu_idle_fan_shutdown ;;
+            8) show_about ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
