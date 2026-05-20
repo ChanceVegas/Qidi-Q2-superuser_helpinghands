@@ -20,6 +20,9 @@
 
 set -uo pipefail
 
+# ---------- version --------------------------------------------------
+AIO_VERSION='RC1'
+
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
 BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
@@ -33,6 +36,118 @@ BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
+
+# Returns the installed HelixScreen version string (e.g. "0.99.66") or
+# empty if it can't be determined. Tries the binary, then a VERSION file.
+helixscreen_version() {
+    local v=""
+    if [ -x "${HELIX_DIR}/helixscreen" ]; then
+        v=$("${HELIX_DIR}/helixscreen" --version 2>/dev/null | head -n 1 | \
+            grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    fi
+    if [ -z "$v" ] && [ -f "${HELIX_DIR}/VERSION" ]; then
+        v=$(head -n 1 "${HELIX_DIR}/VERSION" 2>/dev/null | \
+            grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    fi
+    echo "$v"
+}
+
+# Compare two semver-ish strings. Returns 0 if $1 >= $2.
+helixscreen_version_ge() {
+    [ -z "$1" ] && return 1
+    local IFS=.
+    local -a have=($1) want=($2)
+    for i in 0 1 2; do
+        local h=${have[$i]:-0} w=${want[$i]:-0}
+        if [ "$h" -gt "$w" ]; then return 0; fi
+        if [ "$h" -lt "$w" ]; then return 1; fi
+    done
+    return 0
+}
+
+# Post-install sanity check for the Qidi Box read-path on HelixScreen.
+# Warns on missing pieces, never fails - the install is already done.
+verify_qidi_box_helixscreen() {
+    banner "Verifying Qidi Box read-path (HelixScreen >= v0.99.66)"
+
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    local boxcfg="${CONFIG_DIR}/box.cfg"
+    local fila_list="${CONFIG_DIR}/officiall_filas_list.cfg"
+
+    if [ ! -f "$boxcfg" ]; then
+        warn "box.cfg missing - HelixScreen cannot detect the Qidi Box"
+    elif ! grep -q '\[box_stepper' "$boxcfg" 2>/dev/null; then
+        warn "box.cfg present but no [box_stepper slot<N>] sections found"
+    else
+        ok "box.cfg includes [box_stepper] sections"
+    fi
+
+    if [ -f "$pcfg" ] && ! grep -q '^\[include box\.cfg\]' "$pcfg" 2>/dev/null; then
+        warn "printer.cfg does not [include box.cfg] - Qidi Box objects will not load"
+    elif [ -f "$pcfg" ]; then
+        ok "printer.cfg includes box.cfg"
+    fi
+
+    if [ ! -f "$fila_list" ]; then
+        warn "officiall_filas_list.cfg missing - filament temperature lookups will not work"
+        warn "(this is a Qidi stock file - restore it from a factory backup if absent)"
+    else
+        ok "officiall_filas_list.cfg present"
+    fi
+
+    local v
+    v=$(helixscreen_version)
+    if [ -z "$v" ]; then
+        warn "Could not determine HelixScreen version - Qidi Box requires >= v0.99.66"
+    elif helixscreen_version_ge "$v" "0.99.66"; then
+        ok "HelixScreen version ${v} supports Qidi Box AMS backend"
+    else
+        warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
+    fi
+}
+
+QIDI_BOX_WRITE_DROPIN='/etc/systemd/system/helixscreen.service.d/qidi-box-write.conf'
+
+qidi_box_write_enabled() {
+    [ -f "$QIDI_BOX_WRITE_DROPIN" ] && \
+    grep -q 'HELIX_QIDI_BOX_WRITE=1' "$QIDI_BOX_WRITE_DROPIN" 2>/dev/null
+}
+
+# Enable HelixScreen's experimental Qidi Box WRITE ops (load_filament,
+# unload_filament, change_tool, set_tool_mapping). Upstream flags this
+# as field-testing - per RC1 policy it ships enabled by default.
+install_qidi_box_write() {
+    banner "Enabling HELIX_QIDI_BOX_WRITE (Qidi Box interactive control)"
+    warn "Upstream marks this as field-testing. Read/write Qidi Box ops"
+    warn "will run from HelixScreen; misbehavior could send a bad command"
+    warn "to the Box hardware. Disable via Revert to Backup or by removing"
+    warn "${QIDI_BOX_WRITE_DROPIN}"
+
+    sudo mkdir -p "$(dirname "$QIDI_BOX_WRITE_DROPIN")"
+    sudo tee "$QIDI_BOX_WRITE_DROPIN" >/dev/null <<'EOF'
+# Written by Qidi Q2 Superuser AIO.
+# Enables HelixScreen's experimental Qidi Box write ops
+# (load_filament T<N>, unload_filament, change_tool, set_tool_mapping).
+[Service]
+Environment="HELIX_QIDI_BOX_WRITE=1"
+EOF
+    sudo systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl restart helixscreen 2>/dev/null || true
+    ok "HELIX_QIDI_BOX_WRITE=1 set; helixscreen restarted"
+}
+
+uninstall_qidi_box_write() {
+    if [ ! -f "$QIDI_BOX_WRITE_DROPIN" ]; then
+        return 0
+    fi
+    info "Removing HELIX_QIDI_BOX_WRITE drop-in..."
+    sudo rm -f "$QIDI_BOX_WRITE_DROPIN"
+    # Tidy the dir if empty
+    sudo rmdir "$(dirname "$QIDI_BOX_WRITE_DROPIN")" 2>/dev/null || true
+    sudo systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl restart helixscreen 2>/dev/null || true
+    ok "HELIX_QIDI_BOX_WRITE disabled"
+}
 
 idle_fan_shutdown_installed() {
     [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] && \
@@ -336,6 +451,9 @@ uninstall_bunnybox() {
 uninstall_helixscreen() {
     banner "Uninstalling HelixScreen"
 
+    # Remove our Qidi Box write env override before touching the service.
+    uninstall_qidi_box_write
+
     # Try HelixScreen's own remove path first so its installer can do
     # whatever cleanup it expects (releases.helixscreen.org honors
     # --remove). Fall back to manual systemd teardown if that fails.
@@ -454,6 +572,9 @@ revert_to_backup() {
         if [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] || \
            grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
             uninstall_idle_fan_shutdown
+        fi
+        if qidi_box_write_enabled; then
+            uninstall_qidi_box_write
         fi
 
         banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
@@ -692,6 +813,10 @@ install_bunnybox_helixscreen() {
               "${HELIX_CONFIG_DIR}/settings.json" || return 1
         ok "HelixScreen settings applied"
 
+        install_qidi_box_write
+
+        verify_qidi_box_helixscreen
+
         verify_bunnybox_install
     } 2>&1 | tee -a "$INSTALL_LOG"
 
@@ -769,6 +894,7 @@ show_about() {
     banner "About - Qidi Q2 Superuser AIO"
     cat <<EOF
 ${C_CYAN}Qidi Q2 Superuser - All-in-One Installer${C_RESET}
+${C_BOLD}Version:${C_RESET} ${AIO_VERSION}
 
 A community-built toolkit to unlock advanced features on the Qidi Q2
 3D printer beyond stock Qidi firmware. This menu is the single entry
@@ -817,7 +943,7 @@ EOF
 
 # ---------- main menu ------------------------------------------------
 show_status_line() {
-    local bb_status hs_status idle_status
+    local bb_status hs_status idle_status box_write_status
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
     else
@@ -833,14 +959,19 @@ show_status_line() {
     else
         idle_status="${C_YELLOW}off${C_RESET}"
     fi
-    printf '  BunnyBox: %b   |   HelixScreen: %b   |   IdleFan: %b\n' \
-           "$bb_status" "$hs_status" "$idle_status"
+    if qidi_box_write_enabled; then
+        box_write_status="${C_GREEN}on${C_RESET}"
+    else
+        box_write_status="${C_YELLOW}off${C_RESET}"
+    fi
+    printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b\n' \
+           "$bb_status" "$hs_status" "$idle_status" "$box_write_status"
 }
 
 draw_menu() {
     clear 2>/dev/null || true
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
-    printf '%s   Qidi Q2 Superuser - AIO Setup Menu%s\n'        "$C_BOLD$C_MAGENTA" "$C_RESET"
+    printf '%s   Qidi Q2 Superuser - AIO Setup Menu (%s)%s\n'   "$C_BOLD$C_MAGENTA" "$AIO_VERSION" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     show_status_line
     printf '%s--------------------------------------------%s\n' "$C_BOLD" "$C_RESET"
