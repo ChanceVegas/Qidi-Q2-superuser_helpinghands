@@ -716,26 +716,49 @@ install_bunnybox_helixscreen() {
     info "Install log: ${INSTALL_LOG}"
 
     {
-        banner "Pre-install: scanning for stale BunnyBox artifacts"
-        if detect_bunnybox_artifacts; then
-            warn "Stale BunnyBox artifacts found (listed above)."
-            warn "Their presence will make BunnyBox's installer think an"
-            warn "install already exists and prompt you for Reinstall / Revert."
-            if confirm "Remove all stale artifacts now for a clean install?"; then
+        banner "Pre-install: checking for existing Happy Hare install"
+        if bunnybox_installed; then
+            warn "An existing Happy Hare / BunnyBox install was found."
+            warn "${CONFIG_DIR}/mmu/ is present with mmu_parameters.cfg."
+            echo ""
+            printf '  %s1)%s Upgrade       — keep hardware configs, update firmware macros\n' "$C_CYAN" "$C_RESET"
+            printf '  %s2)%s Fresh install — erase all MMU files and start completely clean\n' "$C_CYAN" "$C_RESET"
+            printf '  %s0)%s Cancel\n' "$C_CYAN" "$C_RESET"
+            echo ""
+            local hh_choice=""
+            printf '%sSelection: %s' "$C_BOLD" "$C_RESET"
+            read -r hh_choice </dev/tty || hh_choice="0"
+            case "$hh_choice" in
+                1)
+                    info "Upgrade selected — BunnyBox will update macros and keep your hardware config"
+                    ;;
+                2)
+                    warn "Fresh install selected — purging all Happy Hare / BunnyBox files..."
+                    purge_happy_hare_all
+                    ok "MMU files cleared — BunnyBox will install fresh"
+                    ;;
+                *)
+                    info "Cancelled. Returning to the main menu."
+                    exit 99
+                    ;;
+            esac
+        elif detect_bunnybox_artifacts; then
+            warn "Partial/stale BunnyBox artifacts found (listed above)."
+            warn "Their presence may cause BunnyBox to behave unexpectedly."
+            if confirm "Remove stale artifacts for a clean install?"; then
                 rm -rf "${CONFIG_DIR}/mmu"
                 sudo rm -rf "$HAPPY_HARE_DIR"
                 rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
-                rm -f "${CONFIG_DIR}/box_drying.cfg"
                 for f in mmu.py mmu_machine.py mmu_leds.py; do
                     rm -f "${HOME}/klipper/klippy/extras/${f}"
                 done
                 rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
-                ok "Stale artifacts removed - BunnyBox installer will run as a fresh install"
+                ok "Stale artifacts removed — BunnyBox will install fresh"
             else
-                info "Leaving artifacts in place - BunnyBox will offer its own Reinstall/Revert menu"
+                info "Leaving artifacts — BunnyBox will offer its own Reinstall/Revert menu"
             fi
         else
-            ok "No stale artifacts - clean slate"
+            ok "No existing install found — clean slate"
         fi
 
         banner "Installing BunnyBox (Happy Hare MMU)"
