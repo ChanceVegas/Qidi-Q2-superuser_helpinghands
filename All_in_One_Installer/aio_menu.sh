@@ -274,8 +274,6 @@ purge_happy_hare_all() {
     if [ -f "${HAPPY_HARE_DIR}/install.sh" ]; then
         info "Running Happy Hare uninstaller (-d)..."
         sudo bash "${HAPPY_HARE_DIR}/install.sh" -d 2>/dev/null || true
-        info "Running Happy Hare uninstaller (-u)..."
-        sudo bash "${HAPPY_HARE_DIR}/install.sh" -u 2>/dev/null || true
     fi
 
     # Happy Hare source tree + config dirs (incl. its own dated backups)
@@ -503,11 +501,11 @@ uninstall_helixscreen() {
     uninstall_qidi_box_write
 
     # Try HelixScreen's own remove path first so its installer can do
-    # whatever cleanup it expects (releases.helixscreen.org honors
-    # --remove). Fall back to manual systemd teardown if that fails.
+    # whatever cleanup it expects. The installer flag is --uninstall
+    # (not --remove). Fall back to manual systemd teardown if that fails.
     if curl --fail --silent --head --max-time 5 "$HELIX_UNINSTALLER" >/dev/null 2>&1; then
         info "Running official HelixScreen uninstaller..."
-        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --remove || \
+        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --uninstall || \
             warn "HelixScreen uninstaller returned non-zero"
     fi
 
@@ -546,7 +544,7 @@ revert_to_backup() {
 
     if [ -d "$HELIX_DIR" ]; then
         info "HelixScreen detected - removing..."
-        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --remove || \
+        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --uninstall || \
             warn "HelixScreen uninstaller returned non-zero"
 
         info "Re-enabling stock Qidi screen services..."
