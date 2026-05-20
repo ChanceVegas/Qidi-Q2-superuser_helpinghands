@@ -883,6 +883,30 @@ fix_known_klipper_conflicts() {
         ok "Disabled duplicate EXTRUSION_AND_FLUSH in gcode_macro.cfg (bunnybox_macros.cfg owns it)"
     fi
 
+    # 5. TOOL_CHANGE_START / TOOL_CHANGE_END: Qidi's box_extras.py Python
+    #    plugin programmatically registers these gcode commands at startup when
+    #    [box_extras] is present. bunnybox_macros.cfg also defines them as
+    #    [gcode_macro] blocks → "already registered" crash on every boot.
+    #    BunnyBox itself labels them "Not currently used, kept for reference".
+    #    Comment them out so box_extras.py's implementation is used.
+    local bbmacros="${CONFIG_DIR}/bunnybox_macros.cfg"
+    if [ -f "$bbmacros" ] && \
+       [ -f "${HOME}/klipper/klippy/extras/box_extras.py" ]; then
+        local bb_changed=0
+        for macro in TOOL_CHANGE_START TOOL_CHANGE_END; do
+            if grep -q "^\[gcode_macro ${macro}\]" "$bbmacros" 2>/dev/null; then
+                awk -v target="[gcode_macro ${macro}]" '
+                    /^\[/ { in_section = ($0 == target) }
+                    { if (in_section) print "## AIO_DISABLED: " $0; else print $0 }
+                ' "$bbmacros" > "${bbmacros}.tmp" && mv "${bbmacros}.tmp" "$bbmacros"
+                bb_changed=1
+            fi
+        done
+        if [ $bb_changed -eq 1 ]; then
+            ok "Commented out TOOL_CHANGE_START/END in bunnybox_macros.cfg (box_extras.py owns them)"
+        fi
+    fi
+
     ok "Conflict resolution complete — FIRMWARE_RESTART to apply"
 }
 
