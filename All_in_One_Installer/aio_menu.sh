@@ -323,6 +323,40 @@ purge_happy_hare_all() {
     ok "Happy Hare / BunnyBox purge complete"
 }
 
+# Comment out [include ...] lines in printer.cfg whose target files no longer
+# exist so Klipper can start cleanly after uninstall.
+fix_printer_cfg_after_uninstall() {
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    [ -f "$pcfg" ] || return 0
+
+    banner "Fixing printer.cfg broken includes"
+    local changed=0
+
+    for f in bunnybox_macros.cfg box_drying.cfg idle_fan_shutdown.cfg \
+              KAMP_Settings.cfg Adaptive_Meshing.cfg Line_Purge.cfg Smart_Park.cfg; do
+        if [ ! -f "${CONFIG_DIR}/${f}" ] && \
+           grep -q "^\[include ${f}\]" "$pcfg" 2>/dev/null; then
+            sed -i "s/^\[include ${f}\]/# AIO: file missing  [include ${f}]/" "$pcfg"
+            ok "Commented out missing include: ${f}"
+            changed=1
+        fi
+    done
+
+    # mmu/ wildcard — comment out if the mmu/ dir is gone
+    if [ ! -d "${CONFIG_DIR}/mmu" ] && \
+       grep -q '^\[include mmu/' "$pcfg" 2>/dev/null; then
+        sed -i 's/^\[include mmu\/[^]]*\]/# AIO: file missing  &/' "$pcfg"
+        ok "Commented out missing include: mmu/*.cfg"
+        changed=1
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+        ok "printer.cfg patched — Klipper can now start without the removed files"
+    else
+        info "printer.cfg: no dangling includes found"
+    fi
+}
+
 # ---------- ANSI colors ----------------------------------------------
 if [ -t 1 ]; then
     C_RESET=$'\033[0m'
@@ -498,10 +532,8 @@ do_backup() {
 uninstall_bunnybox() {
     banner "Uninstalling BunnyBox / Happy Hare"
     purge_happy_hare_all
+    fix_printer_cfg_after_uninstall
     ok "BunnyBox / Happy Hare uninstalled"
-    warn "printer.cfg may still reference [include mmu/*.cfg] and"
-    warn "[include bunnybox_macros.cfg]. Klipper will error until you"
-    warn "restore stock printer.cfg from backup or reinstall."
     info "Backups: ${BACKUP_ROOT}/"
 }
 
@@ -553,11 +585,6 @@ uninstall_helixscreen() {
 # uninstall.sh).
 revert_to_backup() {
     banner "Revert to Backup (full stock restore)"
-
-    info "Backing up current state to /home/mks/mudinstallbackups..."
-    mkdir -p /home/mks/mudinstallbackups
-    rsync -a "${CONFIG_DIR}/" /home/mks/mudinstallbackups/ && \
-        ok "Pre-revert backup complete"
 
     if [ -d "$HELIX_DIR" ]; then
         info "HelixScreen detected - removing..."
@@ -641,15 +668,14 @@ revert_to_backup() {
         fi
 
         banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
-        for d in "$HAPPY_HARE_DIR" "$HELIX_DIR" \
-                 /home/mks/mudstockbackups /home/mks/mudinstallbackups; do
+        for d in "$HAPPY_HARE_DIR" "$HELIX_DIR" /home/mks/mudstockbackups; do
             if [ -d "$d" ]; then
                 sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
             fi
         done
     else
         warn "Restore failed - leaving backup directories in place for recovery."
-        info "Inspect: ${BACKUP_ROOT}/ and /home/mks/mudinstallbackups/"
+        info "Inspect: ${BACKUP_ROOT}/"
     fi
 
     banner "Revert complete"
