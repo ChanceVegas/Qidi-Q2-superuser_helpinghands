@@ -717,7 +717,61 @@ run_all_verifiers() {
     else
         info "HELIX_QIDI_BOX_WRITE not enabled"
     fi
+    find_duplicate_macros
     press_enter
+}
+
+# Scan every .cfg under CONFIG_DIR for duplicate [gcode_macro NAME] decls.
+# Klipper refuses to start with "gcode command X already registered" if any
+# macro name is defined twice across included files. This pinpoints exactly
+# which file pair is the conflict so the user can comment one out.
+find_duplicate_macros() {
+    banner "Scanning for duplicate gcode_macro declarations"
+
+    if [ ! -d "$CONFIG_DIR" ]; then
+        warn "Config directory not found - skipping scan"
+        return 0
+    fi
+
+    local tmp
+    tmp=$(mktemp /tmp/aio_macros.XXXXXX) || return 0
+
+    # Skip backup dirs Klipper does not load (Happy Hare's backup_hh_*,
+    # AIO's mmu-YYYYMMDD_HHMMSS, _FIRST_STOCK snapshot, install backups).
+    find "$CONFIG_DIR" -maxdepth 4 -type f -name '*.cfg' \
+        -not -path '*/backup_*/*' \
+        -not -path '*/mmu-2*/*' \
+        -not -path '*/_FIRST_STOCK/*' \
+        -print0 2>/dev/null | \
+    xargs -0 grep -Hn -E '^\[gcode_macro [^]]+\]' 2>/dev/null > "$tmp" || true
+
+    if [ ! -s "$tmp" ]; then
+        info "No gcode_macro declarations found under ${CONFIG_DIR}"
+        rm -f "$tmp"
+        return 0
+    fi
+
+    local dup_names
+    dup_names=$(awk -F'[][]' '{print $2}' "$tmp" | sed 's/^gcode_macro //' | \
+                sort | uniq -d)
+
+    if [ -z "$dup_names" ]; then
+        ok "No duplicate gcode_macro declarations"
+        rm -f "$tmp"
+        return 0
+    fi
+
+    warn "Duplicate gcode_macro declarations detected — Klipper will refuse to load:"
+    while IFS= read -r name; do
+        warn "  [gcode_macro ${name}]:"
+        grep -F "[gcode_macro ${name}]" "$tmp" | while IFS=: read -r path line _; do
+            warn "    ${path}:${line}"
+        done
+    done <<< "$dup_names"
+    warn "Comment out one of each duplicate, then FIRMWARE_RESTART."
+
+    rm -f "$tmp"
+    return 1
 }
 
 # ---------- install: BunnyBox & HelixScreen --------------------------
