@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC6'
+AIO_VERSION='RC7'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -36,6 +36,10 @@ BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
 KAMP_BASE='https://raw.githubusercontent.com/kyleisah/Klipper-Adaptive-Meshing-Purging/refs/heads/main/Configuration'
+# Mainsail is delegated to Camden-Winder's standalone installer, which
+# installs to /home/mks/mainsail on port 100 (Qidi's stock lighttpd owns
+# port 80) and patches moonraker.conf for CORS.
+MAINSAIL_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install-Script/install-mainsail.sh'
 
 # ---------- paths ----------------------------------------------------
 CONFIG_DIR='/home/mks/printer_data/config'
@@ -43,6 +47,10 @@ BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
+MAINSAIL_DIR='/home/mks/mainsail'
+MAINSAIL_NGINX_SITE_AVAIL='/etc/nginx/sites-available/mainsail'
+MAINSAIL_NGINX_SITE_ENABLED='/etc/nginx/sites-enabled/mainsail'
+MAINSAIL_PORT=100
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -252,6 +260,97 @@ install_idle_fan_shutdown() {
     else
         warn "printer.cfg not found - idle_fan_shutdown.cfg installed but not included"
     fi
+}
+
+# ---------- Mainsail (delegated to Camden-Winder's installer) --------
+# Mainsail is a standalone web UI; Camden's installer handles nginx,
+# moonraker CORS, and the port-100 mapping (Qidi's stock UI keeps port
+# 80). AIO just runs the installer and provides detection + uninstall.
+
+mainsail_installed() {
+    [ -f "${MAINSAIL_DIR}/index.html" ] && \
+    [ -f "$MAINSAIL_NGINX_SITE_AVAIL" ]
+}
+
+install_mainsail() {
+    banner "Installing Mainsail (Camden-Winder's installer)"
+    info "Mainsail will be available on http://<printer-ip>:${MAINSAIL_PORT}"
+    info "Qidi's stock web UI on port 80 is left untouched."
+
+    set +e
+    curl --fail --silent --show-error --location "$MAINSAIL_INSTALLER" | bash
+    local exit_code=$?
+    set -e
+    if [ $exit_code -ne 0 ]; then
+        err "Mainsail installer exited ${exit_code}"
+        return 1
+    fi
+
+    if mainsail_installed; then
+        ok "Mainsail installed at ${MAINSAIL_DIR}"
+    else
+        warn "Installer finished but Mainsail files not detected — check ${MAINSAIL_DIR}"
+    fi
+}
+
+uninstall_mainsail() {
+    banner "Removing Mainsail"
+    if [ -L "$MAINSAIL_NGINX_SITE_ENABLED" ] || [ -f "$MAINSAIL_NGINX_SITE_ENABLED" ]; then
+        sudo rm -f "$MAINSAIL_NGINX_SITE_ENABLED" && \
+            ok "Removed nginx symlink ${MAINSAIL_NGINX_SITE_ENABLED}"
+    fi
+    if [ -f "$MAINSAIL_NGINX_SITE_AVAIL" ]; then
+        sudo rm -f "$MAINSAIL_NGINX_SITE_AVAIL" && \
+            ok "Removed nginx site config ${MAINSAIL_NGINX_SITE_AVAIL}"
+    fi
+    if [ -d "$MAINSAIL_DIR" ]; then
+        rm -rf "$MAINSAIL_DIR" 2>/dev/null || sudo rm -rf "$MAINSAIL_DIR"
+        ok "Removed ${MAINSAIL_DIR}"
+    fi
+    if command -v nginx >/dev/null 2>&1; then
+        if sudo nginx -t >/dev/null 2>&1; then
+            sudo systemctl reload nginx 2>/dev/null || true
+            ok "nginx reloaded"
+        else
+            warn "nginx config test failed after Mainsail removal — check 'sudo nginx -t'"
+        fi
+    fi
+    ok "Mainsail removed"
+    info "Note: moonraker.conf CORS entries are left in place (harmless)."
+}
+
+verify_mainsail() {
+    if ! mainsail_installed; then
+        return 0
+    fi
+    if curl --fail --silent --max-time 3 "http://127.0.0.1:${MAINSAIL_PORT}/" \
+        -o /dev/null 2>&1; then
+        ok "Mainsail reachable on http://127.0.0.1:${MAINSAIL_PORT}"
+    else
+        warn "Mainsail files installed but port ${MAINSAIL_PORT} not responding"
+        warn "  → try: sudo systemctl restart nginx"
+    fi
+}
+
+menu_mainsail() {
+    banner "Mainsail addon"
+    if mainsail_installed; then
+        info "Status: INSTALLED on port ${MAINSAIL_PORT}"
+        info "Access via http://<printer-ip>:${MAINSAIL_PORT}"
+        if confirm "Uninstall Mainsail?"; then
+            uninstall_mainsail
+        fi
+    else
+        info "Status: not installed"
+        info "Mainsail is a web UI for Klipper/Moonraker. Installs to"
+        info "${MAINSAIL_DIR} and listens on port ${MAINSAIL_PORT}."
+        info "Qidi's stock UI on port 80 is not affected."
+        if confirm "Install Mainsail now?"; then
+            preflight || { press_enter; return 1; }
+            install_mainsail || warn "Setup had problems (see above)"
+        fi
+    fi
+    press_enter
 }
 
 # Locate mmu_parameters.cfg at runtime - Happy Hare puts it directly
@@ -687,6 +786,9 @@ revert_to_backup() {
            grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
             uninstall_idle_fan_shutdown
         fi
+        if mainsail_installed; then
+            uninstall_mainsail
+        fi
         if qidi_box_write_enabled; then
             uninstall_qidi_box_write
         fi
@@ -774,6 +876,11 @@ run_all_verifiers() {
         ok "idle_fan_shutdown.cfg installed and included in printer.cfg"
     else
         info "Idle Fan Shutdown not installed"
+    fi
+    if mainsail_installed; then
+        verify_mainsail
+    else
+        info "Mainsail not installed"
     fi
     if qidi_box_write_enabled; then
         if bunnybox_installed; then
@@ -1268,7 +1375,7 @@ EOF
 
 # ---------- main menu ------------------------------------------------
 show_status_line() {
-    local bb_status hs_status idle_status box_write_status
+    local bb_status hs_status idle_status box_write_status mainsail_status
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
     else
@@ -1283,6 +1390,11 @@ show_status_line() {
         idle_status="${C_GREEN}on${C_RESET}"
     else
         idle_status="${C_YELLOW}off${C_RESET}"
+    fi
+    if mainsail_installed; then
+        mainsail_status="${C_GREEN}installed${C_RESET}"
+    else
+        mainsail_status="${C_YELLOW}not found${C_RESET}"
     fi
     # With BunnyBox installed, the HELIX_QIDI_BOX_WRITE drop-in conflicts
     # with Happy Hare's MMU control of the Box — so "off" is the desired
@@ -1300,8 +1412,8 @@ show_status_line() {
             box_write_status="${C_YELLOW}off${C_RESET}"
         fi
     fi
-    printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b\n' \
-           "$bb_status" "$hs_status" "$idle_status" "$box_write_status"
+    printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b | Mainsail: %b\n' \
+           "$bb_status" "$hs_status" "$idle_status" "$box_write_status" "$mainsail_status"
 }
 
 draw_menu() {
@@ -1318,9 +1430,10 @@ draw_menu() {
     printf '   %s3)%s Revert to Backup                 (full uninstall + restore stock)\n' "$C_CYAN" "$C_RESET"
     printf '  %sADDONS%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '   %s4)%s Idle Fan Shutdown                (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
+    printf '   %s5)%s Mainsail                         (web UI on port 100)\n'   "$C_CYAN" "$C_RESET"
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
-    printf '   %s5)%s About\n'                                                   "$C_CYAN" "$C_RESET"
-    printf '   %s6)%s Run all verifiers\n'                                       "$C_CYAN" "$C_RESET"
+    printf '   %s6)%s About\n'                                                   "$C_CYAN" "$C_RESET"
+    printf '   %s7)%s Run all verifiers\n'                                       "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -1354,8 +1467,9 @@ main_loop() {
                 fi
                 ;;
             4) menu_idle_fan_shutdown ;;
-            5) show_about ;;
-            6) run_all_verifiers ;;
+            5) menu_mainsail ;;
+            6) show_about ;;
+            7) run_all_verifiers ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
