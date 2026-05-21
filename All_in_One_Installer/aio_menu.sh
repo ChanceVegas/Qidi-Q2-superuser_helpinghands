@@ -1275,7 +1275,7 @@ install_bunnybox_helixscreen() {
 
         banner "Installing BunnyBox (Happy Hare MMU)"
         set +e
-        wget -qO - "$BUNNYBOX_INSTALLER" | bash
+        curl --fail --silent --show-error --location "$BUNNYBOX_INSTALLER" | bash
         local bb_exit=$?
         set -e
         if [ $bb_exit -ne 0 ]; then
