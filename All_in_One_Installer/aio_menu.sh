@@ -1043,7 +1043,7 @@ _run_verifiers_core() {
 }
 
 run_all_verifiers() {
-    banner "Running all verifiers"
+    banner "Health Check / Run Verifiers"
     _run_verifiers_core
     press_enter
 }
@@ -1589,7 +1589,7 @@ draw_menu() {
     printf '   %s5)%s Mainsail                         (web UI on port 100)\n'   "$C_CYAN" "$C_RESET"
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
     printf '   %s6)%s About\n'                                                   "$C_CYAN" "$C_RESET"
-    printf '   %s7)%s Run all verifiers\n'                                       "$C_CYAN" "$C_RESET"
+    printf '   %s7)%s Health Check / Run Verifiers\n'                            "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
