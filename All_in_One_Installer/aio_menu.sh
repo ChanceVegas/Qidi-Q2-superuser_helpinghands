@@ -225,6 +225,7 @@ menu_idle_fan_shutdown() {
         info "Re-checks every 60s while temps remain unsafe."
         if confirm "Install Idle Fan Shutdown addon now?"; then
             preflight || { press_enter; return 1; }
+            do_backup || { press_enter; return 1; }
             install_idle_fan_shutdown || warn "Setup had problems (see above)"
             info "FIRMWARE_RESTART to activate."
         fi
@@ -347,6 +348,7 @@ menu_mainsail() {
         info "Qidi's stock UI on port 80 is not affected."
         if confirm "Install Mainsail now?"; then
             preflight || { press_enter; return 1; }
+            do_backup || { press_enter; return 1; }
             install_mainsail || warn "Setup had problems (see above)"
         fi
     fi
