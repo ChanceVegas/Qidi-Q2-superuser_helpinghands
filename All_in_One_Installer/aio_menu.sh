@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC8'
+AIO_VERSION='RC9'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1348,11 +1348,21 @@ install_bunnybox_helixscreen() {
         fetch "${REPO_BASE}/box_drying.cfg" "${CONFIG_DIR}/box_drying.cfg" || return 1
         ok "box_drying.cfg installed"
 
-        # NOTE: We deliberately do NOT patch heater_vent_macro /
-        # heater_vent_interval in mmu_parameters.cfg. Happy Hare's vent
-        # feature is for MMU enclosures with motorized (servo-controlled)
-        # vents; the Qidi Box has a manual vent so the periodic macro fire
-        # would do nothing useful and only add background overhead.
+        banner "Wiring spool rotation into Happy Hare drying"
+        local mmu_params
+        mmu_params="$(find_mmu_params)" || true
+        if [ -n "$mmu_params" ]; then
+            # heater_vent_macro is a general periodic callback fired by
+            # MMU_HEATER every heater_vent_interval minutes during drying.
+            # Point it at _QIDI_BOX_VENT so the gear steppers rotate spools
+            # throughout each drying cycle. Direction alternates each call
+            # so net filament travel stays near zero.
+            sed -i 's|^heater_vent_macro:.*|heater_vent_macro: _QIDI_BOX_VENT|' "$mmu_params"
+            sed -i 's|^heater_vent_interval:.*|heater_vent_interval: 5|' "$mmu_params"
+            ok "mmu_parameters.cfg: heater_vent_macro → _QIDI_BOX_VENT, interval → 5 min"
+        else
+            warn "mmu_parameters.cfg not found — spool rotation not wired; re-run option 1 after BunnyBox installs"
+        fi
 
         banner "Applying KAMP settings"
         fetch "${REPO_BASE}/KAMP_settings.cfg" "${CONFIG_DIR}/KAMP_Settings.cfg" || return 1
