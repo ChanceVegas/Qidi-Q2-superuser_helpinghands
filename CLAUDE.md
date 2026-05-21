@@ -52,7 +52,7 @@ Plugins/                   ← Stock plugin reference. DO NOT MODIFY.
 
 1. **Never modify** `Configurations/` or `Plugins/` — read-only stock Qidi mirrors.
 2. **Never push to `main` directly** — all work goes on a `claude/*` branch; merge via PR.
-3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC6`).
+3. **Bump `AIO_VERSION`** whenever `aio_menu.sh` changes (currently `RC8`).
 4. **`bash -n` before every commit** touching any `.sh` file.
 5. **`python3 -m json.tool` before every commit** touching any `.json` file.
 6. **Do not run `aio_menu.sh` as root** — the script self-enforces this.
@@ -82,6 +82,7 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 | `install_just_faster()` | JustFasterPrinter macros | (no AMS/Box) |
 | `install_idle_fan_shutdown()` | 10m idle fan+heater shutdown | `IdleFan: on/off` |
 | `install_qidi_box_write()` | HelixScreen HELIX_QIDI_BOX_WRITE drop-in | `BoxWrite: on/off` |
+| `install_mainsail()` | Mainsail web UI (delegates to Camden-Winder's installer) | `Mainsail: installed/not found` |
 
 ### Current Menu Layout
 
@@ -90,8 +91,9 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 2) Install Just Faster Printer      (Q2 without Box)
 3) Revert to Backup                 (full uninstall + restore stock)
 4) Idle Fan Shutdown                (10m idle, temp-gated)
-5) About
-6) Run all verifiers
+5) Mainsail                         (web UI on port 100)
+6) About
+7) Run all verifiers
 0) Exit
 ```
 
@@ -128,10 +130,27 @@ Merged to `main` via PR #1 (2026-05-20):
 - `update_qidi_box_dropin` migration helper
 - `/release` slash command for version bump + changelog + tag + push
 
-## RC6 — Candidate Features (not yet implemented)
+## RC8 — Candidate Features (not yet implemented)
 
-- Automate Mainsail install (add as a new menu option)
 - Symmetric `uninstall_just_faster()` (option 2 currently has no individual uninstall path; Revert to Backup is the only way to undo it)
+
+## RC8 — What's In It
+
+- `AIO_VERSION='RC8'`
+- **Post-revert sanity check**: `revert_to_backup()` now runs the full verifier sweep (`_run_verifiers_core`) at the end so any leftover problems (orphan includes, leftover MMU extras, duplicate macros, invalid Klipper options) are caught before the user is told the revert is complete. The same checks run from menu option 7.
+- **`check_invalid_klipper_options()`** — catches `timeout: 43200` misplaced inside `[bed_mesh]` (some Qidi stock printer.cfg versions ship it there; Klipper rejects with "Option 'timeout' is not valid in section 'bed_mesh'"). Prompts before fixing.
+- **`check_orphan_includes()`** — finds `[include X]` lines whose target file doesn't exist on disk and offers to comment them out. Prevents "Unable to open config file" boot failures.
+- **`check_leftover_mmu_artifacts()`** — detects surviving Happy Hare v3 `extras/mmu/` package, `mmu_*.py` symlinks, and active `[mmu*]` sections that escaped uninstall. Prompts before each cleanup.
+- **`run_all_verifiers()` refactored**: split into `_run_verifiers_core()` (no press_enter, callable from anywhere) and `run_all_verifiers()` (core + press_enter for the menu).
+
+## RC7 — What's In It
+
+- `AIO_VERSION='RC7'`
+- **Mainsail install added as menu option 5**: delegates to Camden-Winder's `install-mainsail.sh` (same `curl | bash` pattern we use for BunnyBox and HelixScreen). Mainsail listens on port 100; Qidi's stock lighttpd on port 80 is untouched.
+- **`install_mainsail()` / `uninstall_mainsail()` / `mainsail_installed()` / `verify_mainsail()` / `menu_mainsail()`** added per the install-function convention.
+- **Revert to Backup** now uninstalls Mainsail too (removes nginx site, `/home/mks/mainsail`, reloads nginx). Moonraker CORS entries are left in place (harmless).
+- **Status line** now shows `Mainsail: installed/not found`.
+- **Menu renumbered**: About → 6, Run all verifiers → 7.
 
 ## RC6 — What's In It
 
