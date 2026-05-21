@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC7'
+AIO_VERSION='RC8'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -804,6 +804,13 @@ revert_to_backup() {
         info "Inspect: ${BACKUP_ROOT}/"
     fi
 
+    # Post-revert sanity sweep: catch anything that would prevent Klipper
+    # from booting after the restore (bed_mesh timeout typo, orphan
+    # includes, leftover MMU artifacts, duplicate macros). Each fix is
+    # prompted before applying.
+    banner "Post-revert sanity check"
+    _run_verifiers_core
+
     banner "Revert complete"
     info "FIRMWARE_RESTART or reboot the printer to apply."
 }
@@ -864,8 +871,139 @@ verify_jfp_install() {
     fi
 }
 
-run_all_verifiers() {
-    banner "Running all verifiers"
+# Catch known Klipper config errors that prevent boot — currently the
+# `timeout: <n>` line that some Qidi stock printer.cfg versions misplace
+# inside [bed_mesh] (it belongs in [idle_timeout]). Prompts before fixing.
+check_invalid_klipper_options() {
+    banner "Checking for invalid Klipper config options"
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    if [ ! -f "$pcfg" ]; then
+        info "printer.cfg not found — skipping"
+        return 0
+    fi
+
+    # 1. timeout inside [bed_mesh] — Klipper rejects with "Option 'timeout'
+    #    is not valid in section 'bed_mesh'". Belongs in [idle_timeout].
+    if awk '/^\[bed_mesh\]/{flag=1; next} /^\[/{flag=0} flag && /^[[:space:]]*timeout[[:space:]]*:/{found=1} END{exit !found}' "$pcfg"; then
+        warn "Found 'timeout:' inside [bed_mesh] in printer.cfg (invalid — Klipper will refuse to boot)"
+        if confirm "Remove the bad 'timeout:' line from [bed_mesh]?"; then
+            awk '
+                /^\[bed_mesh\]/{flag=1; print; next}
+                /^\[/{flag=0; print; next}
+                flag && /^[[:space:]]*timeout[[:space:]]*:/{next}
+                {print}
+            ' "$pcfg" > "${pcfg}.tmp" && mv "${pcfg}.tmp" "$pcfg"
+            ok "Removed stale 'timeout:' from [bed_mesh]"
+        else
+            warn "Left as-is — Klipper boot will fail until removed manually"
+        fi
+    else
+        ok "No invalid options detected in [bed_mesh]"
+    fi
+}
+
+# Find [include X] lines whose target file doesn't exist on disk. Klipper
+# halts with "Unable to open config file" if any include is broken.
+check_orphan_includes() {
+    banner "Checking for orphan [include] lines"
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    if [ ! -f "$pcfg" ]; then
+        info "printer.cfg not found — skipping"
+        return 0
+    fi
+    local orphans=""
+    while IFS= read -r line; do
+        local target
+        target=$(echo "$line" | sed -n 's/^\[include[[:space:]]\+\([^]]*\)\].*/\1/p' | tr -d ' ')
+        [ -z "$target" ] && continue
+        # Resolve relative to CONFIG_DIR (Klipper's behavior)
+        local resolved="${CONFIG_DIR}/${target#./}"
+        if [ ! -f "$resolved" ]; then
+            orphans="${orphans}${line}|${target}"$'\n'
+        fi
+    done < <(grep -E '^\[include ' "$pcfg" 2>/dev/null || true)
+
+    if [ -z "$orphans" ]; then
+        ok "All [include] targets exist"
+        return 0
+    fi
+
+    warn "Orphan [include] lines reference missing files:"
+    echo "$orphans" | while IFS='|' read -r line target; do
+        [ -z "$target" ] && continue
+        warn "  ${line}   (missing: ${target})"
+    done
+    if confirm "Comment out all orphan [include] lines in printer.cfg?"; then
+        echo "$orphans" | while IFS='|' read -r line target; do
+            [ -z "$target" ] && continue
+            # Escape regex metacharacters in the include line
+            local escaped
+            escaped=$(printf '%s' "$line" | sed 's|[][\\.*^$/]|\\&|g')
+            sed -i "s|^${escaped}\$|# ${line}  # AIO: missing target ${target}|" "$pcfg"
+        done
+        ok "Orphan includes commented out"
+    else
+        warn "Left as-is — Klipper boot will fail until fixed manually"
+    fi
+}
+
+# Detect Happy Hare / MMU artifacts that survived an uninstall. The Klipper
+# extras dir is the main risk — if mmu_*.py or extras/mmu/ are still there
+# after revert, Klipper will try to re-register MMU gcode commands and crash.
+check_leftover_mmu_artifacts() {
+    banner "Checking for leftover MMU / Happy Hare artifacts"
+    local extras="${HOME}/klipper/klippy/extras"
+    local found=0
+
+    # extras/mmu/ package (Happy Hare v3)
+    if [ -d "${extras}/mmu" ]; then
+        warn "Found leftover Happy Hare v3 package: ${extras}/mmu/"
+        found=1
+        if confirm "Remove ${extras}/mmu/?"; then
+            sudo rm -rf "${extras}/mmu" && ok "Removed ${extras}/mmu/"
+        else
+            warn "Left in place — Klipper will load Happy Hare on next restart"
+        fi
+    fi
+
+    # mmu_*.py symlinks (espooler, servo, led_effect)
+    local stragglers
+    stragglers=$(find "$extras" -maxdepth 1 -name 'mmu_*.py' 2>/dev/null || true)
+    if [ -n "$stragglers" ]; then
+        warn "Found leftover Happy Hare symlinks:"
+        echo "$stragglers" | while read -r f; do warn "  $f"; done
+        found=1
+        if confirm "Remove these symlinks?"; then
+            echo "$stragglers" | while read -r f; do
+                sudo rm -f "$f" && ok "Removed $f"
+            done
+        else
+            warn "Left in place — Klipper will load MMU plugins on next restart"
+        fi
+    fi
+
+    # [mmu*] sections still active in printer.cfg
+    if grep -qE '^\[mmu' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
+        warn "Found active [mmu*] sections in printer.cfg:"
+        grep -nE '^\[mmu' "${CONFIG_DIR}/printer.cfg" | while read -r l; do warn "  $l"; done
+        found=1
+        if confirm "Comment out [mmu*] sections in printer.cfg?"; then
+            sed -i 's|^\(\[mmu.*\]\)|# \1  # AIO: disabled (MMU artifacts cleanup)|' \
+                "${CONFIG_DIR}/printer.cfg"
+            ok "Commented out [mmu*] sections"
+        else
+            warn "Left in place — Klipper will fail to start without MMU hardware config"
+        fi
+    fi
+
+    if [ $found -eq 0 ]; then
+        ok "No leftover MMU artifacts found"
+    fi
+}
+
+# Core verifier sequence. Runs from both menu option 7 and the tail of
+# revert_to_backup(). Does NOT call press_enter — that's the caller's job.
+_run_verifiers_core() {
     if bunnybox_installed; then
         verify_bunnybox_install
         verify_qidi_box_helixscreen
@@ -899,6 +1037,14 @@ run_all_verifiers() {
     fi
     fix_known_klipper_conflicts
     find_duplicate_macros
+    check_invalid_klipper_options
+    check_orphan_includes
+    check_leftover_mmu_artifacts
+}
+
+run_all_verifiers() {
+    banner "Running all verifiers"
+    _run_verifiers_core
     press_enter
 }
 
