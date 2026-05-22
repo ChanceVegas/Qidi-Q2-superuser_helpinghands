@@ -1608,6 +1608,30 @@ confirm() {
     esac
 }
 
+show_disclaimer() {
+    clear 2>/dev/null || true
+    printf '%s============================================%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
+    printf '%s   DISCLAIMER%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
+    printf '%s============================================%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
+    printf '\n'
+    printf '  This tool modifies Klipper configuration files on your\n'
+    printf '  Qidi Q2 printer. %sUse it at your own risk.%s\n' "$C_BOLD" "$C_RESET"
+    printf '\n'
+    printf '  The author is not responsible for any damage, malfunction,\n'
+    printf '  or data loss caused to your printer as a result of using\n'
+    printf '  this tool.\n'
+    printf '\n'
+    printf '  %sQidi states that any modifications to files on their\n' "$C_BOLD"
+    printf '  printers may void the manufacturer warranty.%s\n' "$C_RESET"
+    printf '\n'
+    printf '%s============================================%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
+    printf '\n'
+    if ! confirm "I understand and wish to continue"; then
+        info "Exiting."
+        exit 0
+    fi
+}
+
 main_loop() {
     while true; do
         draw_menu
@@ -1634,4 +1658,5 @@ main_loop() {
     done
 }
 
+show_disclaimer
 main_loop
