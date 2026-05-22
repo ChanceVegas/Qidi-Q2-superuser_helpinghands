@@ -28,9 +28,11 @@ REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpi
 BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 # Pinned to the minimum required release (>= v0.99.66 for Qidi Box support).
 # Update HELIXSCREEN_PIN when a newer stable release ships.
-# The installer script is always fetched from main; --version pins the binary.
+# Both the installer script AND the binary are pinned to the same tag so
+# upstream installer changes (e.g. generalization for other printers) don't
+# silently regress Q2 behavior.
 HELIXSCREEN_PIN='v0.99.66'
-HELIXSCREEN_INSTALLER='https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh'
+HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
