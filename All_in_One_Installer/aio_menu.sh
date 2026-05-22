@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC9'
+AIO_VERSION='RC10'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -702,6 +702,40 @@ uninstall_bunnybox() {
     fix_printer_cfg_after_uninstall
     ok "BunnyBox / Happy Hare uninstalled"
     info "Backups: ${BACKUP_ROOT}/"
+}
+
+# Switch the Q2's active display from the stock Qidi services
+# (lightdm + makerbase-client) to HelixScreen. Inverse of the
+# unmask/enable/restart block in uninstall_helixscreen().
+#
+# Why this exists: HelixScreen's upstream installer was written for the
+# Artillery M1 Pro and doesn't know about Qidi-specific display services.
+# Without this swap, lightdm + makerbase-client keep the stock UI on the
+# physical screen and HelixScreen never appears, even though the package
+# was installed correctly.
+switch_display_to_helixscreen() {
+    banner "Switching active display: stock Qidi → HelixScreen"
+    if [ ! -f /etc/systemd/system/helixscreen.service ]; then
+        warn "helixscreen.service not installed — display swap skipped"
+        warn "HelixScreen package may not have installed correctly. Check output above."
+        return 1
+    fi
+    sudo systemctl stop    makerbase-client  2>/dev/null || true
+    sudo systemctl disable makerbase-client  2>/dev/null || true
+    sudo systemctl mask    makerbase-client  2>/dev/null || true
+    sudo systemctl stop    lightdm           2>/dev/null || true
+    sudo systemctl disable lightdm           2>/dev/null || true
+    sudo systemctl mask    lightdm           2>/dev/null || true
+    sudo systemctl daemon-reload             2>/dev/null || true
+    sudo systemctl unmask  helixscreen       2>/dev/null || true
+    sudo systemctl enable  helixscreen       2>/dev/null || true
+    sudo systemctl restart helixscreen       2>/dev/null || true
+    if systemctl is-active --quiet helixscreen; then
+        ok "HelixScreen is active on the display"
+    else
+        warn "helixscreen.service is enabled but not active"
+        warn "  → check: systemctl status helixscreen"
+    fi
 }
 
 uninstall_helixscreen() {
@@ -1408,6 +1442,8 @@ install_bunnybox_helixscreen() {
         fetch "${REPO_BASE}/helixscreen_settings.json" \
               "${HELIX_CONFIG_DIR}/settings.json" || return 1
         ok "HelixScreen settings applied"
+
+        switch_display_to_helixscreen
 
         fix_known_klipper_conflicts
 
