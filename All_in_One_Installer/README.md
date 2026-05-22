@@ -2,7 +2,7 @@
 
 > **Disclaimer:** Use this tool at your own risk. The author is not responsible for any damage, malfunction, or data loss caused to your printer. Qidi states that any modifications to files on their printers may void the manufacturer warranty.
 
-A single ANSI-colored bash menu that drives every supported install, uninstall, and addon path for the Qidi Q2 community toolkit.
+A single menu that handles every install, uninstall, and addon path for the Qidi Q2 community toolkit — no more tracking which script does what.
 
 ```
 ============================================
@@ -23,19 +23,18 @@ A single ANSI-colored bash menu that drives every supported install, uninstall, 
    7) Health Check / Run Verifiers
    0) Exit
 ============================================
-Enter selection:
 ```
 
 ## Requirements
 
 - Qidi Q2 running stock Klipper firmware
 - SSH access as user `mks` (the default Qidi user)
-- Internet access from the printer (script downloads installers from GitHub)
+- Internet access from the printer
 - **Do not run as root** — the script will refuse to start
 
 ## Install
 
-SSH into the Q2 as `mks`, then run one of the following:
+SSH into the Q2 as `mks`, then:
 
 **One-liner:**
 ```bash
@@ -50,85 +49,76 @@ chmod +x aio_menu.sh
 ./aio_menu.sh
 ```
 
-All menu prompts read from `/dev/tty` so they work correctly under `curl | bash`.
+## Menu options
 
-## What each menu item does
-
-| # | Action | When to use |
+| # | Option | What it does |
 |---|--------|-------------|
-| 1 | Install **BunnyBox & HelixScreen** | Q2 with a Qidi Box. Installs Happy Hare MMU, HelixScreen UI, unified configs, `box_drying.cfg`, KAMP, and spool-rotation wiring. |
-| 2 | Install **Just Faster Printer** | Q2 without a Box. Keeps the stock Qidi screen. Cleaner macros, faster `PRINT_START`, KAMP, `screws_tilt_adjust`, Spoolman. |
-| 3 | **Revert to Backup** | Full stock restore. Removes BunnyBox, HelixScreen, all addons, restores from the first-run snapshot, then runs a full health check before finishing. |
-| 4 | **Idle Fan Shutdown** | Toggle. Powers down fans + heaters after 10 minutes idle, unless temps are still unsafe. |
-| 5 | **Mainsail** | Toggle. Installs Mainsail web UI on port 100; Qidi's stock UI on port 80 is untouched. Access at `http://<printer-ip>:100`. |
-| 6 | About | Version and info screen. |
-| 7 | **Health Check / Run Verifiers** | Non-destructive on-demand check. Scans for duplicate macros, orphan includes, invalid Klipper options, and leftover MMU artifacts. Prompts before fixing anything. |
-| 0 | Exit | Quit. |
+| 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the HelixScreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. |
+| 2 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, adaptive bed meshing, and Spoolman support. |
+| 3 | **Revert to Backup** | Fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. Runs a health check automatically at the end. |
+| 4 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
+| 5 | **Mainsail** | Addon toggle. Installs the Mainsail web interface, accessible at `http://<printer-ip>:100`. Qidi's stock UI on port 80 is unaffected. |
+| 6 | **About** | Shows the current AIO version and a brief description. |
+| 7 | **Health Check / Run Verifiers** | Scans your Klipper config for common problems — duplicate macros, broken include lines, invalid settings — and offers to fix each one before applying it. Safe to run any time. |
 
-Revert to Backup is the single uninstall path — there are no per-component uninstall options.
+## Filament drying (BunnyBox install only)
 
-## Filament drying presets
+After installing BunnyBox, the following one-tap drying macros are available from the Klipper console or HelixScreen. Spools rotate automatically throughout each cycle.
 
-After installing BunnyBox, these macros are available from the Klipper console or HelixScreen. Spools rotate automatically every 5 minutes throughout the cycle.
-
-| Macro | Temp | Time | Source |
-|---|---|---|---|
-| `DRY_PLA` | 45 °C | 4 h | Qidi + Bambu recommended |
-| `DRY_PETG` | 65 °C | 4 h | Qidi recommended |
-| `DRY_ABS` | 65 °C | 4 h | Bambu recommended |
-| `DRY_TPU` | 55 °C | 4 h | Bambu (max to avoid deformation) |
-| `DRY_PA` | 70 °C | 8 h | Qidi + Bambu recommended |
-
-Custom cycle: `BOX_DRY TEMP=<°C> TIME=<min> [HUMIDITY=<%>]`  
-Status: `BOX_DRY_STATUS` · Stop: `BOX_DRY_STOP` · Manual rotation: `BOX_ROTATE_SPOOLS`
-
-## Safety net
-
-- A timestamped backup of `/home/mks/printer_data/config/` is written to `/home/mks/mudstockbackups/` before every install. The first backup ever taken is preserved as `_FIRST_STOCK` — that's what Revert to Backup restores from.
-- Every uninstall confirms with `[y/N]` before proceeding.
-- The script refuses to run as `root`.
+| Macro | Temp | Time |
+|---|---|---|
+| `DRY_PLA` | 45 °C | 4 h |
+| `DRY_PETG` | 65 °C | 4 h |
+| `DRY_ABS` | 65 °C | 4 h |
+| `DRY_TPU` | 55 °C | 4 h |
+| `DRY_PA` | 70 °C | 8 h |
 
 ## After installing BunnyBox & HelixScreen
 
-1. `FIRMWARE_RESTART` (Klipper console or HelixScreen).
-2. Verify: `systemctl status klipper`.
-3. Run **option 7 (Health Check)** to confirm everything loaded correctly.
-4. **First-time only** — calibrate MMU gear steppers:
+1. Run `FIRMWARE_RESTART` from the Klipper console or HelixScreen.
+2. Run **option 7 (Health Check)** to verify everything loaded correctly.
+3. **First-time only:** calibrate the MMU gear steppers:
    ```
    MMU_CALIBRATE_GEAR GATE=0 LENGTH=100
    ```
-   Mark the filament, measure travel, re-run with `MEASURED=<mm>`.
-5. Start a drying cycle: run `DRY_PLA`, `DRY_PETG`, etc. from the console or HelixScreen.
+   Mark the filament at the entry point, measure how far it moved, then re-run with `MEASURED=<mm>`. Repeat for each gate.
+4. Load filament into each gate and start a drying preset if needed.
 
 ## After installing Just Faster Printer
 
-1. `FIRMWARE_RESTART`.
-2. Run a bed level + `SCREWS_TILT_CALCULATE` before your first print.
+1. Run `FIRMWARE_RESTART`.
+2. Run a bed level and `SCREWS_TILT_CALCULATE` before your first print.
+
+## Release history
+
+| Version | Notable additions |
+|---------|------------------|
+| RC9 | Automatic spool rotation during filament drying cycles |
+| RC8 | Health check runs automatically after every Revert to Backup; new config validators (orphan includes, invalid settings, leftover MMU files) |
+| RC7 | Mainsail web UI as a menu addon (option 5) |
+| RC6 | Fixed `BED_MESH_CALIBRATE` duplicate crash from older BunnyBox installs |
+| RC5 | Fixed Klipper startup crash caused by conflicting Box hardware drivers |
+| RC4 | Simplified uninstall — Revert to Backup is now the single restore path |
+| RC1–3 | Initial AIO release; HelixScreen + BunnyBox install/uninstall; idle fan shutdown addon |
 
 ## Known limitations
 
-- **Native Qidi Box AMS UI is unavailable while BunnyBox is installed.** Revert to Backup brings the stock UI back.
-- **HelixScreen has no native dryer UI.** Use the `DRY_*` macros from the console, or add them as HelixScreen macro shortcuts (gear icon → Macros → Add).
-- **`MMU_CALIBRATE_GEAR` is required after a clean install.**
-- **BunnyBox requires HelixScreen for MMU workflows** — the stock Qidi screen doesn't expose the MMU UI.
-- **HelixScreen is pinned to `v0.99.66`** — update `HELIXSCREEN_PIN` in `aio_menu.sh` when a newer stable release ships.
-- **Mainsail is always pulled from `latest`** — no version pinning.
+- **Native Qidi Box AMS panel is unavailable while BunnyBox is installed.** Revert to Backup restores it.
+- **HelixScreen has no built-in dryer UI.** Use the `DRY_*` macros from the console, or add them as HelixScreen macro shortcuts (gear icon → Macros → Add).
+- **MMU gear calibration is required after a fresh install.**
+- **BunnyBox requires HelixScreen** — the stock Qidi screen doesn't expose the MMU interface.
 
 ## Troubleshooting
 
-**`ERROR: Cannot reach raw.githubusercontent.com`** — No internet route from the printer. Check network settings.
+**`ERROR: Cannot reach raw.githubusercontent.com`** — No internet from the printer. Check network settings.
 
-**`ERROR: Config directory not found`** — Not a Qidi Q2 running Klipper, or not running as `mks`.
+**`ERROR: Config directory not found`** — Not running as `mks`, or this isn't a Klipper-based Q2.
 
-**`Option 'timeout' is not valid in section 'bed_mesh'`** — Some Qidi stock configs misplace `timeout: 43200` inside `[bed_mesh]`. Option 7 detects and fixes this.
+**Klipper won't start after install** — Run option 7 (Health Check). It will identify and offer to fix the most common causes.
 
-**`gcode command BED_MESH_CALIBRATE already registered`** — Older BunnyBox `KAMP_Settings.cfg` conflict. Option 7 re-fetches the correct file.
+**Klipper won't start after uninstall** — Use option 3 (Revert to Backup) for a clean restore.
 
-**`CLEAR_TOOLCHANGE_STATE already registered`** — `[include box.cfg]` is active alongside Happy Hare. Re-run option 1 to disable it, or use option 3 to revert to stock.
-
-**Klipper errors after uninstalling** — Stale `[include mmu/base/*.cfg]` lines in `printer.cfg`. Option 3 (Revert to Backup) is the clean fix; option 7 will also catch orphan includes.
-
-**No stock backup exists** — `/home/mks/mudstockbackups/` is created on first run. If configs were already overwritten, restore from a Qidi factory image first, then run the AIO to capture a clean `_FIRST_STOCK`.
+**No stock backup exists** — `/home/mks/mudstockbackups/` is created automatically on first run. If configs were already changed before the first AIO run, restore from a Qidi factory image first, then run AIO to capture a clean baseline.
 
 ## Links
 
