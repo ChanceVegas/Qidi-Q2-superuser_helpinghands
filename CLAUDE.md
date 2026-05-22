@@ -130,6 +130,19 @@ Merged to `main` via PR #1 (2026-05-20):
 - `update_qidi_box_dropin` migration helper
 - `/release` slash command for version bump + changelog + tag + push
 
+## RC11 — What's In It
+
+- `AIO_VERSION='RC11'`
+- **`Option 'gcode' is not valid in section 'bed_mesh'` fixed**: `check_invalid_klipper_options()` now also detects and removes `gcode:` keys (and their indented body) that appear inside `[bed_mesh]`. Some Qidi stock `printer.cfg` versions place the entire `[idle_timeout]` body inside `[bed_mesh]` with no section header; Klipper rejects both `timeout:` (already caught in RC8) and `gcode:`.
+- **`BED_MESH_CALIBRATE already registered` fix hardened**: `fix_known_klipper_conflicts()` check #6 now scans ALL `.cfg` files at the config root for `[gcode_macro BED_MESH_CALIBRATE]` definitions, not just `KAMP_Settings.cfg`. Any file that is NOT `Adaptive_Meshing.cfg` gets its duplicate definition commented out with `## AIO_DISABLED:`.
+- **PIPESTATUS install-abort bug fixed**: `install_bunnybox_helixscreen()` previously only aborted on exit code 99 (user BunnyBox cancel). Any other non-zero exit (e.g., a failed `fetch()` for `printer.cfg`) would silently print "Install complete" and leave the printer with partial/broken configs. Now any non-zero exit code aborts the install with an error message pointing to the log file.
+
+## RC10 — What's In It
+
+- `AIO_VERSION='RC10'`
+- **Fresh-install black screen fixed**: HelixScreen now activates correctly after option 1. Added `switch_display_to_helixscreen()` which stops/disables/masks `lightdm` and `makerbase-client`, then enables/starts `helixscreen.service`. Called automatically at the end of `install_bunnybox_helixscreen()`.
+- **HelixScreen installer URL pinned to tag**: was fetching from `main/scripts/install.sh` (always latest). Now pins to `HELIXSCREEN_PIN='v0.99.66'` (constant near top of script). Prevents silent upstream regressions.
+
 ## RC8 — Candidate Features (not yet implemented)
 
 - Symmetric `uninstall_just_faster()` (option 2 currently has no individual uninstall path; Revert to Backup is the only way to undo it)

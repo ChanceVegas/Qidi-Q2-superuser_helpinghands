@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC10'
+AIO_VERSION='RC11'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -962,7 +962,30 @@ check_invalid_klipper_options() {
             warn "Left as-is — Klipper boot will fail until removed manually"
         fi
     else
-        ok "No invalid options detected in [bed_mesh]"
+        ok "[bed_mesh] check 1/2: no invalid 'timeout:' found"
+    fi
+
+    # 2. gcode: inside [bed_mesh] — same class of error as timeout. Some Qidi
+    #    stock printer.cfg versions place the entire [idle_timeout] gcode block
+    #    inside [bed_mesh] without a section header. Remove the gcode: key and
+    #    all indented lines that follow it within the [bed_mesh] section.
+    if awk '/^\[bed_mesh\]/{flag=1; next} /^\[/{flag=0} flag && /^[[:space:]]*gcode[[:space:]]*:/{found=1} END{exit !found}' "$pcfg"; then
+        warn "Found 'gcode:' inside [bed_mesh] in printer.cfg (invalid — Klipper will refuse to boot)"
+        if confirm "Remove the 'gcode:' block from [bed_mesh]?"; then
+            awk '
+                /^\[bed_mesh\]/{in_bm=1; in_gc=0; print; next}
+                /^\[/{in_bm=0; in_gc=0}
+                in_bm && /^[[:space:]]*gcode[[:space:]]*:/{in_gc=1; next}
+                in_gc && /^[[:space:]]/{next}
+                in_gc && !/^[[:space:]]/{in_gc=0}
+                {print}
+            ' "$pcfg" > "${pcfg}.tmp" && mv "${pcfg}.tmp" "$pcfg"
+            ok "Removed 'gcode:' block from [bed_mesh]"
+        else
+            warn "Left as-is — Klipper boot will fail until removed manually"
+        fi
+    else
+        ok "[bed_mesh] check 2/2: no invalid 'gcode:' found"
     fi
 }
 
@@ -1253,15 +1276,33 @@ fix_known_klipper_conflicts() {
         fi
     fi
 
-    # 6. BED_MESH_CALIBRATE duplicate: older KAMP_Settings.cfg versions
-    #    defined [gcode_macro BED_MESH_CALIBRATE] inline (line ~46). Current
-    #    KAMP splits that into Adaptive_Meshing.cfg (the real definition) with
-    #    KAMP_Settings.cfg only doing [include ./Adaptive_Meshing.cfg]. Having
-    #    both the inline copy AND the include active crashes Klipper with
-    #    "gcode macro BED_MESH_CALIBRATE already registered". Re-fetch our
-    #    correct KAMP_Settings.cfg to replace the old version.
-    if grep -q '^\[gcode_macro BED_MESH_CALIBRATE\]' "${CONFIG_DIR}/KAMP_Settings.cfg" 2>/dev/null && \
-       [ -f "${CONFIG_DIR}/Adaptive_Meshing.cfg" ]; then
+    # 6. BED_MESH_CALIBRATE duplicate: Adaptive_Meshing.cfg is the canonical
+    #    owner of [gcode_macro BED_MESH_CALIBRATE]. Scan all .cfg files in the
+    #    config root for additional definitions; comment them out in any file
+    #    that is NOT Adaptive_Meshing.cfg.  Also re-fetch our clean
+    #    KAMP_Settings.cfg if it contains an inline definition (older versions).
+    local bmc_files
+    bmc_files=$(grep -rl '^\[gcode_macro BED_MESH_CALIBRATE\]' "${CONFIG_DIR}"/*.cfg 2>/dev/null || true)
+    if [ -n "$bmc_files" ]; then
+        local bmc_count
+        bmc_count=$(echo "$bmc_files" | wc -l)
+        if [ "$bmc_count" -gt 1 ] || \
+           ( [ "$bmc_count" -eq 1 ] && ! echo "$bmc_files" | grep -q 'Adaptive_Meshing\.cfg' ); then
+            warn "BED_MESH_CALIBRATE defined in multiple files — will comment out non-canonical copies"
+            echo "$bmc_files" | while IFS= read -r f; do
+                [ "$(basename "$f")" = "Adaptive_Meshing.cfg" ] && continue
+                awk -v target="[gcode_macro BED_MESH_CALIBRATE]" '
+                    /^\[/ { in_section = ($0 == target) }
+                    { if (in_section) print "## AIO_DISABLED: " $0; else print $0 }
+                ' "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+                ok "Commented out duplicate BED_MESH_CALIBRATE in $(basename "$f")"
+            done
+        else
+            ok "BED_MESH_CALIBRATE: single canonical definition in Adaptive_Meshing.cfg"
+        fi
+    fi
+    # Legacy: re-fetch KAMP_Settings.cfg if it still carries an inline definition.
+    if grep -q '^\[gcode_macro BED_MESH_CALIBRATE\]' "${CONFIG_DIR}/KAMP_Settings.cfg" 2>/dev/null; then
         fetch "${REPO_BASE}/KAMP_settings.cfg" "${CONFIG_DIR}/KAMP_Settings.cfg" \
             && ok "Re-fetched KAMP_Settings.cfg (removed stale inline BED_MESH_CALIBRATE)" \
             || warn "Could not re-fetch KAMP_Settings.cfg — comment out [gcode_macro BED_MESH_CALIBRATE] in it manually"
@@ -1464,9 +1505,18 @@ install_bunnybox_helixscreen() {
         verify_bunnybox_install
     } 2>&1 | tee -a "$INSTALL_LOG"
 
-    # If the install block exited 99, the user aborted after BunnyBox
-    # was cancelled. Bail before we print "Install complete".
-    if [ "${PIPESTATUS[0]}" = "99" ]; then
+    # Check the exit code of the install block (left side of the tee pipe).
+    # Exit 99 = user cancelled from BunnyBox's sub-menu.
+    # Any other non-zero = a required step failed (fetch, permission, etc.).
+    # Both cases must abort so we never print "Install complete" for a
+    # partial install that would leave Klipper with broken configs.
+    local _pipe_exit="${PIPESTATUS[0]}"
+    if [ "$_pipe_exit" = "99" ]; then
+        press_enter
+        return 1
+    elif [ "$_pipe_exit" != "0" ]; then
+        err "Install aborted — a required step failed (see log above)"
+        err "Log saved to: ${INSTALL_LOG}"
         press_enter
         return 1
     fi

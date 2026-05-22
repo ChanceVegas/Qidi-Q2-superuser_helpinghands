@@ -93,6 +93,8 @@ After installing BunnyBox, the following one-tap drying macros are available fro
 
 | Version | Notable additions |
 |---------|------------------|
+| RC11 | Fixed two post-install Klipper startup errors: `gcode: not valid in section 'bed_mesh'` and `BED_MESH_CALIBRATE already registered`; install now aborts correctly if a required step fails |
+| RC10 | Fixed fresh-install black screen — HelixScreen now activates correctly after option 1 |
 | RC9 | Automatic spool rotation during filament drying cycles |
 | RC8 | Health check runs automatically after every Revert to Backup; new config validators (orphan includes, invalid settings, leftover MMU files) |
 | RC7 | Mainsail web UI as a menu addon (option 5) |
