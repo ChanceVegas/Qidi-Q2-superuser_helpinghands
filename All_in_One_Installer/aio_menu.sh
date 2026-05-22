@@ -51,6 +51,9 @@ MAINSAIL_DIR='/home/mks/mainsail'
 MAINSAIL_NGINX_SITE_AVAIL='/etc/nginx/sites-available/mainsail'
 MAINSAIL_NGINX_SITE_ENABLED='/etc/nginx/sites-enabled/mainsail'
 MAINSAIL_PORT=100
+# Marker written when AIO installs nginx (it wasn't present before). Tells
+# uninstall_mainsail() whether to remove the package or leave it alone.
+MAINSAIL_NGINX_MARKER="${BACKUP_ROOT}/.aio_nginx_installed"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -278,6 +281,14 @@ install_mainsail() {
     info "Mainsail will be available on http://<printer-ip>:${MAINSAIL_PORT}"
     info "Qidi's stock web UI on port 80 is left untouched."
 
+    # Record pre-install nginx state. Camden's installer may run apt-get to
+    # install nginx; we only remove the package on uninstall if WE installed it.
+    local nginx_pre_installed=false
+    if dpkg -l nginx 2>/dev/null | grep -q '^ii'; then
+        nginx_pre_installed=true
+        info "nginx already installed — will not be removed on Mainsail uninstall"
+    fi
+
     set +e
     curl --fail --silent --show-error --location "$MAINSAIL_INSTALLER" | bash
     local exit_code=$?
@@ -285,6 +296,11 @@ install_mainsail() {
     if [ $exit_code -ne 0 ]; then
         err "Mainsail installer exited ${exit_code}"
         return 1
+    fi
+
+    if [ "$nginx_pre_installed" = false ]; then
+        touch "$MAINSAIL_NGINX_MARKER"
+        info "nginx was not pre-installed; it will be removed on Mainsail uninstall"
     fi
 
     if mainsail_installed; then
@@ -308,16 +324,26 @@ uninstall_mainsail() {
         rm -rf "$MAINSAIL_DIR" 2>/dev/null || sudo rm -rf "$MAINSAIL_DIR"
         ok "Removed ${MAINSAIL_DIR}"
     fi
-    if command -v nginx >/dev/null 2>&1; then
-        if sudo nginx -t >/dev/null 2>&1; then
-            sudo systemctl reload nginx 2>/dev/null || true
-            ok "nginx reloaded"
-        else
-            warn "nginx config test failed after Mainsail removal — check 'sudo nginx -t'"
+    # Remove nginx only if AIO installed it (marker written at install time).
+    # If nginx was already on the system before Mainsail, leave it alone.
+    if [ -f "$MAINSAIL_NGINX_MARKER" ]; then
+        info "Removing nginx (installed by AIO for Mainsail)..."
+        sudo apt-get remove --purge -y nginx nginx-common 2>/dev/null || true
+        sudo apt-get autoremove -y 2>/dev/null || true
+        rm -f "$MAINSAIL_NGINX_MARKER"
+        ok "nginx removed"
+    else
+        info "nginx was pre-installed — leaving it in place"
+        if command -v nginx >/dev/null 2>&1; then
+            if sudo nginx -t >/dev/null 2>&1; then
+                sudo systemctl reload nginx 2>/dev/null || true
+                ok "nginx reloaded"
+            else
+                warn "nginx config test failed — check 'sudo nginx -t'"
+            fi
         fi
     fi
     ok "Mainsail removed"
-    info "Note: moonraker.conf CORS entries are left in place (harmless)."
 }
 
 verify_mainsail() {
