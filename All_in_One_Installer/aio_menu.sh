@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC11'
+AIO_VERSION='RC12'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -56,6 +56,11 @@ MAINSAIL_PORT=100
 # Marker written when AIO installs nginx (it wasn't present before). Tells
 # uninstall_mainsail() whether to remove the package or leave it alone.
 MAINSAIL_NGINX_MARKER="${BACKUP_ROOT}/.aio_nginx_installed"
+USTREAMER_SERVICE='ustreamer-camera'
+USTREAMER_UNIT="/etc/systemd/system/ustreamer-camera.service"
+USTREAMER_PORT=8080
+USTREAMER_DEVICE='/dev/video0'
+CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -310,9 +315,12 @@ install_mainsail() {
     else
         warn "Installer finished but Mainsail files not detected — check ${MAINSAIL_DIR}"
     fi
+
+    install_camera || warn "Camera setup had problems — re-run option 5 to retry"
 }
 
 uninstall_mainsail() {
+    uninstall_camera
     banner "Removing Mainsail"
     if [ -L "$MAINSAIL_NGINX_SITE_ENABLED" ] || [ -f "$MAINSAIL_NGINX_SITE_ENABLED" ]; then
         sudo rm -f "$MAINSAIL_NGINX_SITE_ENABLED" && \
@@ -358,6 +366,146 @@ verify_mainsail() {
     else
         warn "Mainsail files installed but port ${MAINSAIL_PORT} not responding"
         warn "  → try: sudo systemctl restart nginx"
+    fi
+}
+
+# ---------- Camera streaming (ustreamer, bundled with Mainsail) ------
+# ustreamer streams the Q2's built-in USB camera as MJPEG on port 8080.
+# Installed automatically alongside Mainsail; removed when Mainsail is
+# removed. Moonraker's [webcam] section registers the stream URL so
+# Mainsail's camera panel works out of the box.
+
+camera_installed() {
+    systemctl is-enabled --quiet "$USTREAMER_SERVICE" 2>/dev/null
+}
+
+install_camera() {
+    banner "Setting up printer camera (ustreamer)"
+
+    if camera_installed; then
+        ok "Camera streaming already configured — skipping"
+        return 0
+    fi
+
+    info "Installing ustreamer..."
+    if ! sudo apt-get install -y ustreamer 2>/dev/null; then
+        warn "ustreamer not available via apt — camera not configured"
+        warn "  → Install manually: sudo apt-get install ustreamer"
+        return 1
+    fi
+
+    local ustreamer_bin
+    ustreamer_bin=$(command -v ustreamer 2>/dev/null)
+    if [ -z "$ustreamer_bin" ]; then
+        warn "ustreamer binary not found after install — camera not configured"
+        return 1
+    fi
+
+    # Auto-detect first available /dev/video* device
+    local cam_device="$USTREAMER_DEVICE"
+    local dev
+    for dev in /dev/video0 /dev/video1 /dev/video2; do
+        if [ -e "$dev" ]; then
+            cam_device="$dev"
+            ok "Found camera device: ${cam_device}"
+            break
+        fi
+    done
+
+    info "Writing ustreamer systemd service..."
+    sudo tee "$USTREAMER_UNIT" > /dev/null <<EOF
+[Unit]
+Description=ustreamer - Printer Camera
+After=network.target
+
+[Service]
+User=mks
+ExecStart=${ustreamer_bin} --device=${cam_device} --host=0.0.0.0 --port=${USTREAMER_PORT} --resolution=640x480 --desired-fps=15
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$USTREAMER_SERVICE"
+    sudo systemctl start "$USTREAMER_SERVICE" 2>/dev/null || \
+        warn "ustreamer may not start until a camera is connected — check after reboot"
+    ok "ustreamer service enabled"
+
+    # Append [webcam] section to moonraker.conf so Mainsail discovers the stream
+    local moon_conf="${CONFIG_DIR}/moonraker.conf"
+    if [ -f "$moon_conf" ] && ! grep -q '^\[webcam' "$moon_conf"; then
+        local printer_ip
+        printer_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        [ -z "$printer_ip" ] && printer_ip="<printer-ip>"
+        tee -a "$moon_conf" > /dev/null <<EOF
+
+[webcam printer]
+location: printer
+enabled: True
+target_fps: 15
+target_fps_idle: 5
+stream_url: http://${printer_ip}:${USTREAMER_PORT}/?action=stream
+snapshot_url: http://${printer_ip}:${USTREAMER_PORT}/?action=snapshot
+flip_horizontal: False
+flip_vertical: False
+rotation: 0
+aspect_ratio: 4:3
+EOF
+        ok "Added [webcam printer] to moonraker.conf (http://${printer_ip}:${USTREAMER_PORT})"
+        if [ "$printer_ip" = "<printer-ip>" ]; then
+            warn "Could not detect printer IP — update stream_url/snapshot_url in moonraker.conf"
+        else
+            info "If the printer IP changes, update stream_url/snapshot_url in moonraker.conf"
+        fi
+    elif ! [ -f "$moon_conf" ]; then
+        warn "moonraker.conf not found at ${moon_conf} — webcam not registered with Moonraker"
+        warn "  → Re-run option 5 after Moonraker has created its config"
+    fi
+
+    touch "$CAMERA_MARKER"
+    ok "Camera configured — open Mainsail and look for the camera panel"
+}
+
+uninstall_camera() {
+    banner "Removing camera streaming"
+
+    sudo systemctl disable --now "$USTREAMER_SERVICE" 2>/dev/null || true
+    if [ -f "$USTREAMER_UNIT" ]; then
+        sudo rm -f "$USTREAMER_UNIT"
+        sudo systemctl daemon-reload
+        ok "Removed ${USTREAMER_UNIT}"
+    fi
+
+    # Remove [webcam ...] section from moonraker.conf
+    local moon_conf="${CONFIG_DIR}/moonraker.conf"
+    if [ -f "$moon_conf" ] && grep -q '^\[webcam' "$moon_conf"; then
+        awk '/^\[webcam/{skip=1;next} skip && /^\[/{skip=0} !skip{print}' \
+            "$moon_conf" > "${moon_conf}.tmp" && mv "${moon_conf}.tmp" "$moon_conf"
+        ok "Removed [webcam] section from moonraker.conf"
+    fi
+
+    rm -f "$CAMERA_MARKER"
+    ok "Camera streaming removed"
+}
+
+verify_camera() {
+    if ! camera_installed; then
+        return 0
+    fi
+    if systemctl is-active --quiet "$USTREAMER_SERVICE"; then
+        if curl --fail --silent --max-time 3 "http://127.0.0.1:${USTREAMER_PORT}/" \
+            -o /dev/null 2>&1; then
+            ok "Camera stream reachable on port ${USTREAMER_PORT}"
+        else
+            warn "ustreamer running but not responding on port ${USTREAMER_PORT}"
+            warn "  → check: sudo journalctl -u ${USTREAMER_SERVICE} -n 20"
+        fi
+    else
+        warn "${USTREAMER_SERVICE} not active — camera not streaming"
+        warn "  → try: sudo systemctl start ${USTREAMER_SERVICE}"
     fi
 }
 
@@ -1104,6 +1252,7 @@ _run_verifiers_core() {
     fi
     if mainsail_installed; then
         verify_mainsail
+        verify_camera
     else
         info "Mainsail not installed"
     fi
@@ -1647,7 +1796,7 @@ EOF
 
 # ---------- main menu ------------------------------------------------
 show_status_line() {
-    local bb_status hs_status idle_status box_write_status mainsail_status
+    local bb_status hs_status idle_status box_write_status mainsail_status camera_status
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
     else
@@ -1668,6 +1817,11 @@ show_status_line() {
     else
         mainsail_status="${C_YELLOW}not found${C_RESET}"
     fi
+    if camera_installed; then
+        camera_status="${C_GREEN}streaming${C_RESET}"
+    else
+        camera_status="${C_YELLOW}off${C_RESET}"
+    fi
     # With BunnyBox installed, the HELIX_QIDI_BOX_WRITE drop-in conflicts
     # with Happy Hare's MMU control of the Box — so "off" is the desired
     # state. Without BunnyBox, "on" is fine for native HelixScreen control.
@@ -1684,8 +1838,10 @@ show_status_line() {
             box_write_status="${C_YELLOW}off${C_RESET}"
         fi
     fi
-    printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b | Mainsail: %b\n' \
-           "$bb_status" "$hs_status" "$idle_status" "$box_write_status" "$mainsail_status"
+    printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b\n' \
+           "$bb_status" "$hs_status" "$idle_status" "$box_write_status"
+    printf '  Mainsail: %b | Camera: %b\n' \
+           "$mainsail_status" "$camera_status"
 }
 
 draw_menu() {
