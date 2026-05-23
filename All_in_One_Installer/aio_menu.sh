@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.17'
+AIO_VERSION='RC1.18'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1811,17 +1811,22 @@ _install_bunnybox() {
         ok "BunnyBox install step complete"
 
         if [ "$display_ui" = "klipperscreen" ]; then
-            banner "Installing KlipperScreen (Wayland/Cage backend)"
-            # Qidi pins xserver-common/xserver-xorg-core/xserver-xorg-legacy
-            # via 'apt-mark hold', so BACKEND=X fails on the apt step.
-            # BACKEND=W uses cage + seatd + xwayland — no collision with
-            # the held X11 packages, and Cage is a minimal Wayland kiosk
-            # compositor well-suited to KlipperScreen's single-window UI.
+            banner "Installing KlipperScreen (X11 backend)"
+            # Qidi holds xserver-common at u10 via apt-mark hold.
+            # xserver-xorg-legacy requires xserver-common >= u17, so its
+            # apt install step fails. Wayland (cage) is not in the Q2's
+            # USTC Debian mirror at all. Fix: patch xserver-xorg-legacy out
+            # of the installer's XSERVER package list before running.
+            # The rest of the X11 stack is already present on the Q2 or
+            # installable at the held version. xinit starts its own X server
+            # on a VT, so masking lightdm in switch_display_to_klipperscreen
+            # is safe — no conflict with an existing :0 session.
             local ks_script="/tmp/KlipperScreen-install-$$.sh"
             if curl --fail --silent --show-error --location \
                     "$KLIPPERSCREEN_INSTALL_URL" -o "$ks_script"; then
                 chmod +x "$ks_script"
-                BACKEND=W NETWORK=N START=1 bash "$ks_script"
+                sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
+                BACKEND=X NETWORK=N START=1 bash "$ks_script"
                 local ks_exit=$?
                 rm -f "$ks_script"
                 [ $ks_exit -ne 0 ] && \
