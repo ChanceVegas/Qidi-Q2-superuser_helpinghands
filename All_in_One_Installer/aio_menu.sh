@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC13'
+AIO_VERSION='RC14'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -61,6 +61,7 @@ USTREAMER_UNIT="/etc/systemd/system/ustreamer-camera.service"
 USTREAMER_PORT=8080
 USTREAMER_DEVICE='/dev/video0'
 CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
+MOONRAKER_PORT=7125
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -451,6 +452,39 @@ remove_webcam_from_mainsail_nginx() {
     return $rc
 }
 
+# Query Moonraker's webcam API and offer to delete any UI-added (database-source)
+# webcam entries.  Called from install_camera() after moonraker restart so only
+# one [webcam printer] entry exists in Mainsail.
+purge_mainsail_ui_webcams() {
+    local api="http://127.0.0.1:${MOONRAKER_PORT}"
+    local response
+    response=$(curl -sf --max-time 5 "${api}/server/webcams/list" 2>/dev/null) || {
+        warn "Could not reach Moonraker API — skipping duplicate-webcam check"
+        return 0
+    }
+    local ui_cams
+    ui_cams=$(echo "$response" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for c in data.get('result', {}).get('webcams', []):
+    if c.get('source') == 'database':
+        print(c['uid'] + '|' + c.get('name', 'unknown'))
+" 2>/dev/null)
+    [ -z "$ui_cams" ] && return 0
+
+    while IFS= read -r line; do
+        local uid name
+        uid="${line%%|*}"
+        name="${line##*|}"
+        if confirm "Delete UI-added webcam '${name}' (duplicate of [webcam printer])?"; then
+            curl -sf -X DELETE --max-time 5 \
+                "${api}/server/webcams/item?uid=${uid}" > /dev/null 2>&1 && \
+                ok "Deleted UI webcam '${name}'" || \
+                warn "Failed to delete webcam '${name}' — remove it manually in Mainsail Settings → Webcams"
+        fi
+    done <<< "$ui_cams"
+}
+
 install_camera() {
     banner "Setting up printer camera (ustreamer + nginx proxy)"
 
@@ -547,6 +581,7 @@ EOF
 
 [webcam printer]
 location: printer
+service: mjpegstreamer-adaptive
 enabled: True
 target_fps: 15
 target_fps_idle: 5
@@ -565,6 +600,7 @@ EOF
         fi
         sudo systemctl restart moonraker 2>/dev/null || \
             warn "Could not restart moonraker — restart manually for camera to register"
+        purge_mainsail_ui_webcams
     else
         warn "moonraker.conf not found at ${moon_conf} — webcam not registered"
     fi
