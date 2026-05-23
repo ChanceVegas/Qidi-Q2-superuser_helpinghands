@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.20'
+AIO_VERSION='RC1.21'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1126,31 +1126,36 @@ klipperscreen_installed() {
 #
 # Strategy: Qidi holds xserver-common at u10, so xserver-xorg-legacy
 # (setuid Xwrapper) can't be installed. Without it, xinit can't start
-# Xorg as non-root user 'mks'. Fix: keep lightdm running — it starts
-# Xorg as root on :0. KlipperScreen connects as a regular X11 client.
+# Xorg as non-root user 'mks'. Fix: run the service as root so xinit
+# can start Xorg directly. lightdm is masked (no VT conflict).
+# KlipperScreen-start.sh launches xinit with the Python venv as the
+# X client, and TTYPath=/dev/tty7 ensures the display output goes to
+# the correct virtual terminal.
 switch_display_to_klipperscreen() {
     banner "Switching active display → KlipperScreen"
 
-    # Write our own service file — upstream installer's template uses xinit
-    # which needs xserver-xorg-legacy. We run KlipperScreen directly on
-    # lightdm's existing X display at :0 instead.
-    info "Writing KlipperScreen service unit (DISPLAY=:0 on lightdm)"
+    info "Writing KlipperScreen service unit (root + xinit on tty7)"
     sudo tee "$KLIPPERSCREEN_UNIT" > /dev/null <<UNIT
 [Unit]
 Description=KlipperScreen
-After=lightdm.service moonraker.service
-Wants=lightdm.service
+After=moonraker.service
+ConditionPathExists=/dev/tty0
 
 [Service]
 Type=simple
 Restart=always
 RestartSec=3
-User=mks
 WorkingDirectory=${KLIPPERSCREEN_DIR}
 Environment=HOME=/home/mks
-Environment=DISPLAY=:0
-ExecStartPre=/bin/sleep 3
-ExecStart=${KLIPPERSCREEN_VENV}/bin/python ${KLIPPERSCREEN_DIR}/screen.py
+Environment="KS_XCLIENT=${KLIPPERSCREEN_VENV}/bin/python ${KLIPPERSCREEN_DIR}/screen.py"
+Environment=BACKEND=X
+ExecStart=${KLIPPERSCREEN_DIR}/scripts/KlipperScreen-start.sh
+PAMName=login
+StandardInput=tty
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
 StandardOutput=journal
 StandardError=journal
 
@@ -1158,17 +1163,16 @@ StandardError=journal
 WantedBy=multi-user.target
 UNIT
 
-    # Stop competing display clients — keep lightdm (provides X11 :0)
+    # Mask everything that competes for the display
     sudo systemctl stop    makerbase-client       2>/dev/null || true
     sudo systemctl disable makerbase-client       2>/dev/null || true
     sudo systemctl mask    makerbase-client       2>/dev/null || true
+    sudo systemctl stop    lightdm                2>/dev/null || true
+    sudo systemctl disable lightdm                2>/dev/null || true
+    sudo systemctl mask    lightdm                2>/dev/null || true
     sudo systemctl stop    helixscreen            2>/dev/null || true
     sudo systemctl disable helixscreen            2>/dev/null || true
     sudo systemctl mask    helixscreen            2>/dev/null || true
-    # Ensure lightdm is running (provides the X display)
-    sudo systemctl unmask  lightdm                2>/dev/null || true
-    sudo systemctl enable  lightdm                2>/dev/null || true
-    sudo systemctl start   lightdm                2>/dev/null || true
     sudo systemctl daemon-reload                  2>/dev/null || true
     sudo systemctl unmask  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo systemctl enable  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
@@ -1337,11 +1341,13 @@ verify_bunnybox_install() {
         all_ok=false
     fi
 
-    if [ -s "${HELIX_CONFIG_DIR}/settings.json" ]; then
-        ok "helixscreen settings.json"
-    else
-        err "helixscreen settings.json missing"
-        all_ok=false
+    if ! klipperscreen_installed; then
+        if [ -s "${HELIX_CONFIG_DIR}/settings.json" ]; then
+            ok "helixscreen settings.json"
+        else
+            err "helixscreen settings.json missing"
+            all_ok=false
+        fi
     fi
 
     if [ "$all_ok" = true ]; then
@@ -1872,7 +1878,7 @@ _install_bunnybox() {
             fi
             chmod +x "$ks_script"
             sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
-            BACKEND=X NETWORK=N START=1 bash "$ks_script"
+            BACKEND=X NETWORK=Y START=1 bash "$ks_script"
             local ks_exit=$?
             [ $ks_exit -ne 0 ] && \
                 warn "KlipperScreen installer exited ${ks_exit}"
