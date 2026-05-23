@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.18'
+AIO_VERSION='RC1.19'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -62,7 +62,8 @@ USTREAMER_PORT=8080
 USTREAMER_DEVICE='/dev/video0'
 CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
 MOONRAKER_PORT=7125
-KLIPPERSCREEN_INSTALL_URL='https://raw.githubusercontent.com/KlipperScreen/KlipperScreen/master/scripts/KlipperScreen-install.sh'
+KLIPPERSCREEN_REPO_URL='https://github.com/KlipperScreen/KlipperScreen.git'
+KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
 KLIPPERSCREEN_SERVICE='KlipperScreen'
 KLIPPERSCREEN_UNIT='/etc/systemd/system/KlipperScreen.service'
 
@@ -1155,6 +1156,9 @@ uninstall_klipperscreen() {
     sudo systemctl mask    "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo rm -f "$KLIPPERSCREEN_UNIT"
     sudo systemctl daemon-reload 2>/dev/null || true
+    # Remove KlipperScreen app files
+    rm -rf "$KLIPPERSCREEN_DIR" 2>/dev/null || true
+    rm -rf "${HOME}/.KlipperScreen-env" 2>/dev/null || true
     # Re-enable the Qidi stock display so the printer isn't left headless.
     info "Re-enabling Qidi stock display services..."
     sudo systemctl unmask  lightdm           2>/dev/null || true
@@ -1812,30 +1816,33 @@ _install_bunnybox() {
 
         if [ "$display_ui" = "klipperscreen" ]; then
             banner "Installing KlipperScreen (X11 backend)"
-            # Qidi holds xserver-common at u10 via apt-mark hold.
-            # xserver-xorg-legacy requires xserver-common >= u17, so its
-            # apt install step fails. Wayland (cage) is not in the Q2's
-            # USTC Debian mirror at all. Fix: patch xserver-xorg-legacy out
-            # of the installer's XSERVER package list before running.
-            # The rest of the X11 stack is already present on the Q2 or
-            # installable at the held version. xinit starts its own X server
-            # on a VT, so masking lightdm in switch_display_to_klipperscreen
-            # is safe — no conflict with an existing :0 session.
-            local ks_script="/tmp/KlipperScreen-install-$$.sh"
-            if curl --fail --silent --show-error --location \
-                    "$KLIPPERSCREEN_INSTALL_URL" -o "$ks_script"; then
-                chmod +x "$ks_script"
-                sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
-                BACKEND=X NETWORK=N START=1 bash "$ks_script"
-                local ks_exit=$?
-                rm -f "$ks_script"
-                [ $ks_exit -ne 0 ] && \
-                    warn "KlipperScreen installer exited ${ks_exit}"
+            # The KlipperScreen installer uses KSPATH=dirname(SCRIPTPATH) to
+            # locate requirements and the service template. Running a single
+            # downloaded script from /tmp sets KSPATH=/ and breaks all paths.
+            # Fix: clone the full repo to its final install location first,
+            # then run the installer from within the repo's scripts/ dir.
+            # xserver-xorg-legacy is patched out because Qidi holds
+            # xserver-common at u10; legacy requires >= u17. The rest of the
+            # X11 stack is already present on the Q2. cage/Wayland is not in
+            # the Q2's USTC Debian mirror so BACKEND=W is not an option.
+            local ks_install_dir="$KLIPPERSCREEN_DIR"
+            local ks_script="$ks_install_dir/scripts/KlipperScreen-install.sh"
+            if [ -d "$ks_install_dir/.git" ]; then
+                info "KlipperScreen repo exists — updating"
+                git -C "$ks_install_dir" pull --ff-only 2>/dev/null || true
             else
-                rm -f "$ks_script"
-                err "Failed to download KlipperScreen installer"
-                return 1
+                info "Cloning KlipperScreen to ${ks_install_dir}"
+                if ! git clone --depth 1 "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
+                    err "Failed to clone KlipperScreen repository"
+                    return 1
+                fi
             fi
+            chmod +x "$ks_script"
+            sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
+            BACKEND=X NETWORK=N START=1 bash "$ks_script"
+            local ks_exit=$?
+            [ $ks_exit -ne 0 ] && \
+                warn "KlipperScreen installer exited ${ks_exit}"
             ok "KlipperScreen install step complete"
         else
             banner "Installing HelixScreen"
