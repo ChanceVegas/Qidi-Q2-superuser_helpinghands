@@ -87,13 +87,14 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 ### Current Menu Layout
 
 ```
-1) Install BunnyBox & HelixScreen   (Q2 with Qidi Box)
-2) Install Just Faster Printer      (Q2 without Box)
-3) Revert to Backup                 (full uninstall + restore stock)
-4) Idle Fan Shutdown                (10m idle, temp-gated)
-5) Mainsail                         (web UI on port 100)
-6) About
-7) Run all verifiers
+1) Install BunnyBox & HelixScreen    (Q2 with Qidi Box)
+2) Install BunnyBox & KlipperScreen  (Q2 with Qidi Box, alt display)
+3) Install Just Faster Printer       (Q2 without Box)
+4) Revert to Backup                  (full uninstall + restore stock)
+5) Idle Fan Shutdown                 (10m idle, temp-gated)
+6) Mainsail                          (web UI on port 100)
+7) About
+8) Run all verifiers
 0) Exit
 ```
 
