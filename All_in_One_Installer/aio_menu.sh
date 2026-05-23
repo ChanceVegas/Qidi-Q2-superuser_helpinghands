@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.19'
+AIO_VERSION='RC1.20'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -64,6 +64,7 @@ CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
 MOONRAKER_PORT=7125
 KLIPPERSCREEN_REPO_URL='https://github.com/KlipperScreen/KlipperScreen.git'
 KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
+KLIPPERSCREEN_VENV='/home/mks/.KlipperScreen-env'
 KLIPPERSCREEN_SERVICE='KlipperScreen'
 KLIPPERSCREEN_UNIT='/etc/systemd/system/KlipperScreen.service'
 
@@ -1122,22 +1123,52 @@ klipperscreen_installed() {
 
 # Switch from HelixScreen (or stock display) to KlipperScreen.
 # Inverse: uninstall_klipperscreen() re-enables stock display services.
+#
+# Strategy: Qidi holds xserver-common at u10, so xserver-xorg-legacy
+# (setuid Xwrapper) can't be installed. Without it, xinit can't start
+# Xorg as non-root user 'mks'. Fix: keep lightdm running — it starts
+# Xorg as root on :0. KlipperScreen connects as a regular X11 client.
 switch_display_to_klipperscreen() {
     banner "Switching active display → KlipperScreen"
-    if [ ! -f "$KLIPPERSCREEN_UNIT" ]; then
-        warn "${KLIPPERSCREEN_UNIT} not found — display swap skipped"
-        warn "KlipperScreen may not have installed correctly. Check output above."
-        return 1
-    fi
+
+    # Write our own service file — upstream installer's template uses xinit
+    # which needs xserver-xorg-legacy. We run KlipperScreen directly on
+    # lightdm's existing X display at :0 instead.
+    info "Writing KlipperScreen service unit (DISPLAY=:0 on lightdm)"
+    sudo tee "$KLIPPERSCREEN_UNIT" > /dev/null <<UNIT
+[Unit]
+Description=KlipperScreen
+After=lightdm.service moonraker.service
+Wants=lightdm.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=3
+User=mks
+WorkingDirectory=${KLIPPERSCREEN_DIR}
+Environment=HOME=/home/mks
+Environment=DISPLAY=:0
+ExecStartPre=/bin/sleep 3
+ExecStart=${KLIPPERSCREEN_VENV}/bin/python ${KLIPPERSCREEN_DIR}/screen.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    # Stop competing display clients — keep lightdm (provides X11 :0)
     sudo systemctl stop    makerbase-client       2>/dev/null || true
     sudo systemctl disable makerbase-client       2>/dev/null || true
     sudo systemctl mask    makerbase-client       2>/dev/null || true
-    sudo systemctl stop    lightdm                2>/dev/null || true
-    sudo systemctl disable lightdm                2>/dev/null || true
-    sudo systemctl mask    lightdm                2>/dev/null || true
     sudo systemctl stop    helixscreen            2>/dev/null || true
     sudo systemctl disable helixscreen            2>/dev/null || true
     sudo systemctl mask    helixscreen            2>/dev/null || true
+    # Ensure lightdm is running (provides the X display)
+    sudo systemctl unmask  lightdm                2>/dev/null || true
+    sudo systemctl enable  lightdm                2>/dev/null || true
+    sudo systemctl start   lightdm                2>/dev/null || true
     sudo systemctl daemon-reload                  2>/dev/null || true
     sudo systemctl unmask  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo systemctl enable  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
@@ -1156,9 +1187,9 @@ uninstall_klipperscreen() {
     sudo systemctl mask    "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo rm -f "$KLIPPERSCREEN_UNIT"
     sudo systemctl daemon-reload 2>/dev/null || true
-    # Remove KlipperScreen app files
+    # Remove KlipperScreen app files and Python venv
     rm -rf "$KLIPPERSCREEN_DIR" 2>/dev/null || true
-    rm -rf "${HOME}/.KlipperScreen-env" 2>/dev/null || true
+    rm -rf "$KLIPPERSCREEN_VENV" 2>/dev/null || true
     # Re-enable the Qidi stock display so the printer isn't left headless.
     info "Re-enabling Qidi stock display services..."
     sudo systemctl unmask  lightdm           2>/dev/null || true
@@ -1496,9 +1527,11 @@ check_leftover_mmu_artifacts() {
 _run_verifiers_core() {
     if bunnybox_installed; then
         verify_bunnybox_install
-        verify_qidi_box_helixscreen
+        if helixscreen_installed; then
+            verify_qidi_box_helixscreen
+        fi
     else
-        info "BunnyBox/HelixScreen not installed — skipping MMU + Qidi Box checks"
+        info "BunnyBox not installed — skipping MMU + Qidi Box checks"
     fi
     if idle_fan_shutdown_installed; then
         ok "idle_fan_shutdown.cfg installed and included in printer.cfg"
