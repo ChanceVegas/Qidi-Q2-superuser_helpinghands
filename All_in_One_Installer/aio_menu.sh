@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC12'
+AIO_VERSION='RC13'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -379,12 +379,87 @@ camera_installed() {
     systemctl is-enabled --quiet "$USTREAMER_SERVICE" 2>/dev/null
 }
 
-install_camera() {
-    banner "Setting up printer camera (ustreamer)"
+# Returns 0 if the existing camera config matches the RC13 design (ustreamer
+# bound to 127.0.0.1, Mainsail nginx /webcam/ proxy present, moonraker.conf
+# stream_url uses the nginx proxy path). Used by install_camera() to decide
+# whether to short-circuit or migrate from RC12.
+camera_config_is_current() {
+    [ -f "$USTREAMER_UNIT" ] || return 1
+    grep -q 'host=127.0.0.1' "$USTREAMER_UNIT" || return 1
+    [ -f "$MAINSAIL_NGINX_SITE_AVAIL" ] || return 1
+    grep -q 'location /webcam/' "$MAINSAIL_NGINX_SITE_AVAIL" || return 1
+    grep -q '/webcam/stream' "${CONFIG_DIR}/moonraker.conf" 2>/dev/null || return 1
+    return 0
+}
 
-    if camera_installed; then
-        ok "Camera streaming already configured — skipping"
+# Insert a /webcam/ proxy location block before the last `}` of the Mainsail
+# nginx server config. Idempotent. Returns 0 if added or already present.
+add_webcam_to_mainsail_nginx() {
+    local conf="$MAINSAIL_NGINX_SITE_AVAIL"
+    [ -f "$conf" ] || return 1
+    if grep -q 'location /webcam/' "$conf" 2>/dev/null; then
         return 0
+    fi
+    local tmp
+    tmp=$(mktemp) || return 1
+    awk -v port="$USTREAMER_PORT" '
+        /^}$/ { last_brace = NR }
+        { lines[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                if (i == last_brace) {
+                    print "    location /webcam/ {"
+                    print "        postpone_output 0;"
+                    print "        proxy_buffering off;"
+                    print "        proxy_ignore_headers X-Accel-Buffering;"
+                    print "        access_log off;"
+                    print "        error_log off;"
+                    print "        proxy_pass http://127.0.0.1:" port "/;"
+                    print "    }"
+                }
+                print lines[i]
+            }
+        }
+    ' "$conf" > "$tmp" && sudo cp "$tmp" "$conf"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
+# Remove the /webcam/ location block from the Mainsail nginx config.
+remove_webcam_from_mainsail_nginx() {
+    local conf="$MAINSAIL_NGINX_SITE_AVAIL"
+    [ -f "$conf" ] || return 0
+    grep -q 'location /webcam/' "$conf" 2>/dev/null || return 0
+    local tmp
+    tmp=$(mktemp) || return 1
+    awk '
+        /^[[:space:]]*location \/webcam\/ \{/ { in_block = 1; depth = 1; next }
+        in_block {
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "{") depth++
+                else if (c == "}") depth--
+            }
+            if (depth <= 0) { in_block = 0 }
+            next
+        }
+        { print }
+    ' "$conf" > "$tmp" && sudo cp "$tmp" "$conf"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
+install_camera() {
+    banner "Setting up printer camera (ustreamer + nginx proxy)"
+
+    if camera_installed && camera_config_is_current; then
+        ok "Camera streaming already configured (current format) — skipping"
+        return 0
+    fi
+    if camera_installed; then
+        info "Existing camera config detected — rewriting to current format"
     fi
 
     info "Installing ustreamer..."
@@ -413,6 +488,9 @@ install_camera() {
     done
 
     info "Writing ustreamer systemd service..."
+    # Bind to 127.0.0.1 only — external access goes through nginx /webcam/ proxy
+    # on the Mainsail port. ustreamer's native paths are /stream and /snapshot
+    # (NOT the mjpg-streamer-style /?action=stream).
     sudo tee "$USTREAMER_UNIT" > /dev/null <<EOF
 [Unit]
 Description=ustreamer - Printer Camera
@@ -420,7 +498,7 @@ After=network.target
 
 [Service]
 User=mks
-ExecStart=${ustreamer_bin} --device=${cam_device} --host=0.0.0.0 --port=${USTREAMER_PORT} --resolution=640x480 --desired-fps=15
+ExecStart=${ustreamer_bin} --device=${cam_device} --host=127.0.0.1 --port=${USTREAMER_PORT} --resolution=640x480 --desired-fps=15
 Restart=always
 RestartSec=5
 
@@ -430,16 +508,41 @@ EOF
 
     sudo systemctl daemon-reload
     sudo systemctl enable "$USTREAMER_SERVICE"
-    sudo systemctl start "$USTREAMER_SERVICE" 2>/dev/null || \
+    sudo systemctl restart "$USTREAMER_SERVICE" 2>/dev/null || \
         warn "ustreamer may not start until a camera is connected — check after reboot"
-    ok "ustreamer service enabled"
+    ok "ustreamer service enabled (bound to 127.0.0.1:${USTREAMER_PORT})"
 
-    # Append [webcam] section to moonraker.conf so Mainsail discovers the stream
+    # Add /webcam/ proxy to Mainsail nginx so browsers reach the stream via
+    # port ${MAINSAIL_PORT} (same origin as Mainsail itself — no firewall or
+    # CORS issues, and ustreamer stays localhost-only).
+    if [ -f "$MAINSAIL_NGINX_SITE_AVAIL" ]; then
+        if add_webcam_to_mainsail_nginx; then
+            if sudo nginx -t >/dev/null 2>&1; then
+                sudo systemctl reload nginx
+                ok "nginx /webcam/ proxy added and reloaded"
+            else
+                warn "nginx config test failed after adding /webcam/ — check 'sudo nginx -t'"
+            fi
+        else
+            warn "Failed to add /webcam/ proxy to Mainsail nginx config"
+        fi
+    else
+        warn "Mainsail nginx config not found at ${MAINSAIL_NGINX_SITE_AVAIL}"
+        warn "  → Install Mainsail first (option 5), then re-run camera setup"
+    fi
+
+    # Write/rewrite the [webcam printer] section in moonraker.conf using the
+    # nginx proxy URL with ustreamer's native /stream and /snapshot paths.
     local moon_conf="${CONFIG_DIR}/moonraker.conf"
-    if [ -f "$moon_conf" ] && ! grep -q '^\[webcam' "$moon_conf"; then
+    if [ -f "$moon_conf" ]; then
         local printer_ip
         printer_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
         [ -z "$printer_ip" ] && printer_ip="<printer-ip>"
+        # Strip any existing [webcam ...] sections (e.g. broken RC12 config)
+        if grep -q '^\[webcam' "$moon_conf"; then
+            awk '/^\[webcam/{skip=1;next} skip && /^\[/{skip=0} !skip{print}' \
+                "$moon_conf" > "${moon_conf}.tmp" && mv "${moon_conf}.tmp" "$moon_conf"
+        fi
         tee -a "$moon_conf" > /dev/null <<EOF
 
 [webcam printer]
@@ -447,30 +550,45 @@ location: printer
 enabled: True
 target_fps: 15
 target_fps_idle: 5
-stream_url: http://${printer_ip}:${USTREAMER_PORT}/?action=stream
-snapshot_url: http://${printer_ip}:${USTREAMER_PORT}/?action=snapshot
+stream_url: http://${printer_ip}:${MAINSAIL_PORT}/webcam/stream
+snapshot_url: http://${printer_ip}:${MAINSAIL_PORT}/webcam/snapshot
 flip_horizontal: False
 flip_vertical: False
 rotation: 0
 aspect_ratio: 4:3
 EOF
-        ok "Added [webcam printer] to moonraker.conf (http://${printer_ip}:${USTREAMER_PORT})"
+        ok "Wrote [webcam printer] to moonraker.conf (http://${printer_ip}:${MAINSAIL_PORT}/webcam/)"
         if [ "$printer_ip" = "<printer-ip>" ]; then
             warn "Could not detect printer IP — update stream_url/snapshot_url in moonraker.conf"
         else
             info "If the printer IP changes, update stream_url/snapshot_url in moonraker.conf"
         fi
-    elif ! [ -f "$moon_conf" ]; then
-        warn "moonraker.conf not found at ${moon_conf} — webcam not registered with Moonraker"
-        warn "  → Re-run option 5 after Moonraker has created its config"
+        sudo systemctl restart moonraker 2>/dev/null || \
+            warn "Could not restart moonraker — restart manually for camera to register"
+    else
+        warn "moonraker.conf not found at ${moon_conf} — webcam not registered"
     fi
 
     touch "$CAMERA_MARKER"
-    ok "Camera configured — open Mainsail and look for the camera panel"
+    ok "Camera configured — hard-refresh Mainsail (Cmd/Ctrl+Shift+R) and check the camera panel"
 }
 
 uninstall_camera() {
     banner "Removing camera streaming"
+
+    # Remove the nginx /webcam/ proxy first so nginx doesn't forward to a
+    # service that's about to disappear.
+    if [ -f "$MAINSAIL_NGINX_SITE_AVAIL" ] && \
+       grep -q 'location /webcam/' "$MAINSAIL_NGINX_SITE_AVAIL" 2>/dev/null; then
+        if remove_webcam_from_mainsail_nginx; then
+            if sudo nginx -t >/dev/null 2>&1; then
+                sudo systemctl reload nginx
+                ok "Removed /webcam/ proxy from Mainsail nginx"
+            else
+                warn "nginx config test failed after removing /webcam/ — check 'sudo nginx -t'"
+            fi
+        fi
+    fi
 
     sudo systemctl disable --now "$USTREAMER_SERVICE" 2>/dev/null || true
     if [ -f "$USTREAMER_UNIT" ]; then
@@ -485,6 +603,7 @@ uninstall_camera() {
         awk '/^\[webcam/{skip=1;next} skip && /^\[/{skip=0} !skip{print}' \
             "$moon_conf" > "${moon_conf}.tmp" && mv "${moon_conf}.tmp" "$moon_conf"
         ok "Removed [webcam] section from moonraker.conf"
+        sudo systemctl restart moonraker 2>/dev/null || true
     fi
 
     rm -f "$CAMERA_MARKER"
@@ -495,17 +614,27 @@ verify_camera() {
     if ! camera_installed; then
         return 0
     fi
-    if systemctl is-active --quiet "$USTREAMER_SERVICE"; then
-        if curl --fail --silent --max-time 3 "http://127.0.0.1:${USTREAMER_PORT}/" \
-            -o /dev/null 2>&1; then
-            ok "Camera stream reachable on port ${USTREAMER_PORT}"
-        else
-            warn "ustreamer running but not responding on port ${USTREAMER_PORT}"
-            warn "  → check: sudo journalctl -u ${USTREAMER_SERVICE} -n 20"
-        fi
-    else
+    if ! systemctl is-active --quiet "$USTREAMER_SERVICE"; then
         warn "${USTREAMER_SERVICE} not active — camera not streaming"
         warn "  → try: sudo systemctl start ${USTREAMER_SERVICE}"
+        return 0
+    fi
+    # ustreamer is bound to 127.0.0.1 — check it serves a snapshot natively.
+    if curl --fail --silent --max-time 3 \
+        "http://127.0.0.1:${USTREAMER_PORT}/snapshot" -o /dev/null 2>&1; then
+        ok "ustreamer serving on 127.0.0.1:${USTREAMER_PORT}"
+    else
+        warn "ustreamer running but /snapshot not responding"
+        warn "  → check: sudo journalctl -u ${USTREAMER_SERVICE} -n 20"
+        return 0
+    fi
+    # Check the nginx /webcam/ proxy reaches it.
+    if curl --fail --silent --max-time 3 \
+        "http://127.0.0.1:${MAINSAIL_PORT}/webcam/snapshot" -o /dev/null 2>&1; then
+        ok "nginx /webcam/ proxy reachable on port ${MAINSAIL_PORT}"
+    else
+        warn "nginx /webcam/ proxy not responding on port ${MAINSAIL_PORT}"
+        warn "  → check 'location /webcam/' exists in ${MAINSAIL_NGINX_SITE_AVAIL}"
     fi
 }
 
@@ -514,6 +643,22 @@ menu_mainsail() {
     if mainsail_installed; then
         info "Status: INSTALLED on port ${MAINSAIL_PORT}"
         info "Access via http://<printer-ip>:${MAINSAIL_PORT}"
+        # Offer camera setup/migration before falling through to uninstall
+        if camera_installed && ! camera_config_is_current; then
+            warn "Camera config is from an older AIO release (broken — wrong URL paths,"
+            warn "no nginx /webcam/ proxy). Mainsail's camera panel won't connect."
+            if confirm "Migrate camera to RC13 format now?"; then
+                install_camera || warn "Camera migration had problems (see above)"
+                press_enter
+                return
+            fi
+        elif ! camera_installed; then
+            if confirm "Camera streaming not configured. Set it up now?"; then
+                install_camera || warn "Camera setup had problems (see above)"
+                press_enter
+                return
+            fi
+        fi
         if confirm "Uninstall Mainsail?"; then
             uninstall_mainsail
         fi
