@@ -68,6 +68,30 @@
         "unload_filament": {
           "gcode": "UNLOAD_FILAMENT",
           "label": "Unload"
+        },
+        "macro_3": {
+          "gcode": "DRY_PLA",
+          "label": "Dry PLA"
+        },
+        "macro_4": {
+          "gcode": "DRY_PETG",
+          "label": "Dry PETG"
+        },
+        "macro_5": {
+          "gcode": "DRY_ABS",
+          "label": "Dry ABS"
+        },
+        "macro_6": {
+          "gcode": "DRY_TPU",
+          "label": "Dry TPU"
+        },
+        "macro_7": {
+          "gcode": "DRY_PA",
+          "label": "Dry Nylon"
+        },
+        "macro_8": {
+          "gcode": "BOX_DRY_STOP",
+          "label": "Stop Dry"
         }
       },
       "extra_sensors": {},
