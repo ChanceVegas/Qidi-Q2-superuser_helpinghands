@@ -1878,7 +1878,7 @@ _install_bunnybox() {
             fi
             chmod +x "$ks_script"
             sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
-            BACKEND=X NETWORK=N START=1 bash "$ks_script"
+            BACKEND=X NETWORK=Y START=1 bash "$ks_script"
             local ks_exit=$?
             [ $ks_exit -ne 0 ] && \
                 warn "KlipperScreen installer exited ${ks_exit}"
