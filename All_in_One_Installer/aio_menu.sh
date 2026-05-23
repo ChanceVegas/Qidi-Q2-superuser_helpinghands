@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.21'
+AIO_VERSION='RC1.22'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -62,7 +62,7 @@ USTREAMER_PORT=8080
 USTREAMER_DEVICE='/dev/video0'
 CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
 MOONRAKER_PORT=7125
-KLIPPERSCREEN_REPO_URL='https://github.com/KlipperScreen/KlipperScreen.git'
+KLIPPERSCREEN_REPO_URL='https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edition.git'
 KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
 KLIPPERSCREEN_VENV='/home/mks/.KlipperScreen-env'
 KLIPPERSCREEN_SERVICE='KlipperScreen'
@@ -1127,17 +1127,16 @@ klipperscreen_installed() {
 # Strategy: Qidi holds xserver-common at u10, so xserver-xorg-legacy
 # (setuid Xwrapper) can't be installed. Without it, xinit can't start
 # Xorg as non-root user 'mks'. Fix: run the service as root so xinit
-# can start Xorg directly. lightdm is masked (no VT conflict).
-# KlipperScreen-start.sh launches xinit with the Python venv as the
-# X client, and TTYPath=/dev/tty7 ensures the display output goes to
-# the correct virtual terminal.
+# can start Xorg directly. lightdm/makerbase-client are masked so tty1
+# is free. ExecStartPre forces a chvt 1 so the physical display switches
+# away from any prior VT before xinit claims tty1.
 switch_display_to_klipperscreen() {
     banner "Switching active display → KlipperScreen"
 
-    info "Writing KlipperScreen service unit (root + xinit on tty7)"
+    info "Writing KlipperScreen service unit (root + xinit on tty1)"
     sudo tee "$KLIPPERSCREEN_UNIT" > /dev/null <<UNIT
 [Unit]
-Description=KlipperScreen
+Description=KlipperScreen (Happy Hare Edition)
 After=moonraker.service
 ConditionPathExists=/dev/tty0
 
@@ -1149,10 +1148,11 @@ WorkingDirectory=${KLIPPERSCREEN_DIR}
 Environment=HOME=/home/mks
 Environment="KS_XCLIENT=${KLIPPERSCREEN_VENV}/bin/python ${KLIPPERSCREEN_DIR}/screen.py"
 Environment=BACKEND=X
+ExecStartPre=-/bin/chvt 1
 ExecStart=${KLIPPERSCREEN_DIR}/scripts/KlipperScreen-start.sh
 PAMName=login
 StandardInput=tty
-TTYPath=/dev/tty7
+TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
@@ -1854,7 +1854,7 @@ _install_bunnybox() {
         ok "BunnyBox install step complete"
 
         if [ "$display_ui" = "klipperscreen" ]; then
-            banner "Installing KlipperScreen (X11 backend)"
+            banner "Installing KlipperScreen Happy Hare Edition (X11 backend)"
             # The KlipperScreen installer uses KSPATH=dirname(SCRIPTPATH) to
             # locate requirements and the service template. Running a single
             # downloaded script from /tmp sets KSPATH=/ and breaks all paths.
@@ -1864,15 +1864,16 @@ _install_bunnybox() {
             # xserver-common at u10; legacy requires >= u17. The rest of the
             # X11 stack is already present on the Q2. cage/Wayland is not in
             # the Q2's USTC Debian mirror so BACKEND=W is not an option.
+            # Happy Hare Edition adds native 4-gate support for the Qidi Box.
             local ks_install_dir="$KLIPPERSCREEN_DIR"
             local ks_script="$ks_install_dir/scripts/KlipperScreen-install.sh"
             if [ -d "$ks_install_dir/.git" ]; then
                 info "KlipperScreen repo exists — updating"
                 git -C "$ks_install_dir" pull --ff-only 2>/dev/null || true
             else
-                info "Cloning KlipperScreen to ${ks_install_dir}"
+                info "Cloning KlipperScreen Happy Hare Edition to ${ks_install_dir}"
                 if ! git clone --depth 1 "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
-                    err "Failed to clone KlipperScreen repository"
+                    err "Failed to clone KlipperScreen Happy Hare Edition repository"
                     return 1
                 fi
             fi
@@ -1882,7 +1883,19 @@ _install_bunnybox() {
             local ks_exit=$?
             [ $ks_exit -ne 0 ] && \
                 warn "KlipperScreen installer exited ${ks_exit}"
-            ok "KlipperScreen install step complete"
+            # Happy Hare Edition: configure 4 gates for the Qidi Box's 4 slots
+            local hh_script="$ks_install_dir/happy_hare/install_ks.sh"
+            if [ -f "$hh_script" ]; then
+                info "Configuring Happy Hare Edition for 4 gates (Qidi Box)"
+                chmod +x "$hh_script"
+                bash "$hh_script" -g 4
+                local hh_exit=$?
+                [ $hh_exit -ne 0 ] && \
+                    warn "Happy Hare Edition gate setup exited ${hh_exit}"
+            else
+                warn "Happy Hare Edition setup script not found at ${hh_script}"
+            fi
+            ok "KlipperScreen Happy Hare Edition install step complete"
         else
             banner "Installing HelixScreen"
             set +e

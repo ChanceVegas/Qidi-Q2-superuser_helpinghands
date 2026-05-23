@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC1.21)
+   Qidi Q2 Superuser - AIO Setup Menu (RC1.22)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -56,7 +56,7 @@ chmod +x aio_menu.sh
 | # | Option | What it does |
 |---|--------|-------------|
 | 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the HelixScreen touchscreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. |
-| 2 | **Install BunnyBox & KlipperScreen** | Same as option 1 but uses KlipperScreen instead of HelixScreen. KlipperScreen runs its own X server on the touchscreen via `xinit`. Includes NetworkManager for network management from the touchscreen. |
+| 2 | **Install BunnyBox & KlipperScreen** | Same as option 1 but uses KlipperScreen Happy Hare Edition instead of HelixScreen. Built specifically for Happy Hare MMU setups with native 4-gate support for the Qidi Box's four filament slots. Includes NetworkManager for touchscreen network management. |
 | 3 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, and adaptive bed meshing. |
 | 4 | **Revert to Backup** | Fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. Runs a health check automatically at the end. |
 | 5 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
@@ -103,6 +103,7 @@ After installing BunnyBox (option 1 or 2), the following one-tap drying macros a
 
 | Version | Notable additions |
 |---------|------------------|
+| RC1.22 | Switched to KlipperScreen Happy Hare Edition (native 4-gate Qidi Box support); service now claims tty1 with `chvt 1` pre-exec (fixes display stuck on Qidi splash) |
 | RC1.21 | KlipperScreen runs its own X server via `xinit` as root on tty7 (fixes Qidi splash screen covering KlipperScreen); installs NetworkManager for touchscreen network management |
 | RC1.20 | KlipperScreen attempted `DISPLAY=:0` on lightdm (superseded by RC1.21) |
 | RC1.19 | Fixed KlipperScreen install: clones full repo before running installer so path variables resolve correctly |
@@ -138,7 +139,7 @@ After installing BunnyBox (option 1 or 2), the following one-tap drying macros a
 
 **Klipper won't start after uninstall** — Use option 4 (Revert to Backup) for a clean restore.
 
-**KlipperScreen not showing on display** — Check `sudo journalctl -u KlipperScreen -n 50`. Confirm `lightdm.service` is active (`systemctl status lightdm`).
+**KlipperScreen not showing on display** — Check `sudo journalctl -u KlipperScreen -n 50`. With KlipperScreen installed, `lightdm` should be masked (not active); if it's still running, re-run option 2.
 
 **No stock backup exists** — `/home/mks/mudstockbackups/` is created automatically on first run. If configs were already changed before the first AIO run, restore from a Qidi factory image first, then run AIO to capture a clean baseline.
 
@@ -148,5 +149,5 @@ After installing BunnyBox (option 1 or 2), the following one-tap drying macros a
 - Upstream: https://github.com/Camden-Winder/Qidi-Q2-superuser
 - BunnyBox: https://github.com/Camden-Winder/Bunny-Box
 - HelixScreen: https://github.com/prestonbrown/helixscreen
-- KlipperScreen: https://github.com/KlipperScreen/KlipperScreen
+- KlipperScreen Happy Hare Edition: https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edition
 - Mainsail: https://github.com/mainsail-crew/mainsail
