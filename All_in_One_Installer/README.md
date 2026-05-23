@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC1.20)
+   Qidi Q2 Superuser - AIO Setup Menu (RC1.21)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -56,7 +56,7 @@ chmod +x aio_menu.sh
 | # | Option | What it does |
 |---|--------|-------------|
 | 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the HelixScreen touchscreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. |
-| 2 | **Install BunnyBox & KlipperScreen** | Same as option 1 but uses KlipperScreen instead of HelixScreen. KlipperScreen runs as an X11 client on the printer's existing display. Choose this if you prefer KlipperScreen's interface. |
+| 2 | **Install BunnyBox & KlipperScreen** | Same as option 1 but uses KlipperScreen instead of HelixScreen. KlipperScreen runs its own X server on the touchscreen via `xinit`. Includes NetworkManager for network management from the touchscreen. |
 | 3 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, and adaptive bed meshing. |
 | 4 | **Revert to Backup** | Fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. Runs a health check automatically at the end. |
 | 5 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
@@ -103,7 +103,8 @@ After installing BunnyBox (option 1 or 2), the following one-tap drying macros a
 
 | Version | Notable additions |
 |---------|------------------|
-| RC1.20 | KlipperScreen now runs as an X11 client on lightdm's display (`DISPLAY=:0`) — no longer requires `xserver-xorg-legacy`; verifier no longer false-alarms on HelixScreen when KlipperScreen is active |
+| RC1.21 | KlipperScreen runs its own X server via `xinit` as root on tty7 (fixes Qidi splash screen covering KlipperScreen); installs NetworkManager for touchscreen network management |
+| RC1.20 | KlipperScreen attempted `DISPLAY=:0` on lightdm (superseded by RC1.21) |
 | RC1.19 | Fixed KlipperScreen install: clones full repo before running installer so path variables resolve correctly |
 | RC1.18 | Fixed KlipperScreen install: patches `xserver-xorg-legacy` out of installer (Qidi holds `xserver-common`) |
 | RC1.17 | KlipperScreen install attempted Wayland backend (superseded by RC1.18) |
