@@ -83,6 +83,8 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 | `install_idle_fan_shutdown()` | 10m idle fan+heater shutdown | `IdleFan: on/off` |
 | `install_qidi_box_write()` | HelixScreen HELIX_QIDI_BOX_WRITE drop-in | `BoxWrite: on/off` |
 | `install_mainsail()` | Mainsail web UI (delegates to Camden-Winder's installer) | `Mainsail: installed/not found` |
+| `install_camera()` | ustreamer + nginx /webcam/ proxy + moonraker [webcam] | `Camera: streaming/off` |
+| `install_spoolman_local()` / `install_spoolman_remote()` | Local install via upstream `scripts/install.sh -systemd=yes`, or remote URL only | `Spoolman: local/remote/not configured` |
 
 ### Current Menu Layout
 
@@ -92,8 +94,9 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 3) Revert to Backup                 (full uninstall + restore stock)
 4) Idle Fan Shutdown                (10m idle, temp-gated)
 5) Mainsail                         (web UI on port 100)
-6) About
-7) Run all verifiers
+6) Spoolman                         (filament tracking, port 7912)
+7) About
+8) Run all verifiers
 0) Exit
 ```
 

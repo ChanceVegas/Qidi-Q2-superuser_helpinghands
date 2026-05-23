@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.14'
+AIO_VERSION='RC1.15'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -62,6 +62,13 @@ USTREAMER_PORT=8080
 USTREAMER_DEVICE='/dev/video0'
 CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
 MOONRAKER_PORT=7125
+SPOOLMAN_PIN='0.23.1'
+SPOOLMAN_DIR='/home/mks/Spoolman'
+SPOOLMAN_SERVICE='Spoolman'
+SPOOLMAN_UNIT='/etc/systemd/system/Spoolman.service'
+SPOOLMAN_PORT=7912
+SPOOLMAN_MARKER="${BACKUP_ROOT}/.aio_spoolman_installed"
+SPOOLMAN_ZIP_URL="https://github.com/Donkie/Spoolman/releases/download/v${SPOOLMAN_PIN}/spoolman.zip"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -674,6 +681,230 @@ verify_camera() {
     fi
 }
 
+# ---------- spoolman --------------------------------------------------
+# Two modes:
+#   - LOCAL:  install Spoolman in ${SPOOLMAN_DIR} via upstream install.sh
+#             (creates Spoolman.service, runs as 'mks', listens on 0.0.0.0:7912)
+#   - REMOTE: just write [spoolman] section in moonraker.conf pointing at the
+#             URL of a Spoolman running elsewhere (Docker on NAS, etc.)
+# In both cases Mainsail auto-shows the Spool Manager panel via Moonraker.
+
+spoolman_local_installed() {
+    systemctl is-enabled --quiet "$SPOOLMAN_SERVICE" 2>/dev/null
+}
+
+spoolman_remote_configured() {
+    [ -f "${CONFIG_DIR}/moonraker.conf" ] && \
+        grep -q '^\[spoolman\]' "${CONFIG_DIR}/moonraker.conf" 2>/dev/null && \
+        ! spoolman_local_installed
+}
+
+spoolman_installed() {
+    spoolman_local_installed || spoolman_remote_configured
+}
+
+# Pull the 'server:' URL from moonraker.conf's [spoolman] section, or empty.
+spoolman_url() {
+    [ -f "${CONFIG_DIR}/moonraker.conf" ] || return 0
+    awk '/^\[spoolman\]/{in_sec=1;next} in_sec && /^\[/{in_sec=0} in_sec' \
+        "${CONFIG_DIR}/moonraker.conf" | \
+        grep -i '^server:' | head -n1 | sed 's/^[Ss]erver:[[:space:]]*//' | tr -d '\r\n'
+}
+
+# Replace any existing [spoolman] block in moonraker.conf with one pointing at
+# the given URL, then restart moonraker.
+write_spoolman_moonraker() {
+    local url="$1"
+    local moon_conf="${CONFIG_DIR}/moonraker.conf"
+    [ -f "$moon_conf" ] || { warn "moonraker.conf not found at ${moon_conf}"; return 1; }
+    if grep -q '^\[spoolman\]' "$moon_conf"; then
+        awk '/^\[spoolman\]/{skip=1;next} skip && /^\[/{skip=0} !skip{print}' \
+            "$moon_conf" > "${moon_conf}.tmp" && mv "${moon_conf}.tmp" "$moon_conf"
+    fi
+    tee -a "$moon_conf" > /dev/null <<EOF
+
+[spoolman]
+server: ${url}
+sync_rate: 5
+EOF
+    ok "Wrote [spoolman] section to moonraker.conf (server: ${url})"
+    sudo systemctl restart moonraker 2>/dev/null || \
+        warn "Could not restart moonraker — restart manually for Spoolman to register"
+}
+
+remove_spoolman_moonraker() {
+    local moon_conf="${CONFIG_DIR}/moonraker.conf"
+    [ -f "$moon_conf" ] || return 0
+    grep -q '^\[spoolman\]' "$moon_conf" || return 0
+    awk '/^\[spoolman\]/{skip=1;next} skip && /^\[/{skip=0} !skip{print}' \
+        "$moon_conf" > "${moon_conf}.tmp" && mv "${moon_conf}.tmp" "$moon_conf"
+    ok "Removed [spoolman] section from moonraker.conf"
+}
+
+install_spoolman_local() {
+    banner "Installing Spoolman v${SPOOLMAN_PIN} locally"
+    info "Installing system dependencies (python3-venv, unzip, curl, build-essential)..."
+    sudo apt-get install -y python3 python3-venv python3-pip unzip curl build-essential >/dev/null 2>&1 || {
+        err "Failed to install system dependencies via apt-get"
+        return 1
+    }
+
+    if [ -d "$SPOOLMAN_DIR" ] && [ -d "${SPOOLMAN_DIR}/.venv" ]; then
+        warn "${SPOOLMAN_DIR} already contains a venv"
+        if ! confirm "Reinstall (keeps SQLite database in ~/.local/share/spoolman)?"; then
+            return 1
+        fi
+    fi
+    mkdir -p "$SPOOLMAN_DIR"
+
+    info "Downloading Spoolman v${SPOOLMAN_PIN}..."
+    local zip="/tmp/spoolman-aio-$$.zip"
+    if ! curl -sSL --max-time 120 -o "$zip" "$SPOOLMAN_ZIP_URL"; then
+        err "Download failed: ${SPOOLMAN_ZIP_URL}"
+        rm -f "$zip"
+        return 1
+    fi
+
+    info "Extracting to ${SPOOLMAN_DIR}..."
+    if ! unzip -qo "$zip" -d "$SPOOLMAN_DIR"; then
+        err "Extract failed"
+        rm -f "$zip"
+        return 1
+    fi
+    rm -f "$zip"
+
+    # Pre-create .env so install.sh skips copying .env.example. SPOOLMAN_HOST=0.0.0.0
+    # so the UI is reachable from other machines; moonraker connects via 127.0.0.1.
+    tee "${SPOOLMAN_DIR}/.env" > /dev/null <<EOF
+SPOOLMAN_HOST=0.0.0.0
+SPOOLMAN_PORT=${SPOOLMAN_PORT}
+SPOOLMAN_DB_TYPE=sqlite
+EOF
+
+    info "Running Spoolman's install.sh -systemd=yes (this takes a few minutes; uv compiles wheels on ARM)..."
+    if ! (cd "$SPOOLMAN_DIR" && bash ./scripts/install.sh -systemd=yes); then
+        err "Spoolman's install.sh failed"
+        err "  → check log above and 'sudo journalctl -u ${SPOOLMAN_SERVICE} -n 80'"
+        return 1
+    fi
+
+    sleep 3
+    if curl -sf --max-time 5 "http://127.0.0.1:${SPOOLMAN_PORT}/api/v1/info" > /dev/null 2>&1; then
+        ok "Spoolman is running at http://<printer-ip>:${SPOOLMAN_PORT}"
+    else
+        warn "Spoolman service started but API not reachable on port ${SPOOLMAN_PORT}"
+        warn "  → check 'sudo journalctl -u ${SPOOLMAN_SERVICE} -n 80'"
+    fi
+
+    write_spoolman_moonraker "http://127.0.0.1:${SPOOLMAN_PORT}"
+    touch "$SPOOLMAN_MARKER"
+    ok "Open Mainsail and check the Spool Manager tab"
+}
+
+install_spoolman_remote() {
+    local url="$1"
+    banner "Configuring remote Spoolman"
+    [ -z "$url" ] && { err "No URL provided"; return 1; }
+    url="${url%/}"
+    case "$url" in
+        http://*|https://*) : ;;
+        *) err "URL must start with http:// or https://"; return 1 ;;
+    esac
+    if curl -sf --max-time 5 "${url}/api/v1/info" > /dev/null 2>&1; then
+        ok "Reached Spoolman at ${url}"
+    else
+        warn "Could not reach ${url}/api/v1/info — saving config anyway"
+        warn "  → make sure Spoolman is running there and the printer can reach it"
+    fi
+    write_spoolman_moonraker "$url"
+    touch "$SPOOLMAN_MARKER"
+}
+
+uninstall_spoolman() {
+    banner "Removing Spoolman"
+    remove_spoolman_moonraker
+    sudo systemctl restart moonraker 2>/dev/null || true
+
+    if systemctl list-unit-files 2>/dev/null | grep -q "^${SPOOLMAN_SERVICE}\.service"; then
+        sudo systemctl disable --now "$SPOOLMAN_SERVICE" 2>/dev/null || true
+        sudo rm -f "$SPOOLMAN_UNIT"
+        sudo systemctl daemon-reload
+        ok "Removed ${SPOOLMAN_UNIT}"
+    fi
+
+    if [ -d "$SPOOLMAN_DIR" ]; then
+        warn "Spool database lives at /home/mks/.local/share/spoolman/ (not in ${SPOOLMAN_DIR})"
+        if confirm "Delete ${SPOOLMAN_DIR} (install dir, no DB data)?"; then
+            rm -rf "$SPOOLMAN_DIR"
+            ok "Removed ${SPOOLMAN_DIR}"
+        else
+            info "Kept ${SPOOLMAN_DIR}"
+        fi
+    fi
+    rm -f "$SPOOLMAN_MARKER"
+}
+
+verify_spoolman() {
+    spoolman_installed || return 0
+    info "Verifying Spoolman..."
+    local url
+    url=$(spoolman_url)
+    [ -z "$url" ] && { warn "Spoolman in moonraker.conf but no server URL"; return 0; }
+    if curl -sf --max-time 5 "${url%/}/api/v1/info" > /dev/null 2>&1; then
+        ok "Spoolman API reachable at ${url}"
+    else
+        warn "Spoolman API not reachable at ${url}"
+        warn "  → check 'sudo journalctl -u ${SPOOLMAN_SERVICE} -n 50' (local install)"
+    fi
+}
+
+menu_spoolman() {
+    banner "Spoolman addon"
+    if spoolman_local_installed; then
+        info "Status: LOCAL install (service: ${SPOOLMAN_SERVICE}, port: ${SPOOLMAN_PORT})"
+        info "Access via http://<printer-ip>:${SPOOLMAN_PORT}"
+        if confirm "Uninstall Spoolman?"; then
+            uninstall_spoolman
+        fi
+    elif spoolman_remote_configured; then
+        info "Status: REMOTE configured at $(spoolman_url)"
+        info "Spoolman runs elsewhere; moonraker.conf points at it"
+        if confirm "Remove remote Spoolman config from moonraker.conf?"; then
+            remove_spoolman_moonraker
+            sudo systemctl restart moonraker 2>/dev/null || true
+            rm -f "$SPOOLMAN_MARKER"
+        fi
+    else
+        info "Status: not installed"
+        info "Spoolman tracks filament inventory and spool weights."
+        printf '\n'
+        printf '   %s1)%s Install locally on this Q2  (Python venv, SQLite, ~80 MB)\n' "$C_CYAN" "$C_RESET"
+        printf '   %s2)%s Use a remote Spoolman URL   (Docker on NAS, etc.)\n'        "$C_CYAN" "$C_RESET"
+        printf '   %s0)%s Cancel\n'                                                    "$C_CYAN" "$C_RESET"
+        printf '%sSelect:%s ' "$C_BOLD" "$C_RESET"
+        local choice
+        read -r choice </dev/tty || { press_enter; return; }
+        case "$choice" in
+            1)
+                preflight || { press_enter; return 1; }
+                install_spoolman_local || warn "Local install had problems (see above)"
+                ;;
+            2)
+                local url
+                printf '%sSpoolman URL (e.g. http://192.168.1.10:7912):%s ' "$C_BOLD" "$C_RESET"
+                read -r url </dev/tty || { press_enter; return; }
+                if [ -n "$url" ]; then
+                    install_spoolman_remote "$url" || warn "Remote setup had problems (see above)"
+                else
+                    warn "No URL provided"
+                fi
+                ;;
+            *) info "Cancelled" ;;
+        esac
+    fi
+    press_enter
+}
+
 menu_mainsail() {
     banner "Mainsail addon"
     if mainsail_installed; then
@@ -1182,6 +1413,9 @@ revert_to_backup() {
         if mainsail_installed; then
             uninstall_mainsail
         fi
+        if spoolman_installed; then
+            uninstall_spoolman
+        fi
         if qidi_box_write_enabled; then
             uninstall_qidi_box_write
         fi
@@ -1436,6 +1670,11 @@ _run_verifiers_core() {
         verify_camera
     else
         info "Mainsail not installed"
+    fi
+    if spoolman_installed; then
+        verify_spoolman
+    else
+        info "Spoolman not configured"
     fi
     if qidi_box_write_enabled; then
         if bunnybox_installed; then
@@ -1977,7 +2216,7 @@ EOF
 
 # ---------- main menu ------------------------------------------------
 show_status_line() {
-    local bb_status hs_status idle_status box_write_status mainsail_status camera_status
+    local bb_status hs_status idle_status box_write_status mainsail_status camera_status spoolman_status
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
     else
@@ -2019,10 +2258,17 @@ show_status_line() {
             box_write_status="${C_YELLOW}off${C_RESET}"
         fi
     fi
+    if spoolman_local_installed; then
+        spoolman_status="${C_GREEN}local${C_RESET}"
+    elif spoolman_remote_configured; then
+        spoolman_status="${C_GREEN}remote${C_RESET}"
+    else
+        spoolman_status="${C_YELLOW}not configured${C_RESET}"
+    fi
     printf '  BunnyBox: %b | HelixScreen: %b | IdleFan: %b | BoxWrite: %b\n' \
            "$bb_status" "$hs_status" "$idle_status" "$box_write_status"
-    printf '  Mainsail: %b | Camera: %b\n' \
-           "$mainsail_status" "$camera_status"
+    printf '  Mainsail: %b | Camera: %b | Spoolman: %b\n' \
+           "$mainsail_status" "$camera_status" "$spoolman_status"
 }
 
 draw_menu() {
@@ -2040,9 +2286,10 @@ draw_menu() {
     printf '  %sADDONS%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '   %s4)%s Idle Fan Shutdown                (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
     printf '   %s5)%s Mainsail                         (web UI on port 100)\n'   "$C_CYAN" "$C_RESET"
+    printf '   %s6)%s Spoolman                         (filament tracking, port %s)\n' "$C_CYAN" "$C_RESET" "$SPOOLMAN_PORT"
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
-    printf '   %s6)%s About\n'                                                   "$C_CYAN" "$C_RESET"
-    printf '   %s7)%s Health Check / Run Verifiers\n'                            "$C_CYAN" "$C_RESET"
+    printf '   %s7)%s About\n'                                                   "$C_CYAN" "$C_RESET"
+    printf '   %s8)%s Health Check / Run Verifiers\n'                            "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -2101,8 +2348,9 @@ main_loop() {
                 ;;
             4) menu_idle_fan_shutdown ;;
             5) menu_mainsail ;;
-            6) show_about ;;
-            7) run_all_verifiers ;;
+            6) menu_spoolman ;;
+            7) show_about ;;
+            8) run_all_verifiers ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
