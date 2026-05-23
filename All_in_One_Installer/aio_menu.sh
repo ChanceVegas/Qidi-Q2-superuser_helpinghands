@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.16'
+AIO_VERSION='RC1.17'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1811,12 +1811,17 @@ _install_bunnybox() {
         ok "BunnyBox install step complete"
 
         if [ "$display_ui" = "klipperscreen" ]; then
-            banner "Installing KlipperScreen"
+            banner "Installing KlipperScreen (Wayland/Cage backend)"
+            # Qidi pins xserver-common/xserver-xorg-core/xserver-xorg-legacy
+            # via 'apt-mark hold', so BACKEND=X fails on the apt step.
+            # BACKEND=W uses cage + seatd + xwayland — no collision with
+            # the held X11 packages, and Cage is a minimal Wayland kiosk
+            # compositor well-suited to KlipperScreen's single-window UI.
             local ks_script="/tmp/KlipperScreen-install-$$.sh"
             if curl --fail --silent --show-error --location \
                     "$KLIPPERSCREEN_INSTALL_URL" -o "$ks_script"; then
                 chmod +x "$ks_script"
-                BACKEND=X NETWORK=N START=1 bash "$ks_script"
+                BACKEND=W NETWORK=N START=1 bash "$ks_script"
                 local ks_exit=$?
                 rm -f "$ks_script"
                 [ $ks_exit -ne 0 ] && \
