@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.23'
+AIO_VERSION='RC1.24'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1036,7 +1036,6 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=mks
-Group=mks
 Restart=always
 RestartSec=3
 WorkingDirectory=${KLIPPERSCREEN_DIR}
@@ -1058,12 +1057,21 @@ UNIT
     sudo systemctl stop    helixscreen            2>/dev/null || true
     sudo systemctl disable helixscreen            2>/dev/null || true
     sudo systemctl mask    helixscreen            2>/dev/null || true
-    # Restart lightdm so the display-setup-script takes effect
+
+    # Pick up the new KlipperScreen unit before any service commands
+    sudo systemctl daemon-reload
+
+    # Restart lightdm so the display-setup-script (xhost) takes effect,
+    # then give X a moment to come up before starting KlipperScreen.
     sudo systemctl restart lightdm                2>/dev/null || true
-    sudo systemctl daemon-reload                  2>/dev/null || true
+    sleep 3
+
     sudo systemctl unmask  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo systemctl enable  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo systemctl restart "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
+
+    # Give it a few seconds to settle — the launch script polls for :0
+    sleep 5
     if systemctl is-active --quiet "$KLIPPERSCREEN_SERVICE"; then
         ok "KlipperScreen is active on the display"
     else
@@ -1902,9 +1910,22 @@ _install_bunnybox() {
             local ks_install_dir="$KLIPPERSCREEN_DIR"
             local ks_script="$ks_install_dir/scripts/KlipperScreen-install.sh"
             if [ -d "$ks_install_dir/.git" ]; then
-                info "KlipperScreen repo exists — updating"
-                git -C "$ks_install_dir" pull --ff-only 2>/dev/null || true
+                local existing_remote
+                existing_remote=$(git -C "$ks_install_dir" remote get-url origin 2>/dev/null || true)
+                if [ "$existing_remote" = "$KLIPPERSCREEN_REPO_URL" ]; then
+                    info "KlipperScreen HH Edition repo exists — updating"
+                    git -C "$ks_install_dir" pull --ff-only 2>/dev/null || true
+                else
+                    warn "Existing KlipperScreen clone is from wrong repo (${existing_remote})"
+                    info "Removing old clone and re-cloning Happy Hare Edition"
+                    rm -rf "$ks_install_dir"
+                    if ! git clone --depth 1 "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
+                        err "Failed to clone KlipperScreen Happy Hare Edition repository"
+                        return 1
+                    fi
+                fi
             else
+                [ -d "$ks_install_dir" ] && rm -rf "$ks_install_dir"
                 info "Cloning KlipperScreen Happy Hare Edition to ${ks_install_dir}"
                 if ! git clone --depth 1 "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
                     err "Failed to clone KlipperScreen Happy Hare Edition repository"
