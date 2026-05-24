@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.29'
+AIO_VERSION='RC1.30'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -2251,7 +2251,7 @@ draw_menu() {
     printf '%s--------------------------------------------%s\n' "$C_BOLD" "$C_RESET"
     printf '  %sINSTALL%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
     printf '   %s1)%s Install BunnyBox & HelixScreen    (Q2 with Qidi Box)\n'         "$C_CYAN" "$C_RESET"
-    printf '   %s2)%s Install KlipperScreen             (Happy Hare Edition)\n'         "$C_CYAN" "$C_RESET"
+    printf '   %s2)%s Install KlipperScreen             (temporarily disabled)\n'       "$C_YELLOW" "$C_RESET"
     printf '   %s3)%s Install Just Faster Printer       (Q2 without Box)\n'           "$C_CYAN" "$C_RESET"
     printf '  %sUNINSTALL%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
     printf '   %s4)%s Revert to Backup                  (full uninstall + restore stock)\n' "$C_CYAN" "$C_RESET"
@@ -2308,7 +2308,7 @@ main_loop() {
         read -r choice </dev/tty || exit 0
         case "$choice" in
             1) install_bunnybox_helixscreen ;;
-            2) install_klipperscreen ;;
+            2) warn "KlipperScreen install is temporarily disabled — display issue under investigation." ; press_enter ;;
             3) install_just_faster ;;
             4)
                 warn "Revert to Backup will fully uninstall BunnyBox + display UI"

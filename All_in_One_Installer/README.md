@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC1.29)
+   Qidi Q2 Superuser - AIO Setup Menu (RC1.30)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -101,6 +101,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC1.30 | Option 2 (KlipperScreen) temporarily disabled — display not rendering despite service running; under investigation |
 | RC1.29 | Fixed KlipperScreen Xorg crash: Q2 kernel lacks `/dev/tty0` (no VT subsystem); systemd drop-in now creates the device node via `ExecStartPre` before each service start and clears the `ConditionPathExists` gate |
 | RC1.28 | Fixed KlipperScreen not launching: upstream service unit has `ConditionPathExists=/dev/tty0` which fails on the Q2; a systemd drop-in now clears this condition after install |
 | RC1.27 | Option 2 is now standalone KlipperScreen — no longer bundles BunnyBox, config templates, KAMP, or drying macros; `_install_bunnybox()` simplified to HelixScreen-only |
