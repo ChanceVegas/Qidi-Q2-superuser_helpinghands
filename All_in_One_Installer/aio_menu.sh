@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.28'
+AIO_VERSION='RC1.29'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -2043,17 +2043,21 @@ install_klipperscreen() {
         else
             warn "Happy Hare Edition setup script not found at ${hh_script}"
         fi
-        # The upstream service unit has ConditionPathExists=/dev/tty0 which
-        # fails on the Q2 (no /dev/tty0). Drop-in clears it without touching
-        # the installed unit file.
-        info "Dropping /dev/tty0 condition override for Q2"
+        # The Q2 kernel does not create /dev/tty0 (no VT subsystem in the
+        # Rockchip BSP kernel). Xorg needs it for VT auto-detection and the
+        # upstream service unit has ConditionPathExists=/dev/tty0. A drop-in
+        # clears the condition and creates the device node before each start.
+        info "Installing /dev/tty0 workaround for Q2"
         sudo mkdir -p /etc/systemd/system/KlipperScreen.service.d
-        sudo tee /etc/systemd/system/KlipperScreen.service.d/no-tty0-condition.conf > /dev/null <<'DROPIN'
+        sudo tee /etc/systemd/system/KlipperScreen.service.d/q2-tty0-fix.conf > /dev/null <<'DROPIN'
 [Unit]
 ConditionPathExists=
+
+[Service]
+ExecStartPre=-/bin/sh -c '[ -e /dev/tty0 ] || /bin/mknod /dev/tty0 c 4 0'
 DROPIN
         sudo systemctl daemon-reload 2>/dev/null || true
-        ok "ConditionPathExists=/dev/tty0 cleared"
+        ok "/dev/tty0 workaround installed"
 
         prepare_display_for_klipperscreen
         sudo systemctl restart "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
