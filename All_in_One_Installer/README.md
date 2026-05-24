@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC1.24)
+   Qidi Q2 Superuser - AIO Setup Menu (RC1.25)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -102,6 +102,7 @@ After installing BunnyBox (option 1 or 2), the following one-tap drying macros a
 
 | Version | Notable additions |
 |---------|------------------|
+| RC1.25 | Fixed `install_ks.sh` aborting on `git describe` — switched from shallow clone (`--depth 1`) to full clone so tag history is available; fixed service starting before custom `launch_KlipperScreen.sh` is in place by changing `START=1` → `START=0` in KlipperScreen-install.sh invocation |
 | RC1.24 | Fixed KlipperScreen service crash (`Group=mks` — Q2 has no `mks` group); fixed wrong KlipperScreen clone (existing non-HH-Edition clone is now detected and replaced); fixed `daemon-reload` ordering so the service unit is loaded before `enable`/`start` |
 | RC1.23 | KlipperScreen option 2 rewritten: uses KlipperScreen Happy Hare Edition as an X client on lightdm's `:0` display (no xinit, no tty switching, no network changes); `NETWORK=N` to prevent the installer from killing dhcpcd/NetworkManager; 4-gate Qidi Box support via `install_ks.sh -g 4`; clean revert restores lightdm config and stock display |
 | RC1.22 | Removed KlipperScreen option (Q2 display constraints made it unreliable); added filament drying macro buttons (Dry PLA/PETG/ABS/TPU/Nylon, Stop Dry) to HelixScreen settings; menu renumbered to 7 options |
