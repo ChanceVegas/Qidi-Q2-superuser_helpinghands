@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.22'
+AIO_VERSION='RC1.23'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -62,6 +62,13 @@ USTREAMER_PORT=8080
 USTREAMER_DEVICE='/dev/video0'
 CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
 MOONRAKER_PORT=7125
+KLIPPERSCREEN_REPO_URL='https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edition.git'
+KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
+KLIPPERSCREEN_VENV='/home/mks/.KlipperScreen-env'
+KLIPPERSCREEN_SERVICE='KlipperScreen'
+KLIPPERSCREEN_UNIT='/etc/systemd/system/KlipperScreen.service'
+KLIPPERSCREEN_XSETUP='/usr/local/bin/aio-ks-xsetup.sh'
+LIGHTDM_CONF='/etc/lightdm/lightdm.conf'
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -971,6 +978,147 @@ helixscreen_installed() {
     [ -d "$HELIX_DIR" ] || systemctl is-enabled helixscreen &>/dev/null
 }
 
+klipperscreen_installed() {
+    systemctl is-enabled --quiet "$KLIPPERSCREEN_SERVICE" 2>/dev/null
+}
+
+# Switch the Q2 display from the stock Qidi UI to KlipperScreen.
+#
+# Strategy: lightdm manages the X server on :0 — we keep it running.
+# makerbase-client is a separate systemd service that draws the Qidi UI
+# on :0; we mask it. A display-setup-script runs xhost +local: so user
+# mks can connect to :0 (the X session belongs to linaro, not mks).
+# launch_KlipperScreen.sh overrides KlipperScreen-start.sh's default
+# xinit approach and instead connects directly to :0 as an X client.
+switch_display_to_klipperscreen() {
+    banner "Switching active display → KlipperScreen"
+
+    # Allow local users (mks) to connect to lightdm's X display
+    info "Adding xhost display-setup-script to lightdm"
+    sudo tee "$KLIPPERSCREEN_XSETUP" > /dev/null <<'XSETUP'
+#!/bin/bash
+xhost +local:
+XSETUP
+    sudo chmod +x "$KLIPPERSCREEN_XSETUP"
+
+    # Back up lightdm.conf, then add display-setup-script if not present
+    if ! grep -q "^display-setup-script=" "$LIGHTDM_CONF" 2>/dev/null; then
+        sudo cp "$LIGHTDM_CONF" "${LIGHTDM_CONF}.aio_bak"
+        sudo sed -i '/^\[Seat:\*\]/a display-setup-script='"$KLIPPERSCREEN_XSETUP" "$LIGHTDM_CONF"
+        ok "lightdm.conf patched (backup at ${LIGHTDM_CONF}.aio_bak)"
+    fi
+
+    # Create the launch override that connects to :0 instead of xinit
+    info "Writing launch_KlipperScreen.sh (X client on :0)"
+    cat > "${KLIPPERSCREEN_DIR}/scripts/launch_KlipperScreen.sh" <<'LAUNCH'
+#!/bin/bash
+# AIO override: connect to lightdm's existing X display instead of xinit.
+for i in $(seq 1 30); do
+    if DISPLAY=:0 xdpyinfo >/dev/null 2>&1; then break; fi
+    sleep 1
+done
+if ! DISPLAY=:0 xdpyinfo >/dev/null 2>&1; then
+    echo "ERROR: X display :0 not available after 30s" >&2
+    exit 1
+fi
+export DISPLAY=:0
+exec $KS_XCLIENT
+LAUNCH
+    chmod +x "${KLIPPERSCREEN_DIR}/scripts/launch_KlipperScreen.sh"
+
+    info "Writing KlipperScreen service unit"
+    sudo tee "$KLIPPERSCREEN_UNIT" > /dev/null <<UNIT
+[Unit]
+Description=KlipperScreen (Happy Hare Edition)
+After=lightdm.service moonraker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=mks
+Group=mks
+Restart=always
+RestartSec=3
+WorkingDirectory=${KLIPPERSCREEN_DIR}
+Environment=HOME=/home/mks
+Environment=DISPLAY=:0
+Environment="KS_XCLIENT=${KLIPPERSCREEN_VENV}/bin/python ${KLIPPERSCREEN_DIR}/screen.py"
+ExecStart=${KLIPPERSCREEN_DIR}/scripts/KlipperScreen-start.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    # Mask the Qidi UI but keep lightdm (X server) running
+    sudo systemctl stop    makerbase-client       2>/dev/null || true
+    sudo systemctl disable makerbase-client       2>/dev/null || true
+    sudo systemctl mask    makerbase-client       2>/dev/null || true
+    sudo systemctl stop    helixscreen            2>/dev/null || true
+    sudo systemctl disable helixscreen            2>/dev/null || true
+    sudo systemctl mask    helixscreen            2>/dev/null || true
+    # Restart lightdm so the display-setup-script takes effect
+    sudo systemctl restart lightdm                2>/dev/null || true
+    sudo systemctl daemon-reload                  2>/dev/null || true
+    sudo systemctl unmask  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
+    sudo systemctl enable  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
+    sudo systemctl restart "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
+    if systemctl is-active --quiet "$KLIPPERSCREEN_SERVICE"; then
+        ok "KlipperScreen is active on the display"
+    else
+        warn "${KLIPPERSCREEN_SERVICE}.service is enabled but not active"
+        warn "  → check: sudo journalctl -u ${KLIPPERSCREEN_SERVICE} -n 50"
+    fi
+}
+
+uninstall_klipperscreen() {
+    banner "Uninstalling KlipperScreen"
+    sudo systemctl disable --now "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
+    sudo systemctl mask    "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
+    sudo rm -f "$KLIPPERSCREEN_UNIT"
+    sudo systemctl daemon-reload 2>/dev/null || true
+    rm -rf "$KLIPPERSCREEN_DIR" 2>/dev/null || true
+    rm -rf "$KLIPPERSCREEN_VENV" 2>/dev/null || true
+    # Restore lightdm.conf from backup and remove xhost script
+    if [ -f "${LIGHTDM_CONF}.aio_bak" ]; then
+        sudo mv "${LIGHTDM_CONF}.aio_bak" "$LIGHTDM_CONF"
+        ok "lightdm.conf restored from backup"
+    else
+        sudo sed -i '/^display-setup-script=.*aio-ks-xsetup/d' "$LIGHTDM_CONF" 2>/dev/null || true
+    fi
+    sudo rm -f "$KLIPPERSCREEN_XSETUP"
+    # Re-enable the Qidi stock display
+    info "Re-enabling Qidi stock display services..."
+    sudo systemctl unmask  makerbase-client  2>/dev/null || true
+    sudo systemctl enable  makerbase-client  2>/dev/null || true
+    sudo systemctl unmask  lightdm           2>/dev/null || true
+    sudo systemctl enable  lightdm           2>/dev/null || true
+    sudo systemctl restart lightdm           2>/dev/null || true
+    sudo systemctl restart makerbase-client  2>/dev/null || true
+    ok "KlipperScreen uninstalled, stock display services re-enabled"
+}
+
+verify_klipperscreen() {
+    klipperscreen_installed || return 0
+    if systemctl is-active --quiet "$KLIPPERSCREEN_SERVICE"; then
+        ok "KlipperScreen.service is active"
+    else
+        warn "KlipperScreen.service is not active"
+        warn "  → check: sudo journalctl -u ${KLIPPERSCREEN_SERVICE} -n 50"
+    fi
+    if [ -f "${KLIPPERSCREEN_DIR}/scripts/launch_KlipperScreen.sh" ]; then
+        ok "launch_KlipperScreen.sh override present"
+    else
+        warn "launch_KlipperScreen.sh override missing — display may not work"
+    fi
+    if grep -q "^display-setup-script=" "$LIGHTDM_CONF" 2>/dev/null; then
+        ok "lightdm display-setup-script configured"
+    else
+        warn "lightdm display-setup-script not set — mks may not be able to reach :0"
+    fi
+}
+
 preflight() {
     banner "Pre-flight checks"
 
@@ -1122,6 +1270,12 @@ revert_to_backup() {
     # cleanup step they do (qidi-box-write systemd drop-in, helixscreen state
     # dir, moonraker bak, restore_aio_disabled_macros, fix_printer_cfg_after_uninstall,
     # etc.) without duplicating logic here.
+    if klipperscreen_installed; then
+        uninstall_klipperscreen
+    else
+        info "KlipperScreen not present, skipping"
+    fi
+
     if helixscreen_installed; then
         uninstall_helixscreen
     else
@@ -1232,11 +1386,13 @@ verify_bunnybox_install() {
         all_ok=false
     fi
 
-    if [ -s "${HELIX_CONFIG_DIR}/settings.json" ]; then
-        ok "helixscreen settings.json"
-    else
-        err "helixscreen settings.json missing"
-        all_ok=false
+    if ! klipperscreen_installed; then
+        if [ -s "${HELIX_CONFIG_DIR}/settings.json" ]; then
+            ok "helixscreen settings.json"
+        else
+            err "helixscreen settings.json missing"
+            all_ok=false
+        fi
     fi
 
     if [ "$all_ok" = true ]; then
@@ -1432,6 +1588,11 @@ _run_verifiers_core() {
         ok "idle_fan_shutdown.cfg installed and included in printer.cfg"
     else
         info "Idle Fan Shutdown not installed"
+    fi
+    if klipperscreen_installed; then
+        verify_klipperscreen
+    else
+        info "KlipperScreen not installed"
     fi
     if mainsail_installed; then
         verify_mainsail
@@ -1645,7 +1806,11 @@ fix_known_klipper_conflicts() {
 
 # ---------- install: BunnyBox (shared core + display choice) ---------
 _install_bunnybox() {
-    banner "Install: BunnyBox & HelixScreen (Q2 with Qidi Box)"
+    local display_ui="${1:-helixscreen}"
+    local display_label
+    [ "$display_ui" = "klipperscreen" ] && display_label="KlipperScreen" || display_label="HelixScreen"
+
+    banner "Install: BunnyBox & ${display_label} (Q2 with Qidi Box)"
 
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
@@ -1732,15 +1897,49 @@ _install_bunnybox() {
         fi
         ok "BunnyBox install step complete"
 
-        banner "Installing HelixScreen"
-        set +e
-        curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh -s -- --version "${HELIXSCREEN_PIN}"
-        local hs_exit=$?
-        set -e
-        if [ $hs_exit -ne 0 ]; then
-            warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
+        if [ "$display_ui" = "klipperscreen" ]; then
+            banner "Installing KlipperScreen Happy Hare Edition"
+            local ks_install_dir="$KLIPPERSCREEN_DIR"
+            local ks_script="$ks_install_dir/scripts/KlipperScreen-install.sh"
+            if [ -d "$ks_install_dir/.git" ]; then
+                info "KlipperScreen repo exists — updating"
+                git -C "$ks_install_dir" pull --ff-only 2>/dev/null || true
+            else
+                info "Cloning KlipperScreen Happy Hare Edition to ${ks_install_dir}"
+                if ! git clone --depth 1 "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
+                    err "Failed to clone KlipperScreen Happy Hare Edition repository"
+                    return 1
+                fi
+            fi
+            chmod +x "$ks_script"
+            sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
+            BACKEND=X NETWORK=N START=1 bash "$ks_script"
+            local ks_exit=$?
+            [ $ks_exit -ne 0 ] && \
+                warn "KlipperScreen installer exited ${ks_exit}"
+            local hh_script="$ks_install_dir/happy_hare/install_ks.sh"
+            if [ -f "$hh_script" ]; then
+                info "Configuring Happy Hare Edition for 4 gates (Qidi Box)"
+                chmod +x "$hh_script"
+                bash "$hh_script" -g 4
+                local hh_exit=$?
+                [ $hh_exit -ne 0 ] && \
+                    warn "Happy Hare Edition gate setup exited ${hh_exit}"
+            else
+                warn "Happy Hare Edition setup script not found at ${hh_script}"
+            fi
+            ok "KlipperScreen Happy Hare Edition install step complete"
+        else
+            banner "Installing HelixScreen"
+            set +e
+            curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh -s -- --version "${HELIXSCREEN_PIN}"
+            local hs_exit=$?
+            set -e
+            if [ $hs_exit -ne 0 ]; then
+                warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
+            fi
+            ok "HelixScreen install step complete"
         fi
-        ok "HelixScreen install step complete"
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
         fetch "${REPO_BASE}/gcode_macro-BunnyBox%26HelixScreen.cfg" \
@@ -1812,12 +2011,16 @@ _install_bunnybox() {
         fetch "${KAMP_BASE}/Smart_Park.cfg"        "${CONFIG_DIR}/Smart_Park.cfg"       || return 1
         ok "KAMP settings and sub-files applied"
 
-        banner "Applying HelixScreen settings"
-        mkdir -p "$HELIX_CONFIG_DIR"
-        fetch "${REPO_BASE}/helixscreen_settings.json" \
-              "${HELIX_CONFIG_DIR}/settings.json" || return 1
-        ok "HelixScreen settings applied"
-        switch_display_to_helixscreen
+        if [ "$display_ui" = "klipperscreen" ]; then
+            switch_display_to_klipperscreen
+        else
+            banner "Applying HelixScreen settings"
+            mkdir -p "$HELIX_CONFIG_DIR"
+            fetch "${REPO_BASE}/helixscreen_settings.json" \
+                  "${HELIX_CONFIG_DIR}/settings.json" || return 1
+            ok "HelixScreen settings applied"
+            switch_display_to_helixscreen
+        fi
 
         fix_known_klipper_conflicts
 
@@ -1831,7 +2034,11 @@ _install_bunnybox() {
             uninstall_qidi_box_write
         fi
 
-        verify_qidi_box_helixscreen
+        if [ "$display_ui" = "klipperscreen" ]; then
+            verify_klipperscreen
+        else
+            verify_qidi_box_helixscreen
+        fi
 
         verify_bunnybox_install
     } 2>&1 | tee -a "$INSTALL_LOG"
@@ -1855,12 +2062,12 @@ _install_bunnybox() {
     banner "Install complete"
     cat <<EOF
 ${C_BOLD}Next steps:${C_RESET}
-  1. FIRMWARE_RESTART (Klipper console or HelixScreen)
+  1. FIRMWARE_RESTART (Klipper console or ${display_label})
   2. Verify:    systemctl status klipper
   3. First-time only - calibrate MMU gear steppers:
         ${C_CYAN}MMU_CALIBRATE_GEAR GATE=0 LENGTH=100${C_RESET}
      Mark filament, measure travel, re-run with MEASURED=<mm>
-  4. Start drying (use HelixScreen macro buttons or console):
+  4. Start drying (use ${display_label} macro buttons or console):
         ${C_CYAN}DRY_PLA${C_RESET}  ${C_CYAN}DRY_PETG${C_RESET}  ${C_CYAN}DRY_ABS${C_RESET}  ${C_CYAN}DRY_TPU${C_RESET}  ${C_CYAN}DRY_PA${C_RESET}
   5. Check status:   ${C_CYAN}BOX_DRY_STATUS${C_RESET}
   6. Stop drying:    ${C_CYAN}BOX_DRY_STOP${C_RESET}
@@ -1872,7 +2079,8 @@ EOF
     press_enter
 }
 
-install_bunnybox_helixscreen() { _install_bunnybox; }
+install_bunnybox_helixscreen()  { _install_bunnybox helixscreen; }
+install_bunnybox_klipperscreen() { _install_bunnybox klipperscreen; }
 
 # ---------- install: Just Faster Printer -----------------------------
 install_just_faster() {
@@ -1984,7 +2192,9 @@ show_status_line() {
     else
         bb_status="${C_YELLOW}not found${C_RESET}"
     fi
-    if helixscreen_installed; then
+    if klipperscreen_installed; then
+        display_status="${C_GREEN}KlipperScreen${C_RESET}"
+    elif helixscreen_installed; then
         display_status="${C_GREEN}HelixScreen${C_RESET}"
     else
         display_status="${C_YELLOW}none${C_RESET}"
@@ -2034,16 +2244,17 @@ draw_menu() {
     show_status_line
     printf '%s--------------------------------------------%s\n' "$C_BOLD" "$C_RESET"
     printf '  %sINSTALL%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
-    printf '   %s1)%s Install BunnyBox & HelixScreen    (Q2 with Qidi Box)\n' "$C_CYAN" "$C_RESET"
-    printf '   %s2)%s Install Just Faster Printer       (Q2 without Box)\n'   "$C_CYAN" "$C_RESET"
+    printf '   %s1)%s Install BunnyBox & HelixScreen    (Q2 with Qidi Box)\n'         "$C_CYAN" "$C_RESET"
+    printf '   %s2)%s Install BunnyBox & KlipperScreen  (Q2 with Qidi Box, alt UI)\n' "$C_CYAN" "$C_RESET"
+    printf '   %s3)%s Install Just Faster Printer       (Q2 without Box)\n'           "$C_CYAN" "$C_RESET"
     printf '  %sUNINSTALL%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
-    printf '   %s3)%s Revert to Backup                  (full uninstall + restore stock)\n' "$C_CYAN" "$C_RESET"
+    printf '   %s4)%s Revert to Backup                  (full uninstall + restore stock)\n' "$C_CYAN" "$C_RESET"
     printf '  %sADDONS%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
-    printf '   %s4)%s Idle Fan Shutdown                 (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
-    printf '   %s5)%s Mainsail                          (web UI on port 100)\n'   "$C_CYAN" "$C_RESET"
+    printf '   %s5)%s Idle Fan Shutdown                 (10m idle, temp-gated)\n' "$C_CYAN" "$C_RESET"
+    printf '   %s6)%s Mainsail                          (web UI on port 100)\n'   "$C_CYAN" "$C_RESET"
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
-    printf '   %s6)%s About\n'                                                    "$C_CYAN" "$C_RESET"
-    printf '   %s7)%s Health Check / Run Verifiers\n'                             "$C_CYAN" "$C_RESET"
+    printf '   %s7)%s About\n'                                                    "$C_CYAN" "$C_RESET"
+    printf '   %s8)%s Health Check / Run Verifiers\n'                             "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -2091,19 +2302,20 @@ main_loop() {
         read -r choice </dev/tty || exit 0
         case "$choice" in
             1) install_bunnybox_helixscreen ;;
-            2) install_just_faster ;;
-            3)
-                warn "Revert to Backup will fully uninstall BunnyBox + HelixScreen"
+            2) install_bunnybox_klipperscreen ;;
+            3) install_just_faster ;;
+            4)
+                warn "Revert to Backup will fully uninstall BunnyBox + display UI"
                 warn "and restore configs from ${BACKUP_ROOT}/."
                 if confirm "Proceed with full revert?"; then
                     revert_to_backup
                     press_enter
                 fi
                 ;;
-            4) menu_idle_fan_shutdown ;;
-            5) menu_mainsail ;;
-            6) show_about ;;
-            7) run_all_verifiers ;;
+            5) menu_idle_fan_shutdown ;;
+            6) menu_mainsail ;;
+            7) show_about ;;
+            8) run_all_verifiers ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac

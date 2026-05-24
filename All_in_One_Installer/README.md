@@ -6,22 +6,23 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC1.22)
+   Qidi Q2 Superuser - AIO Setup Menu (RC1.23)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
 --------------------------------------------
   INSTALL
    1) Install BunnyBox & HelixScreen    (Q2 with Qidi Box)
-   2) Install Just Faster Printer       (Q2 without Box)
+   2) Install BunnyBox & KlipperScreen  (Q2 with Qidi Box, alt UI)
+   3) Install Just Faster Printer       (Q2 without Box)
   UNINSTALL
-   3) Revert to Backup                  (full uninstall + restore stock)
+   4) Revert to Backup                  (full uninstall + restore stock)
   ADDONS
-   4) Idle Fan Shutdown                 (10m idle, temp-gated)
-   5) Mainsail                          (web UI on port 100)
+   5) Idle Fan Shutdown                 (10m idle, temp-gated)
+   6) Mainsail                          (web UI on port 100)
   INFO
-   6) About
-   7) Health Check / Run Verifiers
+   7) About
+   8) Health Check / Run Verifiers
    0) Exit
 ============================================
 ```
@@ -55,16 +56,17 @@ chmod +x aio_menu.sh
 | # | Option | What it does |
 |---|--------|-------------|
 | 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the HelixScreen touchscreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. Drying presets (Dry PLA, Dry PETG, etc.) are pre-configured as HelixScreen macro buttons. |
-| 2 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, and adaptive bed meshing. |
-| 3 | **Revert to Backup** | Fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. Runs a health check automatically at the end. |
-| 4 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
-| 5 | **Mainsail** | Addon toggle. Installs the Mainsail web interface, accessible at `http://<printer-ip>:100`. Qidi's stock UI on port 80 is unaffected. Includes a camera proxy so the webcam stream works in Mainsail. |
-| 6 | **About** | Shows the current AIO version and a brief description. |
-| 7 | **Health Check / Run Verifiers** | Scans your Klipper config for common problems — duplicate macros, broken include lines, invalid settings — and offers to fix each one. Safe to run any time. |
+| 2 | **Install BunnyBox & KlipperScreen** | Same as option 1 but uses KlipperScreen Happy Hare Edition instead of HelixScreen. Built specifically for Happy Hare MMU setups with native 4-gate support for the Qidi Box. Connects to lightdm's existing X display — no network changes, no reboot. |
+| 3 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, and adaptive bed meshing. |
+| 4 | **Revert to Backup** | Fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. Runs a health check automatically at the end. |
+| 5 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
+| 6 | **Mainsail** | Addon toggle. Installs the Mainsail web interface, accessible at `http://<printer-ip>:100`. Qidi's stock UI on port 80 is unaffected. Includes a camera proxy so the webcam stream works in Mainsail. |
+| 7 | **About** | Shows the current AIO version and a brief description. |
+| 8 | **Health Check / Run Verifiers** | Scans your Klipper config for common problems — duplicate macros, broken include lines, invalid settings — and offers to fix each one. Safe to run any time. |
 
 ## Filament drying (BunnyBox installs only)
 
-After installing BunnyBox (option 1), the following one-tap drying macros are available from HelixScreen's macro buttons or the Klipper console. Spools rotate automatically throughout each cycle.
+After installing BunnyBox (option 1 or 2), the following one-tap drying macros are available from the touchscreen or the Klipper console. Spools rotate automatically throughout each cycle.
 
 | Macro | Temp | Time |
 |---|---|---|
@@ -77,7 +79,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 ## After installing BunnyBox & HelixScreen (option 1)
 
 1. Run `FIRMWARE_RESTART` from the Klipper console or HelixScreen.
-2. Run **option 7 (Health Check)** to verify everything loaded correctly.
+2. Run **option 8 (Health Check)** to verify everything loaded correctly.
 3. **First-time only:** calibrate the MMU gear steppers:
    ```
    MMU_CALIBRATE_GEAR GATE=0 LENGTH=100
@@ -85,7 +87,13 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
    Mark the filament at the entry point, measure how far it moved, then re-run with `MEASURED=<mm>`. Repeat for each gate.
 4. Load filament into each gate and start a drying preset from the HelixScreen macro buttons or console.
 
-## After installing Just Faster Printer (option 2)
+## After installing BunnyBox & KlipperScreen (option 2)
+
+1. Run `FIRMWARE_RESTART` from the Klipper console or KlipperScreen.
+2. Run **option 8 (Health Check)** to verify everything loaded correctly.
+3. Calibrate MMU gear steppers (same procedure as option 1, step 3).
+
+## After installing Just Faster Printer (option 3)
 
 1. Run `FIRMWARE_RESTART`.
 2. Run a bed level and `SCREWS_TILT_CALCULATE` before your first print.
@@ -94,6 +102,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC1.23 | KlipperScreen option 2 rewritten: uses KlipperScreen Happy Hare Edition as an X client on lightdm's `:0` display (no xinit, no tty switching, no network changes); `NETWORK=N` to prevent the installer from killing dhcpcd/NetworkManager; 4-gate Qidi Box support via `install_ks.sh -g 4`; clean revert restores lightdm config and stock display |
 | RC1.22 | Removed KlipperScreen option (Q2 display constraints made it unreliable); added filament drying macro buttons (Dry PLA/PETG/ABS/TPU/Nylon, Stop Dry) to HelixScreen settings; menu renumbered to 7 options |
 | RC1.14 | Adopted `RC<major>.<minor>` version format; fixed duplicate webcam entries in Mainsail |
 | RC13 | Fixed camera stream in Mainsail (nginx `/webcam/` proxy + correct ustreamer paths) |
@@ -119,9 +128,11 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 **`ERROR: Config directory not found`** — Not running as `mks`, or this isn't a Klipper-based Q2.
 
-**Klipper won't start after install** — Run option 7 (Health Check). It will identify and offer to fix the most common causes.
+**Klipper won't start after install** — Run option 8 (Health Check). It will identify and offer to fix the most common causes.
 
-**Klipper won't start after uninstall** — Use option 3 (Revert to Backup) for a clean restore.
+**KlipperScreen not showing on display** — Check `sudo journalctl -u KlipperScreen -n 50`. Verify lightdm is running (`systemctl status lightdm`) and that `display-setup-script` is set in `/etc/lightdm/lightdm.conf`.
+
+**Klipper won't start after uninstall** — Use option 4 (Revert to Backup) for a clean restore.
 
 **No stock backup exists** — `/home/mks/mudstockbackups/` is created automatically on first run. If configs were already changed before the first AIO run, restore from a Qidi factory image first, then run AIO to capture a clean baseline.
 
@@ -131,4 +142,5 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 - Upstream: https://github.com/Camden-Winder/Qidi-Q2-superuser
 - BunnyBox: https://github.com/Camden-Winder/Bunny-Box
 - HelixScreen: https://github.com/prestonbrown/helixscreen
+- KlipperScreen Happy Hare Edition: https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edition
 - Mainsail: https://github.com/mainsail-crew/mainsail
