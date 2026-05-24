@@ -79,6 +79,7 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 | Function | Feature | Status indicator |
 |---|---|---|
 | `install_bunnybox_helixscreen()` | Happy Hare + HelixScreen | `BunnyBox: installed/not found`, `HelixScreen: installed/not found` |
+| `install_klipperscreen()` | KlipperScreen Happy Hare Edition (standalone) | `Display: KlipperScreen/none` |
 | `install_just_faster()` | JustFasterPrinter macros | (no AMS/Box) |
 | `install_idle_fan_shutdown()` | 10m idle fan+heater shutdown | `IdleFan: on/off` |
 | `install_qidi_box_write()` | HelixScreen HELIX_QIDI_BOX_WRITE drop-in | `BoxWrite: on/off` |
@@ -88,7 +89,7 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 
 ```
 1) Install BunnyBox & HelixScreen    (Q2 with Qidi Box)
-2) Install BunnyBox & KlipperScreen  (Q2 with Qidi Box, alt display)
+2) Install KlipperScreen             (Happy Hare Edition)
 3) Install Just Faster Printer       (Q2 without Box)
 4) Revert to Backup                  (full uninstall + restore stock)
 5) Idle Fan Shutdown                 (10m idle, temp-gated)
@@ -119,7 +120,8 @@ Claude **must ask first** before:
 ## RC1.26 — What's In It
 
 - `AIO_VERSION='RC1.26'`
-- **KlipperScreen option 2 rewritten** to use the upstream `KlipperScreen-install.sh` as-is. Previous approach tried to keep lightdm alive as the X server and attach KlipperScreen as an X client, which failed because KlipperScreen-install.sh disables lightdm and `/dev/tty0` becomes unavailable on the Q2 after it runs.
+- **Option 2 is now standalone `install_klipperscreen()`** — installs KlipperScreen Happy Hare Edition only. No longer bundles BunnyBox, config templates, KAMP, or drying macros. Completely decoupled from `_install_bunnybox()`.
+- **`_install_bunnybox()` simplified** — no longer accepts a `display_ui` parameter; always installs HelixScreen. All KlipperScreen conditionals removed.
 - **`prepare_display_for_klipperscreen()`** replaces `switch_display_to_klipperscreen()`: stops/disables/masks `makerbase-client` and `helixscreen` only — no lightdm or graphical.target manipulation. The upstream installer handles its own X/console setup.
 - **`NETWORK=N`** still passed to prevent the installer killing dhcpcd/NetworkManager. `xserver-xorg-legacy` still stripped (not available on Debian Bullseye ARM).
 - **`uninstall_klipperscreen()`** simplified: removes service/dirs, restores `graphical.target`, unmasks/enables lightdm and makerbase-client. No lightdm.conf backup/restore needed.

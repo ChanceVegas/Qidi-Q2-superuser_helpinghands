@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.26'
+AIO_VERSION='RC1.27'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1763,11 +1763,7 @@ fix_known_klipper_conflicts() {
 
 # ---------- install: BunnyBox (shared core + display choice) ---------
 _install_bunnybox() {
-    local display_ui="${1:-helixscreen}"
-    local display_label
-    [ "$display_ui" = "klipperscreen" ] && display_label="KlipperScreen" || display_label="HelixScreen"
-
-    banner "Install: BunnyBox & ${display_label} (Q2 with Qidi Box)"
+    banner "Install: BunnyBox & HelixScreen (Q2 with Qidi Box)"
 
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
@@ -1854,64 +1850,15 @@ _install_bunnybox() {
         fi
         ok "BunnyBox install step complete"
 
-        if [ "$display_ui" = "klipperscreen" ]; then
-            banner "Installing KlipperScreen Happy Hare Edition"
-            local ks_install_dir="$KLIPPERSCREEN_DIR"
-            local ks_script="$ks_install_dir/scripts/KlipperScreen-install.sh"
-            if [ -d "$ks_install_dir/.git" ]; then
-                local existing_remote
-                existing_remote=$(git -C "$ks_install_dir" remote get-url origin 2>/dev/null || true)
-                if [ "$existing_remote" = "$KLIPPERSCREEN_REPO_URL" ]; then
-                    info "KlipperScreen HH Edition repo exists — updating"
-                    git -C "$ks_install_dir" pull --ff-only 2>/dev/null || true
-                else
-                    warn "Existing KlipperScreen clone is from wrong repo (${existing_remote})"
-                    info "Removing old clone and re-cloning Happy Hare Edition"
-                    rm -rf "$ks_install_dir"
-                    if ! git clone "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
-                        err "Failed to clone KlipperScreen Happy Hare Edition repository"
-                        return 1
-                    fi
-                fi
-            else
-                [ -d "$ks_install_dir" ] && rm -rf "$ks_install_dir"
-                info "Cloning KlipperScreen Happy Hare Edition to ${ks_install_dir}"
-                if ! git clone "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
-                    err "Failed to clone KlipperScreen Happy Hare Edition repository"
-                    return 1
-                fi
-            fi
-            chmod +x "$ks_script"
-            sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
-            info "Running upstream KlipperScreen-install.sh (NETWORK=N)"
-            NETWORK=N bash "$ks_script"
-            local ks_exit=$?
-            [ $ks_exit -ne 0 ] && \
-                warn "KlipperScreen installer exited ${ks_exit}"
-            local hh_script="$ks_install_dir/happy_hare/install_ks.sh"
-            if [ -f "$hh_script" ]; then
-                info "Configuring Happy Hare Edition for 4 gates (Qidi Box)"
-                chmod +x "$hh_script"
-                bash "$hh_script" -g 4
-                local hh_exit=$?
-                [ $hh_exit -ne 0 ] && \
-                    warn "Happy Hare Edition gate setup exited ${hh_exit}"
-            else
-                warn "Happy Hare Edition setup script not found at ${hh_script}"
-            fi
-            prepare_display_for_klipperscreen
-            ok "KlipperScreen Happy Hare Edition install step complete"
-        else
-            banner "Installing HelixScreen"
-            set +e
-            curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh -s -- --version "${HELIXSCREEN_PIN}"
-            local hs_exit=$?
-            set -e
-            if [ $hs_exit -ne 0 ]; then
-                warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
-            fi
-            ok "HelixScreen install step complete"
+        banner "Installing HelixScreen"
+        set +e
+        curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh -s -- --version "${HELIXSCREEN_PIN}"
+        local hs_exit=$?
+        set -e
+        if [ $hs_exit -ne 0 ]; then
+            warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
         fi
+        ok "HelixScreen install step complete"
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
         fetch "${REPO_BASE}/gcode_macro-BunnyBox%26HelixScreen.cfg" \
@@ -1983,33 +1930,21 @@ _install_bunnybox() {
         fetch "${KAMP_BASE}/Smart_Park.cfg"        "${CONFIG_DIR}/Smart_Park.cfg"       || return 1
         ok "KAMP settings and sub-files applied"
 
-        if [ "$display_ui" = "helixscreen" ]; then
-            banner "Applying HelixScreen settings"
-            mkdir -p "$HELIX_CONFIG_DIR"
-            fetch "${REPO_BASE}/helixscreen_settings.json" \
-                  "${HELIX_CONFIG_DIR}/settings.json" || return 1
-            ok "HelixScreen settings applied"
-            switch_display_to_helixscreen
-        fi
-        # KlipperScreen: display already prepared in the install block above
+        banner "Applying HelixScreen settings"
+        mkdir -p "$HELIX_CONFIG_DIR"
+        fetch "${REPO_BASE}/helixscreen_settings.json" \
+              "${HELIX_CONFIG_DIR}/settings.json" || return 1
+        ok "HelixScreen settings applied"
+        switch_display_to_helixscreen
 
         fix_known_klipper_conflicts
 
-        # HELIX_QIDI_BOX_WRITE gates HelixScreen's native AMS write path
-        # (load_filament, unload_filament, change_tool, set_tool_mapping).
-        # With BunnyBox + Happy Hare driving the Box via MMU macros, having
-        # HelixScreen also drive the Box natively causes contention. Strip
-        # the drop-in if it exists; do not install it.
         if qidi_box_write_enabled; then
             info "Removing HELIX_QIDI_BOX_WRITE drop-in (BunnyBox owns the Box write path)..."
             uninstall_qidi_box_write
         fi
 
-        if [ "$display_ui" = "klipperscreen" ]; then
-            verify_klipperscreen
-        else
-            verify_qidi_box_helixscreen
-        fi
+        verify_qidi_box_helixscreen
 
         verify_bunnybox_install
     } 2>&1 | tee -a "$INSTALL_LOG"
@@ -2033,12 +1968,12 @@ _install_bunnybox() {
     banner "Install complete"
     cat <<EOF
 ${C_BOLD}Next steps:${C_RESET}
-  1. FIRMWARE_RESTART (Klipper console or ${display_label})
+  1. FIRMWARE_RESTART (Klipper console or HelixScreen)
   2. Verify:    systemctl status klipper
   3. First-time only - calibrate MMU gear steppers:
         ${C_CYAN}MMU_CALIBRATE_GEAR GATE=0 LENGTH=100${C_RESET}
      Mark filament, measure travel, re-run with MEASURED=<mm>
-  4. Start drying (use ${display_label} macro buttons or console):
+  4. Start drying (use HelixScreen macro buttons or console):
         ${C_CYAN}DRY_PLA${C_RESET}  ${C_CYAN}DRY_PETG${C_RESET}  ${C_CYAN}DRY_ABS${C_RESET}  ${C_CYAN}DRY_TPU${C_RESET}  ${C_CYAN}DRY_PA${C_RESET}
   5. Check status:   ${C_CYAN}BOX_DRY_STATUS${C_RESET}
   6. Stop drying:    ${C_CYAN}BOX_DRY_STOP${C_RESET}
@@ -2050,8 +1985,90 @@ EOF
     press_enter
 }
 
-install_bunnybox_helixscreen()  { _install_bunnybox helixscreen; }
-install_bunnybox_klipperscreen() { _install_bunnybox klipperscreen; }
+install_bunnybox_helixscreen() { _install_bunnybox; }
+
+# ---------- install: KlipperScreen Happy Hare Edition (standalone) ------
+install_klipperscreen() {
+    banner "Install: KlipperScreen Happy Hare Edition"
+
+    preflight || { press_enter; return 1; }
+    do_backup || { press_enter; return 1; }
+
+    local INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
+    info "Install log: ${INSTALL_LOG}"
+
+    {
+        banner "Installing KlipperScreen Happy Hare Edition"
+        local ks_install_dir="$KLIPPERSCREEN_DIR"
+        local ks_script="$ks_install_dir/scripts/KlipperScreen-install.sh"
+        if [ -d "$ks_install_dir/.git" ]; then
+            local existing_remote
+            existing_remote=$(git -C "$ks_install_dir" remote get-url origin 2>/dev/null || true)
+            if [ "$existing_remote" = "$KLIPPERSCREEN_REPO_URL" ]; then
+                info "KlipperScreen HH Edition repo exists — updating"
+                git -C "$ks_install_dir" pull --ff-only 2>/dev/null || true
+            else
+                warn "Existing KlipperScreen clone is from wrong repo (${existing_remote})"
+                info "Removing old clone and re-cloning Happy Hare Edition"
+                rm -rf "$ks_install_dir"
+                if ! git clone "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
+                    err "Failed to clone KlipperScreen Happy Hare Edition repository"
+                    return 1
+                fi
+            fi
+        else
+            [ -d "$ks_install_dir" ] && rm -rf "$ks_install_dir"
+            info "Cloning KlipperScreen Happy Hare Edition to ${ks_install_dir}"
+            if ! git clone "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
+                err "Failed to clone KlipperScreen Happy Hare Edition repository"
+                return 1
+            fi
+        fi
+        chmod +x "$ks_script"
+        sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
+        info "Running upstream KlipperScreen-install.sh (NETWORK=N)"
+        NETWORK=N bash "$ks_script"
+        local ks_exit=$?
+        [ $ks_exit -ne 0 ] && \
+            warn "KlipperScreen installer exited ${ks_exit}"
+        local hh_script="$ks_install_dir/happy_hare/install_ks.sh"
+        if [ -f "$hh_script" ]; then
+            info "Configuring Happy Hare Edition for 4 gates (Qidi Box)"
+            chmod +x "$hh_script"
+            bash "$hh_script" -g 4
+            local hh_exit=$?
+            [ $hh_exit -ne 0 ] && \
+                warn "Happy Hare Edition gate setup exited ${hh_exit}"
+        else
+            warn "Happy Hare Edition setup script not found at ${hh_script}"
+        fi
+        prepare_display_for_klipperscreen
+        ok "KlipperScreen Happy Hare Edition install complete"
+
+        verify_klipperscreen
+    } 2>&1 | tee -a "$INSTALL_LOG"
+
+    local _pipe_exit="${PIPESTATUS[0]}"
+    if [ "$_pipe_exit" != "0" ]; then
+        err "Install aborted — a required step failed (see log above)"
+        err "Log saved to: ${INSTALL_LOG}"
+        press_enter
+        return 1
+    fi
+
+    banner "Install complete"
+    cat <<EOF
+${C_BOLD}Next steps:${C_RESET}
+  1. FIRMWARE_RESTART (Klipper console or KlipperScreen)
+  2. Verify:    systemctl status klipper
+  3. Verify:    systemctl status ${KLIPPERSCREEN_SERVICE}
+
+Install log:    ${INSTALL_LOG}
+Config backup:  ${BACKUP_DIR}
+EOF
+
+    press_enter
+}
 
 # ---------- install: Just Faster Printer -----------------------------
 install_just_faster() {
@@ -2216,7 +2233,7 @@ draw_menu() {
     printf '%s--------------------------------------------%s\n' "$C_BOLD" "$C_RESET"
     printf '  %sINSTALL%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
     printf '   %s1)%s Install BunnyBox & HelixScreen    (Q2 with Qidi Box)\n'         "$C_CYAN" "$C_RESET"
-    printf '   %s2)%s Install BunnyBox & KlipperScreen  (Q2 with Qidi Box, alt UI)\n' "$C_CYAN" "$C_RESET"
+    printf '   %s2)%s Install KlipperScreen             (Happy Hare Edition)\n'         "$C_CYAN" "$C_RESET"
     printf '   %s3)%s Install Just Faster Printer       (Q2 without Box)\n'           "$C_CYAN" "$C_RESET"
     printf '  %sUNINSTALL%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
     printf '   %s4)%s Revert to Backup                  (full uninstall + restore stock)\n' "$C_CYAN" "$C_RESET"
@@ -2273,7 +2290,7 @@ main_loop() {
         read -r choice </dev/tty || exit 0
         case "$choice" in
             1) install_bunnybox_helixscreen ;;
-            2) install_bunnybox_klipperscreen ;;
+            2) install_klipperscreen ;;
             3) install_just_faster ;;
             4)
                 warn "Revert to Backup will fully uninstall BunnyBox + display UI"
