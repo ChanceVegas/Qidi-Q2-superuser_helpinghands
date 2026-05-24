@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.25'
+AIO_VERSION='RC1.26'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -66,9 +66,6 @@ KLIPPERSCREEN_REPO_URL='https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edi
 KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
 KLIPPERSCREEN_VENV='/home/mks/.KlipperScreen-env'
 KLIPPERSCREEN_SERVICE='KlipperScreen'
-KLIPPERSCREEN_UNIT='/etc/systemd/system/KlipperScreen.service'
-KLIPPERSCREEN_XSETUP='/usr/local/bin/aio-ks-xsetup.sh'
-LIGHTDM_CONF='/etc/lightdm/lightdm.conf'
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -1002,128 +999,38 @@ klipperscreen_installed() {
     systemctl is-enabled --quiet "$KLIPPERSCREEN_SERVICE" 2>/dev/null
 }
 
-# Switch the Q2 display from the stock Qidi UI to KlipperScreen.
-#
-# Strategy: lightdm manages the X server on :0 — we keep it running.
-# makerbase-client is a separate systemd service that draws the Qidi UI
-# on :0; we mask it. A display-setup-script runs xhost +local: so user
-# mks can connect to :0 (the X session belongs to linaro, not mks).
-# launch_KlipperScreen.sh overrides KlipperScreen-start.sh's default
-# xinit approach and instead connects directly to :0 as an X client.
-switch_display_to_klipperscreen() {
-    banner "Switching active display → KlipperScreen"
-
-    # Allow local users (mks) to connect to lightdm's X display
-    info "Adding xhost display-setup-script to lightdm"
-    sudo tee "$KLIPPERSCREEN_XSETUP" > /dev/null <<'XSETUP'
-#!/bin/bash
-xhost +local:
-XSETUP
-    sudo chmod +x "$KLIPPERSCREEN_XSETUP"
-
-    # Back up lightdm.conf, then add display-setup-script if not present
-    if ! grep -q "^display-setup-script=" "$LIGHTDM_CONF" 2>/dev/null; then
-        sudo cp "$LIGHTDM_CONF" "${LIGHTDM_CONF}.aio_bak"
-        sudo sed -i '/^\[Seat:\*\]/a display-setup-script='"$KLIPPERSCREEN_XSETUP" "$LIGHTDM_CONF"
-        ok "lightdm.conf patched (backup at ${LIGHTDM_CONF}.aio_bak)"
-    fi
-
-    # Create the launch override that connects to :0 instead of xinit
-    info "Writing launch_KlipperScreen.sh (X client on :0)"
-    cat > "${KLIPPERSCREEN_DIR}/scripts/launch_KlipperScreen.sh" <<'LAUNCH'
-#!/bin/bash
-# AIO override: connect to lightdm's existing X display instead of xinit.
-for i in $(seq 1 30); do
-    if DISPLAY=:0 xdpyinfo >/dev/null 2>&1; then break; fi
-    sleep 1
-done
-if ! DISPLAY=:0 xdpyinfo >/dev/null 2>&1; then
-    echo "ERROR: X display :0 not available after 30s" >&2
-    exit 1
-fi
-export DISPLAY=:0
-exec $KS_XCLIENT
-LAUNCH
-    chmod +x "${KLIPPERSCREEN_DIR}/scripts/launch_KlipperScreen.sh"
-
-    info "Writing KlipperScreen service unit"
-    sudo tee "$KLIPPERSCREEN_UNIT" > /dev/null <<UNIT
-[Unit]
-Description=KlipperScreen (Happy Hare Edition)
-After=lightdm.service moonraker.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-User=mks
-Restart=always
-RestartSec=3
-WorkingDirectory=${KLIPPERSCREEN_DIR}
-Environment=HOME=/home/mks
-Environment=DISPLAY=:0
-Environment="KS_XCLIENT=${KLIPPERSCREEN_VENV}/bin/python ${KLIPPERSCREEN_DIR}/screen.py"
-ExecStart=${KLIPPERSCREEN_DIR}/scripts/KlipperScreen-start.sh
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-    # Mask the Qidi UI but keep lightdm (X server) running
+# Mask the stock Qidi display services so KlipperScreen can own the screen.
+# The upstream KlipperScreen-install.sh handles X server setup (xinit),
+# service creation, and display configuration — we just clear the way.
+prepare_display_for_klipperscreen() {
+    banner "Preparing display for KlipperScreen"
     sudo systemctl stop    makerbase-client       2>/dev/null || true
     sudo systemctl disable makerbase-client       2>/dev/null || true
     sudo systemctl mask    makerbase-client       2>/dev/null || true
     sudo systemctl stop    helixscreen            2>/dev/null || true
     sudo systemctl disable helixscreen            2>/dev/null || true
     sudo systemctl mask    helixscreen            2>/dev/null || true
-
-    # Pick up the new KlipperScreen unit before any service commands
-    sudo systemctl daemon-reload
-
-    # Restart lightdm so the display-setup-script (xhost) takes effect,
-    # then give X a moment to come up before starting KlipperScreen.
-    sudo systemctl restart lightdm                2>/dev/null || true
-    sleep 3
-
-    sudo systemctl unmask  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
-    sudo systemctl enable  "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
-    sudo systemctl restart "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
-
-    # Give it a few seconds to settle — the launch script polls for :0
-    sleep 5
-    if systemctl is-active --quiet "$KLIPPERSCREEN_SERVICE"; then
-        ok "KlipperScreen is active on the display"
-    else
-        warn "${KLIPPERSCREEN_SERVICE}.service is enabled but not active"
-        warn "  → check: sudo journalctl -u ${KLIPPERSCREEN_SERVICE} -n 50"
-    fi
+    ok "Stock display services masked — KlipperScreen owns the screen"
 }
 
 uninstall_klipperscreen() {
     banner "Uninstalling KlipperScreen"
     sudo systemctl disable --now "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo systemctl mask    "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
-    sudo rm -f "$KLIPPERSCREEN_UNIT"
+    sudo rm -f /etc/systemd/system/KlipperScreen.service
     sudo systemctl daemon-reload 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_DIR" 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_VENV" 2>/dev/null || true
-    # Restore lightdm.conf from backup and remove xhost script
-    if [ -f "${LIGHTDM_CONF}.aio_bak" ]; then
-        sudo mv "${LIGHTDM_CONF}.aio_bak" "$LIGHTDM_CONF"
-        ok "lightdm.conf restored from backup"
-    else
-        sudo sed -i '/^display-setup-script=.*aio-ks-xsetup/d' "$LIGHTDM_CONF" 2>/dev/null || true
-    fi
-    sudo rm -f "$KLIPPERSCREEN_XSETUP"
-    # Re-enable the Qidi stock display
+    # Undo KlipperScreen-install.sh's switch to console boot and restore
+    # the stock Qidi display stack (lightdm + makerbase-client)
     info "Re-enabling Qidi stock display services..."
-    sudo systemctl unmask  makerbase-client  2>/dev/null || true
-    sudo systemctl enable  makerbase-client  2>/dev/null || true
-    sudo systemctl unmask  lightdm           2>/dev/null || true
-    sudo systemctl enable  lightdm           2>/dev/null || true
-    sudo systemctl restart lightdm           2>/dev/null || true
-    sudo systemctl restart makerbase-client  2>/dev/null || true
+    sudo systemctl set-default graphical.target   2>/dev/null || true
+    sudo systemctl unmask  lightdm                2>/dev/null || true
+    sudo systemctl enable  lightdm                2>/dev/null || true
+    sudo systemctl unmask  makerbase-client       2>/dev/null || true
+    sudo systemctl enable  makerbase-client       2>/dev/null || true
+    sudo systemctl restart lightdm                2>/dev/null || true
+    sudo systemctl restart makerbase-client       2>/dev/null || true
     ok "KlipperScreen uninstalled, stock display services re-enabled"
 }
 
@@ -1134,16 +1041,6 @@ verify_klipperscreen() {
     else
         warn "KlipperScreen.service is not active"
         warn "  → check: sudo journalctl -u ${KLIPPERSCREEN_SERVICE} -n 50"
-    fi
-    if [ -f "${KLIPPERSCREEN_DIR}/scripts/launch_KlipperScreen.sh" ]; then
-        ok "launch_KlipperScreen.sh override present"
-    else
-        warn "launch_KlipperScreen.sh override missing — display may not work"
-    fi
-    if grep -q "^display-setup-script=" "$LIGHTDM_CONF" 2>/dev/null; then
-        ok "lightdm display-setup-script configured"
-    else
-        warn "lightdm display-setup-script not set — mks may not be able to reach :0"
     fi
 }
 
@@ -1986,7 +1883,8 @@ _install_bunnybox() {
             fi
             chmod +x "$ks_script"
             sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
-            BACKEND=X NETWORK=N START=0 bash "$ks_script"
+            info "Running upstream KlipperScreen-install.sh (NETWORK=N)"
+            NETWORK=N bash "$ks_script"
             local ks_exit=$?
             [ $ks_exit -ne 0 ] && \
                 warn "KlipperScreen installer exited ${ks_exit}"
@@ -2001,6 +1899,7 @@ _install_bunnybox() {
             else
                 warn "Happy Hare Edition setup script not found at ${hh_script}"
             fi
+            prepare_display_for_klipperscreen
             ok "KlipperScreen Happy Hare Edition install step complete"
         else
             banner "Installing HelixScreen"
@@ -2084,9 +1983,7 @@ _install_bunnybox() {
         fetch "${KAMP_BASE}/Smart_Park.cfg"        "${CONFIG_DIR}/Smart_Park.cfg"       || return 1
         ok "KAMP settings and sub-files applied"
 
-        if [ "$display_ui" = "klipperscreen" ]; then
-            switch_display_to_klipperscreen
-        else
+        if [ "$display_ui" = "helixscreen" ]; then
             banner "Applying HelixScreen settings"
             mkdir -p "$HELIX_CONFIG_DIR"
             fetch "${REPO_BASE}/helixscreen_settings.json" \
@@ -2094,6 +1991,7 @@ _install_bunnybox() {
             ok "HelixScreen settings applied"
             switch_display_to_helixscreen
         fi
+        # KlipperScreen: display already prepared in the install block above
 
         fix_known_klipper_conflicts
 
