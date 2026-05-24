@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.25'
+AIO_VERSION='RC1.26'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1081,6 +1081,14 @@ UNIT
     # Pick up the new KlipperScreen unit before any service commands
     sudo systemctl daemon-reload
 
+    # KlipperScreen-install.sh (standalone mode) disables lightdm and sets
+    # the default target to multi-user.target so it can run its own X via
+    # xinit. We need lightdm running on :0 for our X-client approach, so
+    # undo those changes: restore graphical.target, unmask + enable lightdm.
+    sudo systemctl set-default graphical.target   2>/dev/null || true
+    sudo systemctl unmask  lightdm                2>/dev/null || true
+    sudo systemctl enable  lightdm                2>/dev/null || true
+
     # Restart lightdm so the display-setup-script (xhost) takes effect,
     # then give X a moment to come up before starting KlipperScreen.
     sudo systemctl restart lightdm                2>/dev/null || true
@@ -1116,14 +1124,16 @@ uninstall_klipperscreen() {
         sudo sed -i '/^display-setup-script=.*aio-ks-xsetup/d' "$LIGHTDM_CONF" 2>/dev/null || true
     fi
     sudo rm -f "$KLIPPERSCREEN_XSETUP"
-    # Re-enable the Qidi stock display
+    # Re-enable the Qidi stock display (undo KlipperScreen-install.sh's
+    # switch to multi-user.target / console boot)
     info "Re-enabling Qidi stock display services..."
-    sudo systemctl unmask  makerbase-client  2>/dev/null || true
-    sudo systemctl enable  makerbase-client  2>/dev/null || true
-    sudo systemctl unmask  lightdm           2>/dev/null || true
-    sudo systemctl enable  lightdm           2>/dev/null || true
-    sudo systemctl restart lightdm           2>/dev/null || true
-    sudo systemctl restart makerbase-client  2>/dev/null || true
+    sudo systemctl set-default graphical.target   2>/dev/null || true
+    sudo systemctl unmask  lightdm                2>/dev/null || true
+    sudo systemctl enable  lightdm                2>/dev/null || true
+    sudo systemctl unmask  makerbase-client       2>/dev/null || true
+    sudo systemctl enable  makerbase-client       2>/dev/null || true
+    sudo systemctl restart lightdm                2>/dev/null || true
+    sudo systemctl restart makerbase-client       2>/dev/null || true
     ok "KlipperScreen uninstalled, stock display services re-enabled"
 }
 
