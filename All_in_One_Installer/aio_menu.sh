@@ -753,7 +753,7 @@ restore_aio_disabled_macros() {
 # about, regardless of whether the upstream uninstallers ran. Called
 # from revert_to_backup() and uninstall_bunnybox().
 purge_happy_hare_all() {
-    info "Purging all Happy Hare / BunnyBox artifacts..."
+    banner "Purging all Happy Hare / BunnyBox artifacts"
 
     # Run upstream uninstallers if they're present. Don't trust their
     # exit codes - we'll force-clean afterwards regardless.
@@ -763,7 +763,14 @@ purge_happy_hare_all() {
     fi
 
     # Happy Hare source tree + config dirs (incl. its own dated backups)
+    info "Removing Happy Hare source tree: ${HAPPY_HARE_DIR}"
     sudo rm -rf "$HAPPY_HARE_DIR"
+    if [ -d "$HAPPY_HARE_DIR" ]; then
+        err "Failed to remove ${HAPPY_HARE_DIR} — trying alternate approach"
+        sudo find "$HAPPY_HARE_DIR" -delete 2>/dev/null || true
+    fi
+
+    info "Removing MMU config: ${CONFIG_DIR}/mmu"
     sudo rm -rf "${CONFIG_DIR}/mmu"
     sudo rm -rf "${CONFIG_DIR}"/mmu-* 2>/dev/null || true
 
@@ -794,14 +801,18 @@ purge_happy_hare_all() {
     # removed here. Leaving them causes the mmu package to load at Klipper
     # startup and register gcode commands (CLEAR_TOOLCHANGE_STATE, etc.) that
     # box_extras.so also registers → "already registered" crash.
+    info "Removing Klipper extras: ${HOME}/klipper/klippy/extras/mmu"
+    sudo rm -rf "${HOME}/klipper/klippy/extras/mmu"
     for f in mmu.py mmu_machine.py mmu_leds.py mmu_sensors.py mmu_encoder.py; do
         sudo rm -f "${HOME}/klipper/klippy/extras/${f}"
     done
-    sudo rm -rf "${HOME}/klipper/klippy/extras/mmu"
-    sudo find "${HOME}/klipper/klippy/extras" -maxdepth 1 -name 'mmu_*.py' \
+    sudo find "${HOME}/klipper/klippy/extras" -maxdepth 1 \
+        \( -name 'mmu_*.py' -o -name 'mmu_*.pyc' \) \
         -delete 2>/dev/null || true
     sudo find "${HOME}/klipper/klippy/extras" -path '*/__pycache__/mmu*' \
         -delete 2>/dev/null || true
+
+    info "Removing Moonraker component: mmu_server.py"
     sudo rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
 
     # Root-level KAMP files installed by the AIO BunnyBox flow. Removing them
@@ -818,16 +829,23 @@ purge_happy_hare_all() {
     if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
         cp "$moon_conf" "${moon_conf}.aio-bak"
         sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
-        # Above leaves the next [section] header intact but blanks the body.
-        # Then drop the offending headers themselves:
         sed -i '/^\[update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\]$/d' "$moon_conf"
         sed -i '/^\[mmu_server\]$/d' "$moon_conf"
-        ok "Cleaned Happy Hare sections from moonraker.conf (backup: ${moon_conf}.aio-bak)"
+        ok "Cleaned Happy Hare sections from moonraker.conf"
     fi
 
     restore_aio_disabled_macros
 
-    ok "Happy Hare / BunnyBox purge complete"
+    # Final verification — if anything critical survived, report it
+    local residue=0
+    [ -d "$HAPPY_HARE_DIR" ]                          && { warn "RESIDUE: ${HAPPY_HARE_DIR} still exists"; residue=1; }
+    [ -d "${HOME}/klipper/klippy/extras/mmu" ]        && { warn "RESIDUE: extras/mmu/ still exists"; residue=1; }
+    [ -d "${CONFIG_DIR}/mmu" ]                        && { warn "RESIDUE: config/mmu/ still exists"; residue=1; }
+    if [ $residue -eq 1 ]; then
+        warn "Some Happy Hare artifacts survived purge — check output above"
+    else
+        ok "Happy Hare / BunnyBox purge verified clean"
+    fi
 }
 
 # Comment out [include ...] lines in printer.cfg whose target files no longer
