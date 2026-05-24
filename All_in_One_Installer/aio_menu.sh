@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.27'
+AIO_VERSION='RC1.28'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1018,6 +1018,7 @@ uninstall_klipperscreen() {
     sudo systemctl disable --now "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo systemctl mask    "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
     sudo rm -f /etc/systemd/system/KlipperScreen.service
+    sudo rm -rf /etc/systemd/system/KlipperScreen.service.d
     sudo systemctl daemon-reload 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_DIR" 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_VENV" 2>/dev/null || true
@@ -2042,7 +2043,20 @@ install_klipperscreen() {
         else
             warn "Happy Hare Edition setup script not found at ${hh_script}"
         fi
+        # The upstream service unit has ConditionPathExists=/dev/tty0 which
+        # fails on the Q2 (no /dev/tty0). Drop-in clears it without touching
+        # the installed unit file.
+        info "Dropping /dev/tty0 condition override for Q2"
+        sudo mkdir -p /etc/systemd/system/KlipperScreen.service.d
+        sudo tee /etc/systemd/system/KlipperScreen.service.d/no-tty0-condition.conf > /dev/null <<'DROPIN'
+[Unit]
+ConditionPathExists=
+DROPIN
+        sudo systemctl daemon-reload 2>/dev/null || true
+        ok "ConditionPathExists=/dev/tty0 cleared"
+
         prepare_display_for_klipperscreen
+        sudo systemctl restart "$KLIPPERSCREEN_SERVICE" 2>/dev/null || true
         ok "KlipperScreen Happy Hare Edition install complete"
 
         verify_klipperscreen
