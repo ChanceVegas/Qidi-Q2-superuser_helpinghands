@@ -21,7 +21,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.24'
+AIO_VERSION='RC1.25'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
@@ -1919,7 +1919,7 @@ _install_bunnybox() {
                     warn "Existing KlipperScreen clone is from wrong repo (${existing_remote})"
                     info "Removing old clone and re-cloning Happy Hare Edition"
                     rm -rf "$ks_install_dir"
-                    if ! git clone --depth 1 "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
+                    if ! git clone "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
                         err "Failed to clone KlipperScreen Happy Hare Edition repository"
                         return 1
                     fi
@@ -1927,14 +1927,14 @@ _install_bunnybox() {
             else
                 [ -d "$ks_install_dir" ] && rm -rf "$ks_install_dir"
                 info "Cloning KlipperScreen Happy Hare Edition to ${ks_install_dir}"
-                if ! git clone --depth 1 "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
+                if ! git clone "$KLIPPERSCREEN_REPO_URL" "$ks_install_dir"; then
                     err "Failed to clone KlipperScreen Happy Hare Edition repository"
                     return 1
                 fi
             fi
             chmod +x "$ks_script"
             sed -i 's/xserver-xorg-legacy[[:space:]]*//' "$ks_script"
-            BACKEND=X NETWORK=N START=1 bash "$ks_script"
+            BACKEND=X NETWORK=N START=0 bash "$ks_script"
             local ks_exit=$?
             [ $ks_exit -ne 0 ] && \
                 warn "KlipperScreen installer exited ${ks_exit}"
