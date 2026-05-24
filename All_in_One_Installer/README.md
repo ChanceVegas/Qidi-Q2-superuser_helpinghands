@@ -6,14 +6,14 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC1.26)
+   Qidi Q2 Superuser - AIO Setup Menu (RC1.27)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
 --------------------------------------------
   INSTALL
    1) Install BunnyBox & HelixScreen    (Q2 with Qidi Box)
-   2) Install BunnyBox & KlipperScreen  (Q2 with Qidi Box, alt UI)
+   2) Install KlipperScreen             (Happy Hare Edition)
    3) Install Just Faster Printer       (Q2 without Box)
   UNINSTALL
    4) Revert to Backup                  (full uninstall + restore stock)
@@ -56,7 +56,7 @@ chmod +x aio_menu.sh
 | # | Option | What it does |
 |---|--------|-------------|
 | 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the HelixScreen touchscreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. Drying presets (Dry PLA, Dry PETG, etc.) are pre-configured as HelixScreen macro buttons. |
-| 2 | **Install BunnyBox & KlipperScreen** | Same as option 1 but uses KlipperScreen Happy Hare Edition instead of HelixScreen. Built specifically for Happy Hare MMU setups with native 4-gate support for the Qidi Box. Connects to lightdm's existing X display — no network changes, no reboot. |
+| 2 | **Install KlipperScreen** | Installs KlipperScreen Happy Hare Edition — a touchscreen UI built specifically for Happy Hare MMU setups. Configures 4-gate support for the Qidi Box. Does not install BunnyBox or modify Klipper configs. |
 | 3 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, and adaptive bed meshing. |
 | 4 | **Revert to Backup** | Fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. Runs a health check automatically at the end. |
 | 5 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
@@ -66,7 +66,7 @@ chmod +x aio_menu.sh
 
 ## Filament drying (BunnyBox installs only)
 
-After installing BunnyBox (option 1 or 2), the following one-tap drying macros are available from the touchscreen or the Klipper console. Spools rotate automatically throughout each cycle.
+After installing BunnyBox (option 1), the following one-tap drying macros are available from the touchscreen or the Klipper console. Spools rotate automatically throughout each cycle.
 
 | Macro | Temp | Time |
 |---|---|---|
@@ -87,11 +87,10 @@ After installing BunnyBox (option 1 or 2), the following one-tap drying macros a
    Mark the filament at the entry point, measure how far it moved, then re-run with `MEASURED=<mm>`. Repeat for each gate.
 4. Load filament into each gate and start a drying preset from the HelixScreen macro buttons or console.
 
-## After installing BunnyBox & KlipperScreen (option 2)
+## After installing KlipperScreen (option 2)
 
 1. Run `FIRMWARE_RESTART` from the Klipper console or KlipperScreen.
-2. Run **option 8 (Health Check)** to verify everything loaded correctly.
-3. Calibrate MMU gear steppers (same procedure as option 1, step 3).
+2. Verify KlipperScreen is running: `systemctl status KlipperScreen`
 
 ## After installing Just Faster Printer (option 3)
 
@@ -102,6 +101,7 @@ After installing BunnyBox (option 1 or 2), the following one-tap drying macros a
 
 | Version | Notable additions |
 |---------|------------------|
+| RC1.27 | Option 2 is now standalone KlipperScreen — no longer bundles BunnyBox, config templates, KAMP, or drying macros; `_install_bunnybox()` simplified to HelixScreen-only |
 | RC1.26 | KlipperScreen option 2 rewritten to use upstream `KlipperScreen-install.sh` as-is (stops fighting lightdm/tty0); `makerbase-client` and `helixscreen` are masked before the upstream installer runs; removed all custom X/lightdm manipulation; `xserver-xorg-legacy` stripped from install script (not available on Debian Bullseye ARM) |
 | RC1.25 | Fixed `install_ks.sh` aborting on `git describe` — switched from shallow clone (`--depth 1`) to full clone so tag history is available; fixed service starting before custom `launch_KlipperScreen.sh` is in place by changing `START=1` → `START=0` in KlipperScreen-install.sh invocation |
 | RC1.24 | Fixed KlipperScreen service crash (`Group=mks` — Q2 has no `mks` group); fixed wrong KlipperScreen clone (existing non-HH-Edition clone is now detected and replaced); fixed `daemon-reload` ordering so the service unit is loaded before `enable`/`start` |
