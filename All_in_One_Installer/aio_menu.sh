@@ -8,9 +8,6 @@
 #
 #   * Install BunnyBox & HelixScreen   (Q2 with Qidi Box)
 #   * Install Just Faster Printer      (Q2 without Box, stock screen)
-#   * Uninstall BunnyBox only
-#   * Uninstall HelixScreen only
-#   * Uninstall both
 #   * Revert to Backup                 (uninstall both + restore stock)
 #   * About
 #
@@ -21,10 +18,11 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.30'
+AIO_VERSION='RC1.31'
 
 # ---------- repo / installer URLs ------------------------------------
-REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
+REPO_REF="${AIO_REPO_REF:-main}"
+REPO_BASE="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${REPO_REF}/Install-Script"
 BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 # Pinned to the minimum required release (>= v0.99.66 for Qidi Box support).
 # Update HELIXSCREEN_PIN when a newer stable release ships.
@@ -34,7 +32,6 @@ BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/re
 HELIXSCREEN_PIN='v0.99.66'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
-BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
 KAMP_BASE='https://raw.githubusercontent.com/kyleisah/Klipper-Adaptive-Meshing-Purging/refs/heads/main/Configuration'
@@ -61,6 +58,7 @@ USTREAMER_UNIT="/etc/systemd/system/ustreamer-camera.service"
 USTREAMER_PORT=8080
 USTREAMER_DEVICE='/dev/video0'
 CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
+USTREAMER_PACKAGE_MARKER="${BACKUP_ROOT}/.aio_ustreamer_installed"
 MOONRAKER_PORT=7125
 KLIPPERSCREEN_REPO_URL='https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edition.git'
 KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
@@ -86,7 +84,9 @@ helixscreen_version() {
 helixscreen_version_ge() {
     [ -z "$1" ] && return 1
     local IFS=.
-    local -a have=($1) want=($2)
+    local -a have want
+    read -r -a have <<< "$1"
+    read -r -a want <<< "$2"
     for i in 0 1 2; do
         local h=${have[$i]:-0} w=${want[$i]:-0}
         if [ "$h" -gt "$w" ]; then return 0; fi
@@ -301,10 +301,8 @@ install_mainsail() {
         info "nginx already installed — will not be removed on Mainsail uninstall"
     fi
 
-    set +e
-    curl --fail --silent --show-error --location "$MAINSAIL_INSTALLER" | bash
+    run_remote_script "$MAINSAIL_INSTALLER"
     local exit_code=$?
-    set -e
     if [ $exit_code -ne 0 ]; then
         err "Mainsail installer exited ${exit_code}"
         return 1
@@ -321,7 +319,7 @@ install_mainsail() {
         warn "Installer finished but Mainsail files not detected — check ${MAINSAIL_DIR}"
     fi
 
-    install_camera || warn "Camera setup had problems — re-run option 5 to retry"
+    install_camera || warn "Camera setup had problems — re-run option 6 to retry"
 }
 
 uninstall_mainsail() {
@@ -500,11 +498,21 @@ install_camera() {
         info "Existing camera config detected — rewriting to current format"
     fi
 
+    local ustreamer_pre_installed=false
+    if dpkg -l ustreamer 2>/dev/null | grep -q '^ii'; then
+        ustreamer_pre_installed=true
+        info "ustreamer already installed — package will be left in place on uninstall"
+    fi
+
     info "Installing ustreamer..."
     if ! sudo apt-get install -y ustreamer 2>/dev/null; then
         warn "ustreamer not available via apt — camera not configured"
         warn "  → Install manually: sudo apt-get install ustreamer"
         return 1
+    fi
+    if [ "$ustreamer_pre_installed" = false ]; then
+        touch "$USTREAMER_PACKAGE_MARKER"
+        info "ustreamer was installed by AIO and will be removed with Mainsail"
     fi
 
     local ustreamer_bin
@@ -566,7 +574,7 @@ EOF
         fi
     else
         warn "Mainsail nginx config not found at ${MAINSAIL_NGINX_SITE_AVAIL}"
-        warn "  → Install Mainsail first (option 5), then re-run camera setup"
+        warn "  → Install Mainsail first (option 6), then re-run camera setup"
     fi
 
     # Write/rewrite the [webcam printer] section in moonraker.conf using the
@@ -636,6 +644,15 @@ uninstall_camera() {
         sudo systemctl daemon-reload
         ok "Removed ${USTREAMER_UNIT}"
     fi
+    if [ -f "$USTREAMER_PACKAGE_MARKER" ]; then
+        info "Removing ustreamer package (installed by AIO for camera streaming)..."
+        sudo apt-get remove --purge -y ustreamer 2>/dev/null || true
+        sudo apt-get autoremove -y 2>/dev/null || true
+        rm -f "$USTREAMER_PACKAGE_MARKER"
+        ok "ustreamer package removed"
+    else
+        info "ustreamer package was pre-installed or not tracked — leaving it in place"
+    fi
 
     # Remove [webcam ...] section from moonraker.conf
     local moon_conf="${CONFIG_DIR}/moonraker.conf"
@@ -688,12 +705,16 @@ menu_mainsail() {
             warn "Camera config is from an older AIO release (broken — wrong URL paths,"
             warn "no nginx /webcam/ proxy). Mainsail's camera panel won't connect."
             if confirm "Migrate camera to RC13 format now?"; then
+                preflight || { press_enter; return 1; }
+                do_backup || { press_enter; return 1; }
                 install_camera || warn "Camera migration had problems (see above)"
                 press_enter
                 return
             fi
         elif ! camera_installed; then
             if confirm "Camera streaming not configured. Set it up now?"; then
+                preflight || { press_enter; return 1; }
+                do_backup || { press_enter; return 1; }
                 install_camera || warn "Camera setup had problems (see above)"
                 press_enter
                 return
@@ -910,6 +931,31 @@ press_enter() {
     read -r _ </dev/tty || true
 }
 
+run_remote_script() {
+    local url="$1"
+    shift
+    local tmp
+    tmp=$(mktemp /tmp/aio_remote_script.XXXXXX) || { err "mktemp failed"; return 1; }
+    fetch "$url" "$tmp" || { rm -f "$tmp"; return 1; }
+    chmod +x "$tmp"
+    "$tmp" "$@"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
+run_remote_script_as_root() {
+    local url="$1"
+    shift
+    local tmp
+    tmp=$(mktemp /tmp/aio_remote_script.XXXXXX) || { err "mktemp failed"; return 1; }
+    fetch "$url" "$tmp" || { rm -f "$tmp"; return 1; }
+    sudo sh "$tmp" "$@"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
 # ---------- safety: refuse root --------------------------------------
 if [ "$(id -u)" -eq 0 ]; then
     err "Do not run this script as root."
@@ -1100,6 +1146,16 @@ do_backup() {
     return 0
 }
 
+ensure_repair_backup() {
+    if [ "${AIO_REPAIR_BACKUP_DONE:-false}" = true ]; then
+        return 0
+    fi
+    info "Verifier repairs can edit Klipper configs; creating a safety backup first."
+    do_backup || return 1
+    AIO_REPAIR_BACKUP_DONE=true
+    return 0
+}
+
 # ---------- uninstall primitives -------------------------------------
 uninstall_bunnybox() {
     banner "Uninstalling BunnyBox / Happy Hare"
@@ -1154,7 +1210,7 @@ uninstall_helixscreen() {
     # (not --remove). Fall back to manual systemd teardown if that fails.
     if curl --fail --silent --head --max-time 5 "$HELIX_UNINSTALLER" >/dev/null 2>&1; then
         info "Running official HelixScreen uninstaller..."
-        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --uninstall || \
+        run_remote_script_as_root "$HELIX_UNINSTALLER" --uninstall || \
             warn "HelixScreen uninstaller returned non-zero"
     fi
 
@@ -1299,11 +1355,12 @@ revert_to_backup() {
         fi
 
         banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
-        for d in "$HAPPY_HARE_DIR" "$HELIX_DIR" /home/mks/mudstockbackups; do
+        for d in "$HAPPY_HARE_DIR" "$HELIX_DIR"; do
             if [ -d "$d" ]; then
                 sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
             fi
         done
+        info "Keeping ${BACKUP_ROOT}/ in place as the recovery trail"
     else
         warn "Restore failed - leaving backup directories in place for recovery."
         info "Inspect: ${BACKUP_ROOT}/"
@@ -1314,6 +1371,7 @@ revert_to_backup() {
     # includes, leftover MMU artifacts, duplicate macros). Each fix is
     # prompted before applying.
     banner "Post-revert sanity check"
+    ensure_repair_backup || warn "Could not create post-revert repair backup"
     _run_verifiers_core
 
     banner "Revert complete"
@@ -1582,6 +1640,11 @@ _run_verifiers_core() {
 
 run_all_verifiers() {
     banner "Health Check / Run Verifiers"
+    ensure_repair_backup || {
+        warn "Backup failed; skipping verifier repairs to preserve current state"
+        press_enter
+        return 1
+    }
     _run_verifiers_core
     press_enter
 }
@@ -1780,7 +1843,8 @@ _install_bunnybox() {
         ok "Preserved stock box.cfg → ${BOX_CFG_PRESERVED}"
     fi
 
-    local INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
+    local INSTALL_LOG
+    INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
     info "Install log: ${INSTALL_LOG}"
 
     {
@@ -1830,10 +1894,8 @@ _install_bunnybox() {
         fi
 
         banner "Installing BunnyBox (Happy Hare MMU)"
-        set +e
-        curl --fail --silent --show-error --location "$BUNNYBOX_INSTALLER" | bash
+        run_remote_script "$BUNNYBOX_INSTALLER"
         local bb_exit=$?
-        set -e
         if [ $bb_exit -ne 0 ]; then
             warn "BunnyBox installer exited ${bb_exit} (may be normal for reinstalls)"
         fi
@@ -1852,10 +1914,8 @@ _install_bunnybox() {
         ok "BunnyBox install step complete"
 
         banner "Installing HelixScreen"
-        set +e
-        curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh -s -- --version "${HELIXSCREEN_PIN}"
+        run_remote_script "$HELIXSCREEN_INSTALLER" --version "${HELIXSCREEN_PIN}"
         local hs_exit=$?
-        set -e
         if [ $hs_exit -ne 0 ]; then
             warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
         fi
@@ -1991,11 +2051,17 @@ install_bunnybox_helixscreen() { _install_bunnybox; }
 # ---------- install: KlipperScreen Happy Hare Edition (standalone) ------
 install_klipperscreen() {
     banner "Install: KlipperScreen Happy Hare Edition"
+    warn "KlipperScreen install is disabled in ${AIO_VERSION}."
+    warn "The current xinit/Xorg path fails on the Q2 because the kernel has no VT subsystem."
+    warn "Leaving the preserved installer body below for the next display-backend fix."
+    press_enter
+    return 1
 
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
 
-    local INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
+    local INSTALL_LOG
+    INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
     info "Install log: ${INSTALL_LOG}"
 
     {
@@ -2164,17 +2230,21 @@ ${C_BOLD}What it can install:${C_RESET}
     - KAMP adaptive meshing, screws_tilt_adjust, Spoolman hooks
     - No UI changes - stock Qidi screen stays
 
+  ${C_YELLOW}KlipperScreen Happy Hare Edition${C_RESET}
+    - Installer body is preserved, but menu option 2 is disabled while
+      the Q2 display backend issue is investigated
+
 ${C_BOLD}What it can uninstall:${C_RESET}
-  - BunnyBox only / HelixScreen only / Both
-  - 'Revert to Backup' performs a full upstream-style restore:
-    re-enables lightdm + makerbase-client, then rsyncs the newest
-    timestamped backup from ${BACKUP_ROOT}/ back into place.
-  - Uninstall also removes the HELIX_QIDI_BOX_WRITE drop-in (if any)
-    and restarts the helixscreen service.
+  - 'Revert to Backup' is the supported full restore path.
+  - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
+    optional addons, and display-service overrides.
+  - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
+    oldest timestamped backup. ${BACKUP_ROOT}/ is kept as a recovery trail.
 
 ${C_BOLD}Safety:${C_RESET}
   Every install and uninstall first writes a timestamped backup of
   ${CONFIG_DIR}/ to ${BACKUP_ROOT}/<timestamp>/.
+  Health-check repairs also create a backup before editing configs.
   Refuses to run as root.
 
 ${C_BOLD}Known limitations:${C_RESET}
