@@ -8,9 +8,6 @@
 #
 #   * Install BunnyBox & HelixScreen   (Q2 with Qidi Box)
 #   * Install Just Faster Printer      (Q2 without Box, stock screen)
-#   * Uninstall BunnyBox only
-#   * Uninstall HelixScreen only
-#   * Uninstall both
 #   * Revert to Backup                 (uninstall both + restore stock)
 #   * About
 #
@@ -21,20 +18,21 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.30'
+AIO_VERSION='RC1.36'
 
 # ---------- repo / installer URLs ------------------------------------
-REPO_BASE='https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Install-Script'
+REPO_REF="${AIO_REPO_REF:-main}"
+REPO_BASE="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${REPO_REF}/Install-Script"
 BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 # Pinned to the minimum required release (>= v0.99.66 for Qidi Box support).
 # Update HELIXSCREEN_PIN when a newer stable release ships.
 # Both the installer script AND the binary are pinned to the same tag so
 # upstream installer changes (e.g. generalization for other printers) don't
 # silently regress Q2 behavior.
-HELIXSCREEN_PIN='v0.99.66'
+HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
+HELIXSCREEN_RELEASE_ZIP="https://github.com/prestonbrown/helixscreen/releases/download/${HELIXSCREEN_PIN}/helixscreen-pi.zip"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
-BUNNYBOX_UNINSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/refs/heads/main/Q2/install-bb-q2.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
 KAMP_BASE='https://raw.githubusercontent.com/kyleisah/Klipper-Adaptive-Meshing-Purging/refs/heads/main/Configuration'
@@ -61,6 +59,7 @@ USTREAMER_UNIT="/etc/systemd/system/ustreamer-camera.service"
 USTREAMER_PORT=8080
 USTREAMER_DEVICE='/dev/video0'
 CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
+USTREAMER_PACKAGE_MARKER="${BACKUP_ROOT}/.aio_ustreamer_installed"
 MOONRAKER_PORT=7125
 KLIPPERSCREEN_REPO_URL='https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edition.git'
 KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
@@ -75,9 +74,16 @@ helixscreen_version() {
         v=$("${HELIX_DIR}/helixscreen" --version 2>/dev/null | head -n 1 | \
             grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
     fi
+    if [ -z "$v" ] && [ -x "${HELIX_DIR}/bin/helix-screen" ]; then
+        v=$("${HELIX_DIR}/bin/helix-screen" --version 2>/dev/null | head -n 1 | \
+            grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    fi
     if [ -z "$v" ] && [ -f "${HELIX_DIR}/VERSION" ]; then
         v=$(head -n 1 "${HELIX_DIR}/VERSION" 2>/dev/null | \
             grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    fi
+    if [ -z "$v" ] && [ -x "${HELIX_DIR}/bin/helix-screen" ]; then
+        v="${HELIXSCREEN_PIN#v}"
     fi
     echo "$v"
 }
@@ -86,13 +92,196 @@ helixscreen_version() {
 helixscreen_version_ge() {
     [ -z "$1" ] && return 1
     local IFS=.
-    local -a have=($1) want=($2)
+    local -a have want
+    read -r -a have <<< "$1"
+    read -r -a want <<< "$2"
     for i in 0 1 2; do
         local h=${have[$i]:-0} w=${want[$i]:-0}
         if [ "$h" -gt "$w" ]; then return 0; fi
         if [ "$h" -lt "$w" ]; then return 1; fi
     done
     return 0
+}
+
+moonraker_get() {
+    local path="$1"
+    curl --fail --silent --show-error --max-time 3 \
+        "http://127.0.0.1:${MOONRAKER_PORT}${path}" 2>/dev/null
+}
+
+verify_systemd_service_health() {
+    local service="$1"
+    local label="$2"
+    local required="${3:-true}"
+
+    if ! systemctl cat "$service" >/dev/null 2>&1; then
+        if [ "$required" = true ]; then
+            err "${label}: systemd unit ${service} not found"
+        else
+            info "${label}: systemd unit ${service} not installed"
+        fi
+        return 0
+    fi
+
+    local active enabled result restarts
+    active=$(systemctl is-active "$service" 2>/dev/null || true)
+    enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
+    result=$(systemctl show "$service" -p Result --value 2>/dev/null || true)
+    restarts=$(systemctl show "$service" -p NRestarts --value 2>/dev/null || true)
+    case "$restarts" in
+        ''|*[!0-9]*) restarts=0 ;;
+    esac
+
+    case "$active" in
+        active)
+            ok "${label}: active (${service}, enabled=${enabled:-unknown})"
+            ;;
+        activating|reloading)
+            warn "${label}: ${active} (${service})"
+            ;;
+        *)
+            if [ "$required" = true ]; then
+                err "${label}: ${active:-unknown} (${service})"
+            else
+                info "${label}: ${active:-unknown} (${service})"
+            fi
+            ;;
+    esac
+
+    if [ "$result" != "" ] && [ "$result" != "success" ]; then
+        warn "${label}: last systemd result=${result}"
+    fi
+    if [ "$restarts" -gt 0 ]; then
+        warn "${label}: systemd restart count=${restarts}"
+    fi
+}
+
+verify_klipper_runtime_health() {
+    banner "Klipper / Moonraker runtime health"
+
+    verify_systemd_service_health klipper "Klipper" true
+    verify_systemd_service_health moonraker "Moonraker" true
+
+    local response state state_msg
+    if response=$(moonraker_get "/printer/info"); then
+        state=$(printf '%s' "$response" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("result",{}).get("state","unknown"))' \
+            2>/dev/null || printf 'unknown')
+        state_msg=$(printf '%s' "$response" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("result",{}).get("state_message",""))' \
+            2>/dev/null || true)
+        if [ "$state" = "ready" ]; then
+            ok "Moonraker reports Klipper state: ready"
+        else
+            warn "Moonraker reports Klipper state: ${state}"
+            [ -n "$state_msg" ] && warn "Klipper state message: ${state_msg}"
+        fi
+    else
+        warn "Moonraker /printer/info did not respond on 127.0.0.1:${MOONRAKER_PORT}"
+    fi
+
+    local recent
+    recent=$(journalctl -u klipper --since '-15 min' --no-pager 2>/dev/null | \
+        grep -Ei 'traceback|exception|shutdown|crash|error|unable|failed|restart' | \
+        tail -n 8 || true)
+    if [ -n "$recent" ]; then
+        warn "Recent Klipper journal lines worth checking:"
+        printf '%s\n' "$recent" | while IFS= read -r line; do
+            warn "  $line"
+        done
+    else
+        ok "No obvious Klipper crash/error lines in the last 15 minutes"
+    fi
+}
+
+verify_helixscreen_runtime_health() {
+    banner "HelixScreen runtime health"
+
+    if helixscreen_installed; then
+        verify_systemd_service_health helixscreen "HelixScreen" true
+        local v
+        v=$(helixscreen_version)
+        if [ -n "$v" ]; then
+            ok "HelixScreen version: ${v}"
+        else
+            warn "Could not determine HelixScreen version"
+        fi
+        verify_qidi_box_helixscreen
+    else
+        info "HelixScreen not installed"
+    fi
+}
+
+verify_happy_hare_runtime_health() {
+    banner "BunnyBox / Happy Hare / MMU runtime health"
+
+    if bunnybox_installed; then
+        ok "BunnyBox config detected"
+    else
+        info "BunnyBox config not detected"
+        return 0
+    fi
+
+    if [ -d "${HOME}/klipper/klippy/extras/mmu" ]; then
+        ok "Happy Hare Klipper extras package linked"
+    else
+        warn "Happy Hare Klipper extras package missing: ${HOME}/klipper/klippy/extras/mmu"
+    fi
+
+    if [ -f "${HOME}/moonraker/moonraker/components/mmu_server.py" ]; then
+        ok "Happy Hare Moonraker component linked"
+    else
+        warn "Happy Hare Moonraker component missing: ${HOME}/moonraker/moonraker/components/mmu_server.py"
+    fi
+
+    if grep -q '^\[mmu_server\]' "${CONFIG_DIR}/moonraker.conf" 2>/dev/null; then
+        ok "moonraker.conf has [mmu_server]"
+    else
+        warn "moonraker.conf missing [mmu_server]"
+    fi
+
+    local response has_mmu summary
+    if response=$(moonraker_get "/printer/objects/list"); then
+        has_mmu=$(printf '%s' "$response" | python3 -c \
+            'import json,sys; objs=json.load(sys.stdin).get("result",{}).get("objects",[]); print("yes" if "mmu" in objs else "no")' \
+            2>/dev/null || printf 'unknown')
+        if [ "$has_mmu" = "yes" ]; then
+            ok "Moonraker exposes the Happy Hare mmu object"
+        else
+            warn "Moonraker objects list does not expose mmu"
+        fi
+    else
+        warn "Could not query Moonraker objects list"
+    fi
+
+    if response=$(moonraker_get "/printer/objects/query?mmu"); then
+        summary=$(printf '%s' "$response" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+mmu = data.get("result", {}).get("status", {}).get("mmu")
+if not isinstance(mmu, dict):
+    sys.exit(2)
+keys = [
+    "enabled", "is_enabled", "action", "print_state", "tool", "gate",
+    "filament", "filament_pos", "selector_pos", "sync_drive"
+]
+parts = [f"{k}={mmu[k]}" for k in keys if k in mmu]
+print(", ".join(parts) if parts else "mmu object reachable")
+' 2>/dev/null || true)
+        if [ -n "$summary" ]; then
+            ok "MMU status: ${summary}"
+        else
+            warn "MMU object query returned, but status could not be parsed"
+        fi
+    else
+        warn "Could not query Moonraker mmu object"
+    fi
+}
+
+verify_runtime_health() {
+    verify_klipper_runtime_health
+    verify_happy_hare_runtime_health
+    verify_helixscreen_runtime_health
 }
 
 # Post-install sanity check for the Qidi Box read-path on HelixScreen.
@@ -139,6 +328,75 @@ verify_qidi_box_helixscreen() {
     else
         warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
     fi
+
+    local patched=0
+    local target
+    for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
+        [ -f "$target" ] || continue
+        if LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
+            patched=1
+        elif LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}' "$target"; then
+            warn "$(basename "$target") still uses DURATION= for Happy Hare drying - native dryer button duration may be ignored"
+        fi
+    done
+    if [ "$patched" -eq 1 ]; then
+        ok "HelixScreen Happy Hare dryer command uses TIMER= (native dryer menu compatible)"
+    fi
+}
+
+patch_helixscreen_happy_hare_dryer_command() {
+    banner "Patching HelixScreen native Happy Hare dryer command"
+    local target seen=0 patched=0 already=0 failed=0
+    for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
+        [ -f "$target" ] || continue
+        seen=1
+        python3 - "$target" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+old = b"MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}"
+new_cmd = b"MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}"
+new = new_cmd + b"\0" * (len(old) - len(new_cmd))
+data = path.read_bytes()
+
+if new_cmd in data:
+    sys.exit(2)
+if old not in data:
+    sys.exit(3)
+
+path.write_bytes(data.replace(old, new, 1))
+sys.exit(0)
+PY
+        case $? in
+            0)
+                ok "$(basename "$target"): patched DURATION= to TIMER="
+                patched=1
+                ;;
+            2)
+                ok "$(basename "$target"): already uses TIMER="
+                already=1
+                ;;
+            3)
+                warn "$(basename "$target"): known Happy Hare dryer command not found"
+                failed=1
+                ;;
+            *)
+                warn "$(basename "$target"): patch failed"
+                failed=1
+                ;;
+        esac
+    done
+
+    if [ "$seen" -eq 0 ]; then
+        warn "No HelixScreen binary found under ${HELIX_DIR}/bin"
+        return 1
+    fi
+    if [ "$failed" -ne 0 ] && [ "$patched" -eq 0 ] && [ "$already" -eq 0 ]; then
+        warn "Native HelixScreen dryer command could not be verified"
+        return 1
+    fi
+    return 0
 }
 
 QIDI_BOX_WRITE_DROPIN='/etc/systemd/system/helixscreen.service.d/qidi-box-write.conf'
@@ -301,10 +559,8 @@ install_mainsail() {
         info "nginx already installed — will not be removed on Mainsail uninstall"
     fi
 
-    set +e
-    curl --fail --silent --show-error --location "$MAINSAIL_INSTALLER" | bash
+    run_remote_script "$MAINSAIL_INSTALLER"
     local exit_code=$?
-    set -e
     if [ $exit_code -ne 0 ]; then
         err "Mainsail installer exited ${exit_code}"
         return 1
@@ -321,7 +577,7 @@ install_mainsail() {
         warn "Installer finished but Mainsail files not detected — check ${MAINSAIL_DIR}"
     fi
 
-    install_camera || warn "Camera setup had problems — re-run option 5 to retry"
+    install_camera || warn "Camera setup had problems — re-run option 6 to retry"
 }
 
 uninstall_mainsail() {
@@ -500,11 +756,21 @@ install_camera() {
         info "Existing camera config detected — rewriting to current format"
     fi
 
+    local ustreamer_pre_installed=false
+    if dpkg -l ustreamer 2>/dev/null | grep -q '^ii'; then
+        ustreamer_pre_installed=true
+        info "ustreamer already installed — package will be left in place on uninstall"
+    fi
+
     info "Installing ustreamer..."
     if ! sudo apt-get install -y ustreamer 2>/dev/null; then
         warn "ustreamer not available via apt — camera not configured"
         warn "  → Install manually: sudo apt-get install ustreamer"
         return 1
+    fi
+    if [ "$ustreamer_pre_installed" = false ]; then
+        touch "$USTREAMER_PACKAGE_MARKER"
+        info "ustreamer was installed by AIO and will be removed with Mainsail"
     fi
 
     local ustreamer_bin
@@ -566,7 +832,7 @@ EOF
         fi
     else
         warn "Mainsail nginx config not found at ${MAINSAIL_NGINX_SITE_AVAIL}"
-        warn "  → Install Mainsail first (option 5), then re-run camera setup"
+        warn "  → Install Mainsail first (option 6), then re-run camera setup"
     fi
 
     # Write/rewrite the [webcam printer] section in moonraker.conf using the
@@ -636,6 +902,15 @@ uninstall_camera() {
         sudo systemctl daemon-reload
         ok "Removed ${USTREAMER_UNIT}"
     fi
+    if [ -f "$USTREAMER_PACKAGE_MARKER" ]; then
+        info "Removing ustreamer package (installed by AIO for camera streaming)..."
+        sudo apt-get remove --purge -y ustreamer 2>/dev/null || true
+        sudo apt-get autoremove -y 2>/dev/null || true
+        rm -f "$USTREAMER_PACKAGE_MARKER"
+        ok "ustreamer package removed"
+    else
+        info "ustreamer package was pre-installed or not tracked — leaving it in place"
+    fi
 
     # Remove [webcam ...] section from moonraker.conf
     local moon_conf="${CONFIG_DIR}/moonraker.conf"
@@ -688,12 +963,16 @@ menu_mainsail() {
             warn "Camera config is from an older AIO release (broken — wrong URL paths,"
             warn "no nginx /webcam/ proxy). Mainsail's camera panel won't connect."
             if confirm "Migrate camera to RC13 format now?"; then
+                preflight || { press_enter; return 1; }
+                do_backup || { press_enter; return 1; }
                 install_camera || warn "Camera migration had problems (see above)"
                 press_enter
                 return
             fi
         elif ! camera_installed; then
             if confirm "Camera streaming not configured. Set it up now?"; then
+                preflight || { press_enter; return 1; }
+                do_backup || { press_enter; return 1; }
                 install_camera || warn "Camera setup had problems (see above)"
                 press_enter
                 return
@@ -910,6 +1189,31 @@ press_enter() {
     read -r _ </dev/tty || true
 }
 
+run_remote_script() {
+    local url="$1"
+    shift
+    local tmp
+    tmp=$(mktemp /tmp/aio_remote_script.XXXXXX) || { err "mktemp failed"; return 1; }
+    fetch "$url" "$tmp" || { rm -f "$tmp"; return 1; }
+    chmod +x "$tmp"
+    "$tmp" "$@"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
+run_remote_script_as_root() {
+    local url="$1"
+    shift
+    local tmp
+    tmp=$(mktemp /tmp/aio_remote_script.XXXXXX) || { err "mktemp failed"; return 1; }
+    fetch "$url" "$tmp" || { rm -f "$tmp"; return 1; }
+    sudo sh "$tmp" "$@"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
 # ---------- safety: refuse root --------------------------------------
 if [ "$(id -u)" -eq 0 ]; then
     err "Do not run this script as root."
@@ -996,7 +1300,11 @@ helixscreen_installed() {
 }
 
 klipperscreen_installed() {
-    systemctl is-enabled --quiet "$KLIPPERSCREEN_SERVICE" 2>/dev/null
+    systemctl is-enabled --quiet "$KLIPPERSCREEN_SERVICE" 2>/dev/null || \
+    [ -d "$KLIPPERSCREEN_DIR" ] || \
+    [ -d "$KLIPPERSCREEN_VENV" ] || \
+    [ -f /etc/systemd/system/KlipperScreen.service ] || \
+    [ -d /etc/systemd/system/KlipperScreen.service.d ]
 }
 
 # Mask the stock Qidi display services so KlipperScreen can own the screen.
@@ -1100,6 +1408,16 @@ do_backup() {
     return 0
 }
 
+ensure_repair_backup() {
+    if [ "${AIO_REPAIR_BACKUP_DONE:-false}" = true ]; then
+        return 0
+    fi
+    info "Verifier repairs can edit Klipper configs; creating a safety backup first."
+    do_backup || return 1
+    AIO_REPAIR_BACKUP_DONE=true
+    return 0
+}
+
 # ---------- uninstall primitives -------------------------------------
 uninstall_bunnybox() {
     banner "Uninstalling BunnyBox / Happy Hare"
@@ -1107,6 +1425,80 @@ uninstall_bunnybox() {
     fix_printer_cfg_after_uninstall
     ok "BunnyBox / Happy Hare uninstalled"
     info "Backups: ${BACKUP_ROOT}/"
+}
+
+cleanup_aio_runtime_artifacts() {
+    banner "Cleaning AIO runtime artifacts"
+
+    uninstall_qidi_box_write
+
+    for d in \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$KLIPPERSCREEN_DIR" \
+        "$KLIPPERSCREEN_VENV" \
+        /opt/helixscreen \
+        /var/lib/helixscreen \
+        /var/log/helixscreen \
+        "${HOME}/.helixscreen" \
+        /root/.helixscreen; do
+        if [ -e "$d" ]; then
+            sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
+        fi
+    done
+
+    sudo rm -f /etc/systemd/system/KlipperScreen.service
+    sudo rm -rf /etc/systemd/system/KlipperScreen.service.d
+    sudo rm -f /etc/systemd/system/helixscreen.service
+    sudo rm -f /etc/systemd/system/helixscreen-update.path
+    sudo rm -f /etc/systemd/system/helixscreen-update.service
+    sudo rm -f /etc/udev/rules.d/99-helixscreen-backlight.rules
+    sudo rm -f /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla
+    sudo rm -f /etc/polkit-1/rules.d/49-helixscreen-network.rules
+    sudo rm -f /etc/polkit-1/rules.d/50-helixscreen-network.rules
+    sudo systemctl daemon-reload 2>/dev/null || true
+}
+
+cleanup_aio_config_artifacts() {
+    banner "Cleaning AIO config artifacts"
+
+    uninstall_idle_fan_shutdown
+
+    for f in \
+        bunnybox_macros.cfg \
+        box_drying.cfg \
+        idle_fan_shutdown.cfg \
+        KAMP_Settings.cfg \
+        KAMP_settings.cfg \
+        Adaptive_Meshing.cfg \
+        Adaptive_Mesh.cfg \
+        Line_Purge.cfg \
+        Smart_Park.cfg \
+        mmu_parameters.cfg \
+        mmu_macro_vars.cfg \
+        mmu_hardware.cfg \
+        mmu.cfg; do
+        if [ -e "${CONFIG_DIR}/${f}" ]; then
+            rm -f "${CONFIG_DIR}/${f}"
+            ok "Removed ${CONFIG_DIR}/${f}"
+        fi
+    done
+
+    for d in \
+        "${CONFIG_DIR}/mmu" \
+        "${CONFIG_DIR}/KAMP" \
+        "${CONFIG_DIR}/helixscreen"; do
+        if [ -e "$d" ]; then
+            sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
+        fi
+    done
+
+    fix_printer_cfg_after_uninstall
+}
+
+cleanup_aio_install_artifacts() {
+    cleanup_aio_runtime_artifacts
+    cleanup_aio_config_artifacts
 }
 
 # Switch the Q2's active display from the stock Qidi services
@@ -1154,7 +1546,7 @@ uninstall_helixscreen() {
     # (not --remove). Fall back to manual systemd teardown if that fails.
     if curl --fail --silent --head --max-time 5 "$HELIX_UNINSTALLER" >/dev/null 2>&1; then
         info "Running official HelixScreen uninstaller..."
-        curl --silent --show-error --location "$HELIX_UNINSTALLER" | sudo sh -s -- --uninstall || \
+        run_remote_script_as_root "$HELIX_UNINSTALLER" --uninstall || \
             warn "HelixScreen uninstaller returned non-zero"
     fi
 
@@ -1214,8 +1606,11 @@ revert_to_backup() {
         info "BunnyBox / Happy Hare not present, skipping"
     fi
 
+    cleanup_aio_install_artifacts
+
     info "Restoring configs from ${BACKUP_ROOT}..."
     local restore_ok=false
+    local restore_can_delete=false
     if [ -d "$BACKUP_ROOT" ]; then
         # Prefer the one-time _FIRST_STOCK snapshot (closest to factory).
         # Fall back to the OLDEST timestamped backup - the first one
@@ -1223,8 +1618,9 @@ revert_to_backup() {
         # whatever broken state was on disk right before the last action.
         local src=""
         if [ -d "${BACKUP_ROOT}/_FIRST_STOCK" ] && \
-           [ -n "$(ls -A "${BACKUP_ROOT}/_FIRST_STOCK" 2>/dev/null)" ]; then
+            [ -n "$(ls -A "${BACKUP_ROOT}/_FIRST_STOCK" 2>/dev/null)" ]; then
             src="${BACKUP_ROOT}/_FIRST_STOCK"
+            restore_can_delete=true
             info "Using first-run stock snapshot: $src"
         else
             local oldest
@@ -1232,6 +1628,7 @@ revert_to_backup() {
                      -not -name '_FIRST_STOCK' 2>/dev/null | sort | head -n 1)
             if [ -n "$oldest" ]; then
                 src="$oldest"
+                restore_can_delete=true
                 warn "_FIRST_STOCK missing - falling back to OLDEST timestamped backup"
                 info "Restoring from: $src"
             else
@@ -1239,7 +1636,11 @@ revert_to_backup() {
                 warn "No timestamped backups found - restoring from flat ${BACKUP_ROOT}/"
             fi
         fi
-        if rsync -a --no-owner --no-group "${src}/" "${CONFIG_DIR}/"; then
+        local rsync_args=(-a --no-owner --no-group)
+        if [ "$restore_can_delete" = true ]; then
+            rsync_args+=(--delete)
+        fi
+        if rsync "${rsync_args[@]}" "${src}/" "${CONFIG_DIR}/"; then
             ok "Config restore complete"
             restore_ok=true
         else
@@ -1249,42 +1650,44 @@ revert_to_backup() {
         warn "No ${BACKUP_ROOT} folder found - nothing to restore"
     fi
 
-    # Post-rsync cleanup: the backup may pre-date AIO and contain Happy
-    # Hare / BunnyBox configs (e.g. user ran Camden's installer before
-    # AIO's first run). Re-scrub anything the rsync just restored.
+    # Post-rsync cleanup: an authoritative snapshot restore already put
+    # CONFIG_DIR back exactly as it was before AIO touched it. Only scrub
+    # runtime/service artifacts outside CONFIG_DIR. If we only had a flat
+    # fallback source, clean known config artifacts because that layout is
+    # not a precise snapshot.
     if [ "$restore_ok" = true ]; then
-        # Re-remove MMU config directory that may have been restored
-        if [ -d "${CONFIG_DIR}/mmu" ]; then
-            sudo rm -rf "${CONFIG_DIR}/mmu"
-            ok "Post-rsync: removed restored mmu/ config directory"
+        cleanup_aio_runtime_artifacts
+        if [ "$restore_can_delete" != true ]; then
+            cleanup_aio_config_artifacts
         fi
-        # Re-clean moonraker.conf Happy Hare sections
-        local moon_conf="${CONFIG_DIR}/moonraker.conf"
-        if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
-            sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
-            sed -i '/^\[update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\]$/d' "$moon_conf"
-            sed -i '/^\[mmu_server\]$/d' "$moon_conf"
-            ok "Post-rsync: cleaned Happy Hare sections from moonraker.conf"
-        fi
-        # Re-clean printer.cfg MMU includes
-        local pcfg="${CONFIG_DIR}/printer.cfg"
-        if [ -f "$pcfg" ] && grep -q '^\[include mmu/' "$pcfg" 2>/dev/null; then
-            sed -i 's|^\[include mmu/[^]]*\]|# AIO: file missing  &|' "$pcfg"
-            ok "Post-rsync: commented out mmu/ includes in printer.cfg"
-        fi
-        # Remove any restored BunnyBox / Happy Hare config files
-        for f in bunnybox_macros.cfg box_drying.cfg; do
-            if [ -f "${CONFIG_DIR}/${f}" ]; then
-                rm -f "${CONFIG_DIR}/${f}"
-                ok "Post-rsync: removed restored ${f}"
+        if [ "$restore_can_delete" != true ]; then
+            # Re-clean moonraker.conf Happy Hare sections
+            local moon_conf="${CONFIG_DIR}/moonraker.conf"
+            if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
+                sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
+                sed -i '/^\[update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\]$/d' "$moon_conf"
+                sed -i '/^\[mmu_server\]$/d' "$moon_conf"
+                ok "Post-rsync: cleaned Happy Hare sections from moonraker.conf"
             fi
-        done
+            # Re-clean printer.cfg MMU includes
+            local pcfg="${CONFIG_DIR}/printer.cfg"
+            if [ -f "$pcfg" ] && grep -q '^\[include mmu/' "$pcfg" 2>/dev/null; then
+                sed -i 's|^\[include mmu/[^]]*\]|# AIO: file missing  &|' "$pcfg"
+                ok "Post-rsync: commented out mmu/ includes in printer.cfg"
+            fi
+            # Remove any restored BunnyBox / Happy Hare config files
+            for f in bunnybox_macros.cfg box_drying.cfg; do
+                if [ -f "${CONFIG_DIR}/${f}" ]; then
+                    rm -f "${CONFIG_DIR}/${f}"
+                    ok "Post-rsync: removed restored ${f}"
+                fi
+            done
+        fi
     fi
 
-    # Final cleanup: remove every directory the toolkit ever created so
-    # the Q2 is left in a clean state. Only run if the restore actually
-    # succeeded (or there was nothing to restore from) - we don't want
-    # to nuke the only safety net after a failed restore.
+    # Final cleanup: remove optional runtime addons and, after a successful
+    # precise restore, remove the backup root too so Revert leaves no AIO
+    # remnants behind.
     if [ "$restore_ok" = true ] || [ ! -d "$BACKUP_ROOT" ]; then
         # Optional addons that might be installed outside Happy Hare
         if [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] || \
@@ -1298,23 +1701,16 @@ revert_to_backup() {
             uninstall_qidi_box_write
         fi
 
-        banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
-        for d in "$HAPPY_HARE_DIR" "$HELIX_DIR" /home/mks/mudstockbackups; do
-            if [ -d "$d" ]; then
-                sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
-            fi
-        done
+        cleanup_aio_runtime_artifacts
+        if [ "$restore_ok" = true ] && [ "$restore_can_delete" = true ] && [ -d "$BACKUP_ROOT" ]; then
+            sudo rm -rf "$BACKUP_ROOT" && \
+                ok "Removed ${BACKUP_ROOT}/ after successful stock restore" || \
+                warn "Could not remove ${BACKUP_ROOT}/"
+        fi
     else
         warn "Restore failed - leaving backup directories in place for recovery."
         info "Inspect: ${BACKUP_ROOT}/"
     fi
-
-    # Post-revert sanity sweep: catch anything that would prevent Klipper
-    # from booting after the restore (bed_mesh timeout typo, orphan
-    # includes, leftover MMU artifacts, duplicate macros). Each fix is
-    # prompted before applying.
-    banner "Post-revert sanity check"
-    _run_verifiers_core
 
     banner "Revert complete"
     info "FIRMWARE_RESTART or reboot the printer to apply."
@@ -1531,14 +1927,13 @@ check_leftover_mmu_artifacts() {
     fi
 }
 
-# Core verifier sequence. Runs from both menu option 7 and the tail of
+# Core verifier sequence. Runs from both menu option 8 and the tail of
 # revert_to_backup(). Does NOT call press_enter — that's the caller's job.
 _run_verifiers_core() {
+    verify_runtime_health
+
     if bunnybox_installed; then
         verify_bunnybox_install
-        if helixscreen_installed; then
-            verify_qidi_box_helixscreen
-        fi
     else
         info "BunnyBox not installed — skipping MMU + Qidi Box checks"
     fi
@@ -1577,11 +1972,20 @@ _run_verifiers_core() {
     find_duplicate_macros
     check_invalid_klipper_options
     check_orphan_includes
-    check_leftover_mmu_artifacts
+    if bunnybox_installed; then
+        info "BunnyBox installed — skipping leftover MMU artifact cleanup"
+    else
+        check_leftover_mmu_artifacts
+    fi
 }
 
 run_all_verifiers() {
     banner "Health Check / Run Verifiers"
+    ensure_repair_backup || {
+        warn "Backup failed; skipping verifier repairs to preserve current state"
+        press_enter
+        return 1
+    }
     _run_verifiers_core
     press_enter
 }
@@ -1780,7 +2184,8 @@ _install_bunnybox() {
         ok "Preserved stock box.cfg → ${BOX_CFG_PRESERVED}"
     fi
 
-    local INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
+    local INSTALL_LOG
+    INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
     info "Install log: ${INSTALL_LOG}"
 
     {
@@ -1830,10 +2235,8 @@ _install_bunnybox() {
         fi
 
         banner "Installing BunnyBox (Happy Hare MMU)"
-        set +e
-        curl --fail --silent --show-error --location "$BUNNYBOX_INSTALLER" | bash
+        run_remote_script "$BUNNYBOX_INSTALLER"
         local bb_exit=$?
-        set -e
         if [ $bb_exit -ne 0 ]; then
             warn "BunnyBox installer exited ${bb_exit} (may be normal for reinstalls)"
         fi
@@ -1852,14 +2255,21 @@ _install_bunnybox() {
         ok "BunnyBox install step complete"
 
         banner "Installing HelixScreen"
-        set +e
-        curl --fail --silent --show-error --location "$HELIXSCREEN_INSTALLER" | sh -s -- --version "${HELIXSCREEN_PIN}"
+        local helix_tmp helix_zip
+        helix_tmp=$(mktemp /tmp/helixscreen-pi.XXXXXX) || return 1
+        helix_zip="${helix_tmp}.zip"
+        mv "$helix_tmp" "$helix_zip" || { rm -f "$helix_tmp" "$helix_zip"; return 1; }
+        fetch "$HELIXSCREEN_RELEASE_ZIP" "$helix_zip" || { rm -f "$helix_zip"; return 1; }
+        info "Using HelixScreen release archive: ${HELIXSCREEN_RELEASE_ZIP}"
+        run_remote_script "$HELIXSCREEN_INSTALLER" --local "$helix_zip"
         local hs_exit=$?
-        set -e
+        rm -f "$helix_zip"
         if [ $hs_exit -ne 0 ]; then
-            warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
+            err "HelixScreen installer failed with exit ${hs_exit}"
+            return 1
         fi
         ok "HelixScreen install step complete"
+        patch_helixscreen_happy_hare_dryer_command || return 1
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
         fetch "${REPO_BASE}/gcode_macro-BunnyBox%26HelixScreen.cfg" \
@@ -1948,6 +2358,8 @@ _install_bunnybox() {
         verify_qidi_box_helixscreen
 
         verify_bunnybox_install
+
+        verify_runtime_health
     } 2>&1 | tee -a "$INSTALL_LOG"
 
     # Check the exit code of the install block (left side of the tee pipe).
@@ -1991,11 +2403,17 @@ install_bunnybox_helixscreen() { _install_bunnybox; }
 # ---------- install: KlipperScreen Happy Hare Edition (standalone) ------
 install_klipperscreen() {
     banner "Install: KlipperScreen Happy Hare Edition"
+    warn "KlipperScreen install is disabled in ${AIO_VERSION}."
+    warn "The current xinit/Xorg path fails on the Q2 because the kernel has no VT subsystem."
+    warn "Leaving the preserved installer body below for the next display-backend fix."
+    press_enter
+    return 1
 
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
 
-    local INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
+    local INSTALL_LOG
+    INSTALL_LOG="${BACKUP_ROOT}/install_$(date +%Y%m%d_%H%M%S).log"
     info "Install log: ${INSTALL_LOG}"
 
     {
@@ -2094,6 +2512,7 @@ install_just_faster() {
 
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
+    cleanup_aio_install_artifacts
 
     info "Updating gcode_macro.cfg..."
     fetch "${REPO_BASE}/gcode_macro(JustFasterPrinter).cfg" \
@@ -2164,17 +2583,21 @@ ${C_BOLD}What it can install:${C_RESET}
     - KAMP adaptive meshing, screws_tilt_adjust, Spoolman hooks
     - No UI changes - stock Qidi screen stays
 
+  ${C_YELLOW}KlipperScreen Happy Hare Edition${C_RESET}
+    - Installer body is preserved, but menu option 2 is disabled while
+      the Q2 display backend issue is investigated
+
 ${C_BOLD}What it can uninstall:${C_RESET}
-  - BunnyBox only / HelixScreen only / Both
-  - 'Revert to Backup' performs a full upstream-style restore:
-    re-enables lightdm + makerbase-client, then rsyncs the newest
-    timestamped backup from ${BACKUP_ROOT}/ back into place.
-  - Uninstall also removes the HELIX_QIDI_BOX_WRITE drop-in (if any)
-    and restarts the helixscreen service.
+  - 'Revert to Backup' is the supported full restore path.
+  - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
+    optional addons, and display-service overrides.
+  - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
+    oldest timestamped backup. ${BACKUP_ROOT}/ is kept as a recovery trail.
 
 ${C_BOLD}Safety:${C_RESET}
   Every install and uninstall first writes a timestamped backup of
   ${CONFIG_DIR}/ to ${BACKUP_ROOT}/<timestamp>/.
+  Health-check repairs also create a backup before editing configs.
   Refuses to run as root.
 
 ${C_BOLD}Known limitations:${C_RESET}
