@@ -1,115 +1,103 @@
-# Session Handoff — Qidi Q2 Superuser AIO
+# Session Handoff - Qidi Q2 Superuser AIO
 
-## Project
+## Current State
 
-**Repo:** `ChanceVegas/Qidi-Q2-superuser_helpinghands`
-**Dev branch:** `claude/qidi-q2-aio-menu-lwyb6`
-**Draft PR:** https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/pull/1
-**Main artifact:** `All_in_One_Installer/aio_menu.sh`
+The repo is at `RC1.30` on `main`. The working convention is to create `claude/*` branches off `main` for all changes, then merge through PRs.
 
-The project is an all-in-one Bash installer menu for the **Qidi Q2 Pro 3D printer** running Klipper. It installs and manages:
-- **BunnyBox (Happy Hare)** — MMU filament switcher firmware
-- **HelixScreen** — LVGL touchscreen UI (by Preston Brown, `prestonbrown/helixscreen`)
-- **Qidi Box** — 4-slot filament dry-box/AMS peripheral (RFID, slot steppers)
-- **Idle Fan Shutdown** — optional addon, turns off fans/heaters after 10 min idle
+Main artifact:
 
----
-
-## Current State (end of last session)
-
-### RC1 is complete and pushed
-
-Four RC1 commits on the dev branch (on top of ~14 earlier commits):
-
-| Commit | What it does |
-|--------|-------------|
-| `8bbdd3c` | `AIO_VERSION='RC1'` constant; rendered in banner `(RC1)` and About screen |
-| `b3b9954` | `verify_qidi_box_helixscreen()` — post-install check for `box.cfg`, `[box_stepper]`, `officiall_filas_list.cfg`, HelixScreen >= v0.99.66; warns, never fails |
-| `5ff5eb9` | `install_qidi_box_write()` — writes `/etc/systemd/system/helixscreen.service.d/qidi-box-write.conf` with `HELIX_QIDI_BOX_WRITE=1`; enabled by default in BB+HS install; `uninstall_qidi_box_write()` wired into `uninstall_helixscreen` and `revert_to_backup`; `BoxWrite: on/off` added to menu header status line |
-| `d3bcb39` | `helixscreen_settings.json`: root key `"ams": { "spool_style": "3d" }` |
-
-### PR #1 — draft, no CI, no review comments yet
-
-No GitHub Actions are configured on the repo. PR is waiting for manual review and merge decision.
-
----
-
-## Established Conventions (follow these)
-
-- **Commit messages:** one-line subjects only, no body
-- **Shell changes:** always `bash -n aio_menu.sh` before committing
-- **JSON changes:** always `python3 -m json.tool <file>` before committing
-- **New `install_*` function:** must have matching `uninstall_*`, a `*_installed()` / `*_enabled()` detection helper, be wired into `revert_to_backup`, and add a status indicator to `show_status_line()`
-- **Helpers:** use `banner`, `info`, `warn`, `ok`, `err` — never raw `echo`
-- **Write files:** use `sudo tee` pattern, never `echo >` with sudo
-- **Never touch:** `Configurations/` and `Plugins/` are stock Qidi reference files — read-only mirrors
-- **Dev branch:** all work goes to `claude/qidi-q2-aio-menu-lwyb6`, never push to `main` directly
-
----
-
-## Next Priorities (in suggested order)
-
-### 1. Merge PR #1 into `main` (your call — review the diff first)
-
-### 2. Create `.claude/` tooling for the repo (researched last session from Preston Brown's helixscreen repo)
-
-High-value items to port/create:
-
-**a) `CLAUDE.md` at repo root** ← biggest payoff, makes every new session start with full context
-- Sections: Quick Start (test commands), Repo layout, Critical rules, Install-function conventions, Autonomous-session policy (what Claude can do without asking)
-- Ask Claude to draft it and confirm the autonomous-session policy before committing
-
-**b) `.claude/settings.json`** — pre-approve WebFetch domains and common Bash commands to eliminate permission prompts:
-```json
-{
-  "permissions": {
-    "allow": [
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:www.klipper3d.org)",
-      "WebFetch(domain:moonraker.readthedocs.io)",
-      "WebFetch(domain:wiki.qidi3d.com)",
-      "WebFetch(domain:www.armoredturtle.xyz)",
-      "WebFetch(domain:code.claude.com)",
-      "Bash(bash -n:*)",
-      "Bash(python3 -m json.tool:*)",
-      "Bash(shellcheck:*)"
-    ]
-  }
-}
+```text
+All_in_One_Installer/aio_menu.sh
 ```
 
-**c) `.claude/hooks/pre-commit-check.sh`** — auto-lint on every commit:
-- All `*.sh` → `bash -n`
-- All `*.json` → `python3 -m json.tool`
-- Warn if `aio_menu.sh` changed but `AIO_VERSION` didn't bump
-- Warn if new `install_*` added without matching `uninstall_*`
+Current high-priority issue:
 
-**d) `.claude/checklist.md`** — pre-flight checklists (before committing, before new install function, before changing printer.cfg)
+```text
+Option 2: KlipperScreen Happy Hare Edition install is disabled pending display fix.
+```
 
-### 3. RC2 planning
+The function `install_klipperscreen()` remains in the script, but the menu case for option 2 only warns:
 
-Candidate features discussed but not yet scoped:
-- `/release` slash command to automate version bumps + changelog + tag + push
-- `update_qidi_box_dropin` migration logic for future drop-in changes
-- Confirm-on-first-run gate for `HELIX_QIDI_BOX_WRITE` (y/N with 5s default-yes timeout for headless)
-- HelixScreen version pinning to a tagged release instead of `main`
-- "9) Run all verifiers" self-test menu item
+```text
+KlipperScreen install is temporarily disabled - display issue under investigation.
+```
 
----
+## Active Investigation
 
-## Key Files
+The Qidi Q2 Pro has a Rockchip display stack with DRM/KMS but no usable VT subsystem. Upstream KlipperScreen starts with `xinit`, and Xorg fails because it expects VT behavior around `/dev/tty0`.
 
-| Path | Purpose |
-|------|---------|
-| `All_in_One_Installer/aio_menu.sh` | Main installer script — all logic lives here |
-| `Install-Script/helixscreen_settings.json` | Shipped to `/home/mks/.config/helixscreen/settings.json` |
-| `Install-Script/BunnyBox&HelixScreen.sh` | Legacy single-shot installer (superseded by AIO) |
-| `Configurations/` | Stock Klipper cfg reference — do not modify |
-| `Plugins/` | Stock plugin reference — do not modify |
+The detailed investigation log is:
 
----
+```text
+All_in_One_Installer/KLIPPERSCREEN_DISPLAY_INVESTIGATION.md
+```
 
-## GitHub Push Access Note
+Suggested next order:
 
-Earlier sessions had 403 push failures. **Fixed:** reconnected GitHub in claude.ai/code settings (re-authorized the Claude GitHub App with write scope). Push via the proxy (`http://127.0.0.1:.../git/ChanceVegas/...`) now works. If 403 returns in a future session, the fix is the same: reconnect GitHub at claude.ai/code → Settings → GitHub integration.
+1. Collect live printer diagnostics for display stack and package availability.
+2. Try Cage/Wayland kiosk launch if available or installable.
+3. Try Xorg with explicit launch arguments such as `-keeptty` and `-novtswitch`.
+4. Revisit keeping/restoring lightdm and running KlipperScreen as a client on `:0`.
+5. Only re-enable menu option 2 after a real printer display test succeeds.
+
+## Diagnostics Needed From Printer
+
+Run these over SSH as `mks` on the Q2:
+
+```bash
+which cage || true
+which weston || true
+ls -la /dev/dri/
+ls /dev/tty[0-9]* 2>/dev/null || true
+systemctl status lightdm --no-pager
+systemctl status makerbase-client --no-pager
+systemctl status helixscreen --no-pager
+systemctl status KlipperScreen --no-pager
+journalctl -u KlipperScreen -b --no-pager | tail -120
+```
+
+If KlipperScreen has been installed before, also collect:
+
+```bash
+ls -la /home/mks/KlipperScreen/scripts/
+sed -n '1,220p' /home/mks/KlipperScreen/scripts/KlipperScreen-start.sh
+find /var/log -maxdepth 2 -iname 'Xorg*.log' -print
+```
+
+## Validation Rules
+
+Before committing:
+
+```bash
+bash -n All_in_One_Installer/aio_menu.sh
+python3 -m json.tool Install-Script/helixscreen_settings.json
+```
+
+When touching `aio_menu.sh`, bump:
+
+```bash
+AIO_VERSION='RC1.31'
+```
+
+Use `shellcheck -S warning All_in_One_Installer/aio_menu.sh` when available.
+
+## Boundaries
+
+Never modify:
+
+```text
+Configurations/
+Plugins/
+```
+
+Never push directly to `main`. Never force-push or delete branches/files unless explicitly approved, except files created in the same session.
+
+## GitHub Access
+
+GitHub CLI is authenticated locally as `ChanceVegas` with token scopes:
+
+```text
+gist, read:org, repo
+```
+
+This should support cloning, pushing branches, creating PRs, and normal PR management. Branch protection may still restrict merges.
