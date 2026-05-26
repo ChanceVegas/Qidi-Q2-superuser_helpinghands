@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.36'
+AIO_VERSION='RC1.37'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -293,8 +293,10 @@ verify_qidi_box_helixscreen() {
     local boxcfg="${CONFIG_DIR}/box.cfg"
     local fila_list="${CONFIG_DIR}/officiall_filas_list.cfg"
 
-    if [ ! -f "$boxcfg" ]; then
-        warn "box.cfg missing - HelixScreen cannot detect the Qidi Box"
+    if bunnybox_installed; then
+        ok "Happy Hare backend active for Qidi Box control (BunnyBox installed)"
+    elif [ ! -f "$boxcfg" ]; then
+        warn "box.cfg missing - HelixScreen cannot detect the stock Qidi Box"
     elif ! grep -q '\[box_stepper' "$boxcfg" 2>/dev/null; then
         warn "box.cfg present but no [box_stepper slot<N>] sections found"
     else
@@ -305,11 +307,13 @@ verify_qidi_box_helixscreen() {
     # box_extras.so alongside Happy Hare's mmu package crashes Klipper
     # (both register CLEAR_TOOLCHANGE_STATE). Revert to Backup brings the
     # include back when BunnyBox is removed.
-    if [ -f "$pcfg" ] && grep -q '^\[include box\.cfg\]' "$pcfg" 2>/dev/null; then
-        warn "printer.cfg has [include box.cfg] active — this WILL crash Klipper while BunnyBox is installed"
-        warn "  → re-run option 1 (Install BunnyBox & HelixScreen) to disable it, or edit printer.cfg by hand"
-    elif [ -f "$pcfg" ]; then
-        ok "printer.cfg [include box.cfg] is disabled (correct under BunnyBox)"
+    if bunnybox_installed; then
+        if [ -f "$pcfg" ] && grep -q '^\[include box\.cfg\]' "$pcfg" 2>/dev/null; then
+            warn "printer.cfg has [include box.cfg] active — this WILL crash Klipper while BunnyBox is installed"
+            warn "  → re-run option 1 (Install BunnyBox & HelixScreen) to disable it, or edit printer.cfg by hand"
+        elif [ -f "$pcfg" ]; then
+            ok "printer.cfg [include box.cfg] is disabled (correct under BunnyBox)"
+        fi
     fi
 
     if [ ! -f "$fila_list" ]; then
@@ -1844,7 +1848,14 @@ check_orphan_includes() {
         [ -z "$target" ] && continue
         # Resolve relative to CONFIG_DIR (Klipper's behavior)
         local resolved="${CONFIG_DIR}/${target#./}"
-        if [ ! -f "$resolved" ]; then
+        if [[ "$resolved" == *[\*\?\[]* ]]; then
+            # Klipper supports glob includes. Treat the include as valid when
+            # the pattern expands to at least one file; otherwise it is a real
+            # orphan and Klipper will complain.
+            if ! compgen -G "$resolved" >/dev/null; then
+                orphans="${orphans}${line}|${target}"$'\n'
+            fi
+        elif [ ! -f "$resolved" ]; then
             orphans="${orphans}${line}|${target}"$'\n'
         fi
     done < <(grep -E '^\[include ' "$pcfg" 2>/dev/null || true)
@@ -2005,12 +2016,17 @@ find_duplicate_macros() {
     local tmp
     tmp=$(mktemp /tmp/aio_macros.XXXXXX) || return 0
 
-    # Skip backup dirs Klipper does not load (Happy Hare's backup_hh_*,
-    # AIO's mmu-YYYYMMDD_HHMMSS, _FIRST_STOCK snapshot, install backups).
+    # Skip backup files/dirs Klipper does not load. Happy Hare and the AIO
+    # leave timestamped printer-*.cfg / gcode_macro-*.cfg snapshots directly
+    # in CONFIG_DIR, and scanning them creates false duplicate warnings.
     find "$CONFIG_DIR" -maxdepth 4 -type f -name '*.cfg' \
         -not -path '*/backup_*/*' \
         -not -path '*/mmu-2*/*' \
         -not -path '*/_FIRST_STOCK/*' \
+        -not -name 'printer-*.cfg' \
+        -not -name 'gcode_macro-*.cfg' \
+        -not -name '*.bak' \
+        -not -name '*.bak.*' \
         -print0 2>/dev/null | \
     xargs -0 grep -Hn -E '^\[gcode_macro [^]]+\]' 2>/dev/null > "$tmp" || true
 
