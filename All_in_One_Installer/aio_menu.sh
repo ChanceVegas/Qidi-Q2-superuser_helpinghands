@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.35'
+AIO_VERSION='RC1.36'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -74,9 +74,16 @@ helixscreen_version() {
         v=$("${HELIX_DIR}/helixscreen" --version 2>/dev/null | head -n 1 | \
             grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
     fi
+    if [ -z "$v" ] && [ -x "${HELIX_DIR}/bin/helix-screen" ]; then
+        v=$("${HELIX_DIR}/bin/helix-screen" --version 2>/dev/null | head -n 1 | \
+            grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    fi
     if [ -z "$v" ] && [ -f "${HELIX_DIR}/VERSION" ]; then
         v=$(head -n 1 "${HELIX_DIR}/VERSION" 2>/dev/null | \
             grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+    fi
+    if [ -z "$v" ] && [ -x "${HELIX_DIR}/bin/helix-screen" ]; then
+        v="${HELIXSCREEN_PIN#v}"
     fi
     echo "$v"
 }
@@ -94,6 +101,187 @@ helixscreen_version_ge() {
         if [ "$h" -lt "$w" ]; then return 1; fi
     done
     return 0
+}
+
+moonraker_get() {
+    local path="$1"
+    curl --fail --silent --show-error --max-time 3 \
+        "http://127.0.0.1:${MOONRAKER_PORT}${path}" 2>/dev/null
+}
+
+verify_systemd_service_health() {
+    local service="$1"
+    local label="$2"
+    local required="${3:-true}"
+
+    if ! systemctl cat "$service" >/dev/null 2>&1; then
+        if [ "$required" = true ]; then
+            err "${label}: systemd unit ${service} not found"
+        else
+            info "${label}: systemd unit ${service} not installed"
+        fi
+        return 0
+    fi
+
+    local active enabled result restarts
+    active=$(systemctl is-active "$service" 2>/dev/null || true)
+    enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
+    result=$(systemctl show "$service" -p Result --value 2>/dev/null || true)
+    restarts=$(systemctl show "$service" -p NRestarts --value 2>/dev/null || true)
+    case "$restarts" in
+        ''|*[!0-9]*) restarts=0 ;;
+    esac
+
+    case "$active" in
+        active)
+            ok "${label}: active (${service}, enabled=${enabled:-unknown})"
+            ;;
+        activating|reloading)
+            warn "${label}: ${active} (${service})"
+            ;;
+        *)
+            if [ "$required" = true ]; then
+                err "${label}: ${active:-unknown} (${service})"
+            else
+                info "${label}: ${active:-unknown} (${service})"
+            fi
+            ;;
+    esac
+
+    if [ "$result" != "" ] && [ "$result" != "success" ]; then
+        warn "${label}: last systemd result=${result}"
+    fi
+    if [ "$restarts" -gt 0 ]; then
+        warn "${label}: systemd restart count=${restarts}"
+    fi
+}
+
+verify_klipper_runtime_health() {
+    banner "Klipper / Moonraker runtime health"
+
+    verify_systemd_service_health klipper "Klipper" true
+    verify_systemd_service_health moonraker "Moonraker" true
+
+    local response state state_msg
+    if response=$(moonraker_get "/printer/info"); then
+        state=$(printf '%s' "$response" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("result",{}).get("state","unknown"))' \
+            2>/dev/null || printf 'unknown')
+        state_msg=$(printf '%s' "$response" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("result",{}).get("state_message",""))' \
+            2>/dev/null || true)
+        if [ "$state" = "ready" ]; then
+            ok "Moonraker reports Klipper state: ready"
+        else
+            warn "Moonraker reports Klipper state: ${state}"
+            [ -n "$state_msg" ] && warn "Klipper state message: ${state_msg}"
+        fi
+    else
+        warn "Moonraker /printer/info did not respond on 127.0.0.1:${MOONRAKER_PORT}"
+    fi
+
+    local recent
+    recent=$(journalctl -u klipper --since '-15 min' --no-pager 2>/dev/null | \
+        grep -Ei 'traceback|exception|shutdown|crash|error|unable|failed|restart' | \
+        tail -n 8 || true)
+    if [ -n "$recent" ]; then
+        warn "Recent Klipper journal lines worth checking:"
+        printf '%s\n' "$recent" | while IFS= read -r line; do
+            warn "  $line"
+        done
+    else
+        ok "No obvious Klipper crash/error lines in the last 15 minutes"
+    fi
+}
+
+verify_helixscreen_runtime_health() {
+    banner "HelixScreen runtime health"
+
+    if helixscreen_installed; then
+        verify_systemd_service_health helixscreen "HelixScreen" true
+        local v
+        v=$(helixscreen_version)
+        if [ -n "$v" ]; then
+            ok "HelixScreen version: ${v}"
+        else
+            warn "Could not determine HelixScreen version"
+        fi
+        verify_qidi_box_helixscreen
+    else
+        info "HelixScreen not installed"
+    fi
+}
+
+verify_happy_hare_runtime_health() {
+    banner "BunnyBox / Happy Hare / MMU runtime health"
+
+    if bunnybox_installed; then
+        ok "BunnyBox config detected"
+    else
+        info "BunnyBox config not detected"
+        return 0
+    fi
+
+    if [ -d "${HOME}/klipper/klippy/extras/mmu" ]; then
+        ok "Happy Hare Klipper extras package linked"
+    else
+        warn "Happy Hare Klipper extras package missing: ${HOME}/klipper/klippy/extras/mmu"
+    fi
+
+    if [ -f "${HOME}/moonraker/moonraker/components/mmu_server.py" ]; then
+        ok "Happy Hare Moonraker component linked"
+    else
+        warn "Happy Hare Moonraker component missing: ${HOME}/moonraker/moonraker/components/mmu_server.py"
+    fi
+
+    if grep -q '^\[mmu_server\]' "${CONFIG_DIR}/moonraker.conf" 2>/dev/null; then
+        ok "moonraker.conf has [mmu_server]"
+    else
+        warn "moonraker.conf missing [mmu_server]"
+    fi
+
+    local response has_mmu summary
+    if response=$(moonraker_get "/printer/objects/list"); then
+        has_mmu=$(printf '%s' "$response" | python3 -c \
+            'import json,sys; objs=json.load(sys.stdin).get("result",{}).get("objects",[]); print("yes" if "mmu" in objs else "no")' \
+            2>/dev/null || printf 'unknown')
+        if [ "$has_mmu" = "yes" ]; then
+            ok "Moonraker exposes the Happy Hare mmu object"
+        else
+            warn "Moonraker objects list does not expose mmu"
+        fi
+    else
+        warn "Could not query Moonraker objects list"
+    fi
+
+    if response=$(moonraker_get "/printer/objects/query?mmu"); then
+        summary=$(printf '%s' "$response" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+mmu = data.get("result", {}).get("status", {}).get("mmu")
+if not isinstance(mmu, dict):
+    sys.exit(2)
+keys = [
+    "enabled", "is_enabled", "action", "print_state", "tool", "gate",
+    "filament", "filament_pos", "selector_pos", "sync_drive"
+]
+parts = [f"{k}={mmu[k]}" for k in keys if k in mmu]
+print(", ".join(parts) if parts else "mmu object reachable")
+' 2>/dev/null || true)
+        if [ -n "$summary" ]; then
+            ok "MMU status: ${summary}"
+        else
+            warn "MMU object query returned, but status could not be parsed"
+        fi
+    else
+        warn "Could not query Moonraker mmu object"
+    fi
+}
+
+verify_runtime_health() {
+    verify_klipper_runtime_health
+    verify_happy_hare_runtime_health
+    verify_helixscreen_runtime_health
 }
 
 # Post-install sanity check for the Qidi Box read-path on HelixScreen.
@@ -1739,14 +1927,13 @@ check_leftover_mmu_artifacts() {
     fi
 }
 
-# Core verifier sequence. Runs from both menu option 7 and the tail of
+# Core verifier sequence. Runs from both menu option 8 and the tail of
 # revert_to_backup(). Does NOT call press_enter — that's the caller's job.
 _run_verifiers_core() {
+    verify_runtime_health
+
     if bunnybox_installed; then
         verify_bunnybox_install
-        if helixscreen_installed; then
-            verify_qidi_box_helixscreen
-        fi
     else
         info "BunnyBox not installed — skipping MMU + Qidi Box checks"
     fi
@@ -1785,7 +1972,11 @@ _run_verifiers_core() {
     find_duplicate_macros
     check_invalid_klipper_options
     check_orphan_includes
-    check_leftover_mmu_artifacts
+    if bunnybox_installed; then
+        info "BunnyBox installed — skipping leftover MMU artifact cleanup"
+    else
+        check_leftover_mmu_artifacts
+    fi
 }
 
 run_all_verifiers() {
@@ -2167,6 +2358,8 @@ _install_bunnybox() {
         verify_qidi_box_helixscreen
 
         verify_bunnybox_install
+
+        verify_runtime_health
     } 2>&1 | tee -a "$INSTALL_LOG"
 
     # Check the exit code of the install block (left side of the tee pipe).
