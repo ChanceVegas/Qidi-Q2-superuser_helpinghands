@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.32'
+AIO_VERSION='RC1.33'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -29,8 +29,9 @@ BUNNYBOX_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Bunny-Box/re
 # Both the installer script AND the binary are pinned to the same tag so
 # upstream installer changes (e.g. generalization for other printers) don't
 # silently regress Q2 behavior.
-HELIXSCREEN_PIN='v0.99.66'
+HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
+HELIXSCREEN_RELEASE_ZIP="https://github.com/prestonbrown/helixscreen/releases/download/${HELIXSCREEN_PIN}/helixscreen-pi.zip"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
@@ -1169,11 +1170,42 @@ uninstall_bunnybox() {
     info "Backups: ${BACKUP_ROOT}/"
 }
 
-cleanup_aio_install_artifacts() {
-    banner "Cleaning AIO install artifacts"
+cleanup_aio_runtime_artifacts() {
+    banner "Cleaning AIO runtime artifacts"
+
+    uninstall_qidi_box_write
+
+    for d in \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$KLIPPERSCREEN_DIR" \
+        "$KLIPPERSCREEN_VENV" \
+        /opt/helixscreen \
+        /var/lib/helixscreen \
+        /var/log/helixscreen \
+        "${HOME}/.helixscreen" \
+        /root/.helixscreen; do
+        if [ -e "$d" ]; then
+            sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
+        fi
+    done
+
+    sudo rm -f /etc/systemd/system/KlipperScreen.service
+    sudo rm -rf /etc/systemd/system/KlipperScreen.service.d
+    sudo rm -f /etc/systemd/system/helixscreen.service
+    sudo rm -f /etc/systemd/system/helixscreen-update.path
+    sudo rm -f /etc/systemd/system/helixscreen-update.service
+    sudo rm -f /etc/udev/rules.d/99-helixscreen-backlight.rules
+    sudo rm -f /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla
+    sudo rm -f /etc/polkit-1/rules.d/49-helixscreen-network.rules
+    sudo rm -f /etc/polkit-1/rules.d/50-helixscreen-network.rules
+    sudo systemctl daemon-reload 2>/dev/null || true
+}
+
+cleanup_aio_config_artifacts() {
+    banner "Cleaning AIO config artifacts"
 
     uninstall_idle_fan_shutdown
-    uninstall_qidi_box_write
 
     for f in \
         bunnybox_macros.cfg \
@@ -1198,22 +1230,18 @@ cleanup_aio_install_artifacts() {
     for d in \
         "${CONFIG_DIR}/mmu" \
         "${CONFIG_DIR}/KAMP" \
-        "${CONFIG_DIR}/helixscreen" \
-        "$HAPPY_HARE_DIR" \
-        "$HELIX_DIR" \
-        "$KLIPPERSCREEN_DIR" \
-        "$KLIPPERSCREEN_VENV"; do
+        "${CONFIG_DIR}/helixscreen"; do
         if [ -e "$d" ]; then
             sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
         fi
     done
 
-    sudo rm -f /etc/systemd/system/KlipperScreen.service
-    sudo rm -rf /etc/systemd/system/KlipperScreen.service.d
-    sudo rm -f /etc/systemd/system/helixscreen.service
-    sudo systemctl daemon-reload 2>/dev/null || true
-
     fix_printer_cfg_after_uninstall
+}
+
+cleanup_aio_install_artifacts() {
+    cleanup_aio_runtime_artifacts
+    cleanup_aio_config_artifacts
 }
 
 # Switch the Q2's active display from the stock Qidi services
@@ -1365,38 +1393,44 @@ revert_to_backup() {
         warn "No ${BACKUP_ROOT} folder found - nothing to restore"
     fi
 
-    # Post-rsync cleanup: the backup may pre-date AIO and contain Happy
-    # Hare / BunnyBox configs (e.g. user ran Camden's installer before
-    # AIO's first run). Re-scrub anything the rsync just restored.
+    # Post-rsync cleanup: an authoritative snapshot restore already put
+    # CONFIG_DIR back exactly as it was before AIO touched it. Only scrub
+    # runtime/service artifacts outside CONFIG_DIR. If we only had a flat
+    # fallback source, clean known config artifacts because that layout is
+    # not a precise snapshot.
     if [ "$restore_ok" = true ]; then
-        cleanup_aio_install_artifacts
-        # Re-clean moonraker.conf Happy Hare sections
-        local moon_conf="${CONFIG_DIR}/moonraker.conf"
-        if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
-            sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
-            sed -i '/^\[update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\]$/d' "$moon_conf"
-            sed -i '/^\[mmu_server\]$/d' "$moon_conf"
-            ok "Post-rsync: cleaned Happy Hare sections from moonraker.conf"
+        cleanup_aio_runtime_artifacts
+        if [ "$restore_can_delete" != true ]; then
+            cleanup_aio_config_artifacts
         fi
-        # Re-clean printer.cfg MMU includes
-        local pcfg="${CONFIG_DIR}/printer.cfg"
-        if [ -f "$pcfg" ] && grep -q '^\[include mmu/' "$pcfg" 2>/dev/null; then
-            sed -i 's|^\[include mmu/[^]]*\]|# AIO: file missing  &|' "$pcfg"
-            ok "Post-rsync: commented out mmu/ includes in printer.cfg"
-        fi
-        # Remove any restored BunnyBox / Happy Hare config files
-        for f in bunnybox_macros.cfg box_drying.cfg; do
-            if [ -f "${CONFIG_DIR}/${f}" ]; then
-                rm -f "${CONFIG_DIR}/${f}"
-                ok "Post-rsync: removed restored ${f}"
+        if [ "$restore_can_delete" != true ]; then
+            # Re-clean moonraker.conf Happy Hare sections
+            local moon_conf="${CONFIG_DIR}/moonraker.conf"
+            if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
+                sed -i '/^\[\(update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\|mmu_server\)\]/,/^\[/{/^\[/!d;}' "$moon_conf"
+                sed -i '/^\[update_manager \(mmu\|happy_hare\|bunnybox\|happyhare\)\]$/d' "$moon_conf"
+                sed -i '/^\[mmu_server\]$/d' "$moon_conf"
+                ok "Post-rsync: cleaned Happy Hare sections from moonraker.conf"
             fi
-        done
+            # Re-clean printer.cfg MMU includes
+            local pcfg="${CONFIG_DIR}/printer.cfg"
+            if [ -f "$pcfg" ] && grep -q '^\[include mmu/' "$pcfg" 2>/dev/null; then
+                sed -i 's|^\[include mmu/[^]]*\]|# AIO: file missing  &|' "$pcfg"
+                ok "Post-rsync: commented out mmu/ includes in printer.cfg"
+            fi
+            # Remove any restored BunnyBox / Happy Hare config files
+            for f in bunnybox_macros.cfg box_drying.cfg; do
+                if [ -f "${CONFIG_DIR}/${f}" ]; then
+                    rm -f "${CONFIG_DIR}/${f}"
+                    ok "Post-rsync: removed restored ${f}"
+                fi
+            done
+        fi
     fi
 
-    # Final cleanup: remove every directory the toolkit ever created so
-    # the Q2 is left in a clean state. Only run if the restore actually
-    # succeeded (or there was nothing to restore from) - we don't want
-    # to nuke the only safety net after a failed restore.
+    # Final cleanup: remove optional runtime addons and, after a successful
+    # precise restore, remove the backup root too so Revert leaves no AIO
+    # remnants behind.
     if [ "$restore_ok" = true ] || [ ! -d "$BACKUP_ROOT" ]; then
         # Optional addons that might be installed outside Happy Hare
         if [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] || \
@@ -1410,25 +1444,16 @@ revert_to_backup() {
             uninstall_qidi_box_write
         fi
 
-        banner "Cleaning up AIO/BunnyBox/HelixScreen directories"
-        for d in "$HAPPY_HARE_DIR" "$HELIX_DIR"; do
-            if [ -d "$d" ]; then
-                sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
-            fi
-        done
-        info "Keeping ${BACKUP_ROOT}/ in place as the recovery trail"
+        cleanup_aio_runtime_artifacts
+        if [ "$restore_ok" = true ] && [ "$restore_can_delete" = true ] && [ -d "$BACKUP_ROOT" ]; then
+            sudo rm -rf "$BACKUP_ROOT" && \
+                ok "Removed ${BACKUP_ROOT}/ after successful stock restore" || \
+                warn "Could not remove ${BACKUP_ROOT}/"
+        fi
     else
         warn "Restore failed - leaving backup directories in place for recovery."
         info "Inspect: ${BACKUP_ROOT}/"
     fi
-
-    # Post-revert sanity sweep: catch anything that would prevent Klipper
-    # from booting after the restore (bed_mesh timeout typo, orphan
-    # includes, leftover MMU artifacts, duplicate macros). Each fix is
-    # prompted before applying.
-    banner "Post-revert sanity check"
-    ensure_repair_backup || warn "Could not create post-revert repair backup"
-    _run_verifiers_core
 
     banner "Revert complete"
     info "FIRMWARE_RESTART or reboot the printer to apply."
@@ -1970,8 +1995,13 @@ _install_bunnybox() {
         ok "BunnyBox install step complete"
 
         banner "Installing HelixScreen"
-        run_remote_script "$HELIXSCREEN_INSTALLER" --version "${HELIXSCREEN_PIN}"
+        local helix_zip
+        helix_zip=$(mktemp /tmp/helixscreen-pi.XXXXXX) || return 1
+        fetch "$HELIXSCREEN_RELEASE_ZIP" "$helix_zip" || { rm -f "$helix_zip"; return 1; }
+        info "Using HelixScreen release archive: ${HELIXSCREEN_RELEASE_ZIP}"
+        run_remote_script "$HELIXSCREEN_INSTALLER" --local "$helix_zip"
         local hs_exit=$?
+        rm -f "$helix_zip"
         if [ $hs_exit -ne 0 ]; then
             warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
         fi
