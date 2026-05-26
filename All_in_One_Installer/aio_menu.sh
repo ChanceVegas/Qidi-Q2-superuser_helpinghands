@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.31'
+AIO_VERSION='RC1.32'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -1042,7 +1042,11 @@ helixscreen_installed() {
 }
 
 klipperscreen_installed() {
-    systemctl is-enabled --quiet "$KLIPPERSCREEN_SERVICE" 2>/dev/null
+    systemctl is-enabled --quiet "$KLIPPERSCREEN_SERVICE" 2>/dev/null || \
+    [ -d "$KLIPPERSCREEN_DIR" ] || \
+    [ -d "$KLIPPERSCREEN_VENV" ] || \
+    [ -f /etc/systemd/system/KlipperScreen.service ] || \
+    [ -d /etc/systemd/system/KlipperScreen.service.d ]
 }
 
 # Mask the stock Qidi display services so KlipperScreen can own the screen.
@@ -1165,6 +1169,53 @@ uninstall_bunnybox() {
     info "Backups: ${BACKUP_ROOT}/"
 }
 
+cleanup_aio_install_artifacts() {
+    banner "Cleaning AIO install artifacts"
+
+    uninstall_idle_fan_shutdown
+    uninstall_qidi_box_write
+
+    for f in \
+        bunnybox_macros.cfg \
+        box_drying.cfg \
+        idle_fan_shutdown.cfg \
+        KAMP_Settings.cfg \
+        KAMP_settings.cfg \
+        Adaptive_Meshing.cfg \
+        Adaptive_Mesh.cfg \
+        Line_Purge.cfg \
+        Smart_Park.cfg \
+        mmu_parameters.cfg \
+        mmu_macro_vars.cfg \
+        mmu_hardware.cfg \
+        mmu.cfg; do
+        if [ -e "${CONFIG_DIR}/${f}" ]; then
+            rm -f "${CONFIG_DIR}/${f}"
+            ok "Removed ${CONFIG_DIR}/${f}"
+        fi
+    done
+
+    for d in \
+        "${CONFIG_DIR}/mmu" \
+        "${CONFIG_DIR}/KAMP" \
+        "${CONFIG_DIR}/helixscreen" \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$KLIPPERSCREEN_DIR" \
+        "$KLIPPERSCREEN_VENV"; do
+        if [ -e "$d" ]; then
+            sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
+        fi
+    done
+
+    sudo rm -f /etc/systemd/system/KlipperScreen.service
+    sudo rm -rf /etc/systemd/system/KlipperScreen.service.d
+    sudo rm -f /etc/systemd/system/helixscreen.service
+    sudo systemctl daemon-reload 2>/dev/null || true
+
+    fix_printer_cfg_after_uninstall
+}
+
 # Switch the Q2's active display from the stock Qidi services
 # (lightdm + makerbase-client) to HelixScreen. Inverse of the
 # unmask/enable/restart block in uninstall_helixscreen().
@@ -1270,8 +1321,11 @@ revert_to_backup() {
         info "BunnyBox / Happy Hare not present, skipping"
     fi
 
+    cleanup_aio_install_artifacts
+
     info "Restoring configs from ${BACKUP_ROOT}..."
     local restore_ok=false
+    local restore_can_delete=false
     if [ -d "$BACKUP_ROOT" ]; then
         # Prefer the one-time _FIRST_STOCK snapshot (closest to factory).
         # Fall back to the OLDEST timestamped backup - the first one
@@ -1279,8 +1333,9 @@ revert_to_backup() {
         # whatever broken state was on disk right before the last action.
         local src=""
         if [ -d "${BACKUP_ROOT}/_FIRST_STOCK" ] && \
-           [ -n "$(ls -A "${BACKUP_ROOT}/_FIRST_STOCK" 2>/dev/null)" ]; then
+            [ -n "$(ls -A "${BACKUP_ROOT}/_FIRST_STOCK" 2>/dev/null)" ]; then
             src="${BACKUP_ROOT}/_FIRST_STOCK"
+            restore_can_delete=true
             info "Using first-run stock snapshot: $src"
         else
             local oldest
@@ -1288,6 +1343,7 @@ revert_to_backup() {
                      -not -name '_FIRST_STOCK' 2>/dev/null | sort | head -n 1)
             if [ -n "$oldest" ]; then
                 src="$oldest"
+                restore_can_delete=true
                 warn "_FIRST_STOCK missing - falling back to OLDEST timestamped backup"
                 info "Restoring from: $src"
             else
@@ -1295,7 +1351,11 @@ revert_to_backup() {
                 warn "No timestamped backups found - restoring from flat ${BACKUP_ROOT}/"
             fi
         fi
-        if rsync -a --no-owner --no-group "${src}/" "${CONFIG_DIR}/"; then
+        local rsync_args=(-a --no-owner --no-group)
+        if [ "$restore_can_delete" = true ]; then
+            rsync_args+=(--delete)
+        fi
+        if rsync "${rsync_args[@]}" "${src}/" "${CONFIG_DIR}/"; then
             ok "Config restore complete"
             restore_ok=true
         else
@@ -1309,11 +1369,7 @@ revert_to_backup() {
     # Hare / BunnyBox configs (e.g. user ran Camden's installer before
     # AIO's first run). Re-scrub anything the rsync just restored.
     if [ "$restore_ok" = true ]; then
-        # Re-remove MMU config directory that may have been restored
-        if [ -d "${CONFIG_DIR}/mmu" ]; then
-            sudo rm -rf "${CONFIG_DIR}/mmu"
-            ok "Post-rsync: removed restored mmu/ config directory"
-        fi
+        cleanup_aio_install_artifacts
         # Re-clean moonraker.conf Happy Hare sections
         local moon_conf="${CONFIG_DIR}/moonraker.conf"
         if [ -f "$moon_conf" ] && grep -qE '^\[(update_manager (mmu|happy_hare|bunnybox|happyhare)|mmu_server)\]' "$moon_conf" 2>/dev/null; then
@@ -2160,6 +2216,7 @@ install_just_faster() {
 
     preflight || { press_enter; return 1; }
     do_backup || { press_enter; return 1; }
+    cleanup_aio_install_artifacts
 
     info "Updating gcode_macro.cfg..."
     fetch "${REPO_BASE}/gcode_macro(JustFasterPrinter).cfg" \
