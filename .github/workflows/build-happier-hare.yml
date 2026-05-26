@@ -1,0 +1,77 @@
+name: Build Happier Hare HelixScreen
+
+on:
+  workflow_dispatch:
+    inputs:
+      helix_tag:
+        description: HelixScreen tag to patch
+        default: v0.99.70
+        required: true
+      release_version:
+        description: Artifact version label
+        default: happier-hare-rc2.0
+        required: true
+
+jobs:
+  build-pi:
+    name: Build patched Pi archive
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout AIO repo
+        uses: actions/checkout@v4
+        with:
+          path: aio
+
+      - name: Checkout HelixScreen
+        uses: actions/checkout@v4
+        with:
+          repository: prestonbrown/helixscreen
+          ref: ${{ inputs.helix_tag }}
+          path: helixscreen
+          submodules: recursive
+
+      - name: Apply Happier Hare patch
+        run: patch -d helixscreen -p1 < aio/Happier_Hare/patches/helixscreen-v0.99.70-happier-hare.patch
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Pi toolchain image
+        run: |
+          docker buildx build \
+            --cache-from type=gha,scope=happier-hare-toolchain-pi \
+            --cache-to type=gha,mode=max,scope=happier-hare-toolchain-pi \
+            --load \
+            -t helixscreen/toolchain-pi \
+            -f helixscreen/docker/Dockerfile.pi \
+            helixscreen/docker/
+
+      - name: Cross-compile HelixScreen pi-both
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/helixscreen":/src \
+            -w /src \
+            helixscreen/toolchain-pi \
+            make PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j$(nproc)
+
+      - name: Package patched Pi release
+        working-directory: helixscreen
+        run: make RELEASE_VERSION=${{ inputs.release_version }} release-pi
+
+      - name: Verify patched command strings
+        working-directory: helixscreen
+        run: |
+          unzip -q releases/helixscreen-pi.zip -d /tmp/happier-hare-pi
+          strings /tmp/happier-hare-pi/bin/helix-screen | grep 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}'
+          strings /tmp/happier-hare-pi/bin/helix-screen | grep 'MMU_HEATER STOP=1'
+
+      - name: Upload patched archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: happier-hare-helixscreen-pi-${{ inputs.release_version }}
+          path: |
+            helixscreen/releases/helixscreen-pi.zip
+            helixscreen/releases/helixscreen-pi-${{ inputs.release_version }}.tar.gz
+          retention-days: 14
