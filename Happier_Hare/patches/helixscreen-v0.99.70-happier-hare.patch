@@ -1,0 +1,124 @@
+diff --git a/include/ams_backend_happy_hare.h b/include/ams_backend_happy_hare.h
+index f126319..16c424a 100644
+--- a/include/ams_backend_happy_hare.h
++++ b/include/ams_backend_happy_hare.h
+@@ -125,6 +125,9 @@ class AmsBackendHappyHare : public AmsSubscriptionBackend {
+     AmsError start_drying(float temp_c, int duration_min, int fan_pct = -1,
+                            int unit = 0) override;
+     AmsError stop_drying(int unit = 0) override;
++    [[nodiscard]] bool has_environment_sensors() const override {
++        return true;
++    }
+ 
+     [[nodiscard]] bool has_firmware_spool_persistence() const override {
+         return true; // Happy Hare persists via MMU_GATE_MAP SPOOLID
+diff --git a/src/printer/ams_backend_happy_hare.cpp b/src/printer/ams_backend_happy_hare.cpp
+index 68c8345..054da26 100644
+--- a/src/printer/ams_backend_happy_hare.cpp
++++ b/src/printer/ams_backend_happy_hare.cpp
+@@ -34,6 +34,14 @@ AmsBackendHappyHare::AmsBackendHappyHare(MoonrakerAPI* api, MoonrakerClient* cli
+     // Default to TIP_FORM -- Happy Hare's default macro is _MMU_FORM_TIP.
+     // Overridden by query_tip_method_from_config() once configfile response arrives.
+     system_info_.tip_method = TipMethod::TIP_FORM;
++    // Happier Hare: Qidi/BunnyBox uses Happy Hare's MMU_HEATER command for
++    // Box drying. Expose dryer support immediately so the native environment
++    // indicator and dryer overlay are reachable even before drying_state
++    // reports a live cycle.
++    dryer_info_.supported = true;
++    dryer_info_.min_temp_c = 35.0f;
++    dryer_info_.max_temp_c = 70.0f;
++    dryer_info_.max_duration_min = 720;
+ 
+     spdlog::debug("[AMS HappyHare] Backend created");
+ }
+@@ -2014,7 +2022,7 @@ AmsError AmsBackendHappyHare::start_drying(float temp_c, int duration_min, int f
+         }
+     }
+ 
+-    std::string cmd = fmt::format("MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}", temp_c, duration_min);
++    std::string cmd = fmt::format("MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}", temp_c, duration_min);
+     if (fan_pct >= 0) {
+         cmd += fmt::format(" FAN={}", fan_pct);
+     }
+@@ -2033,7 +2041,7 @@ AmsError AmsBackendHappyHare::stop_drying(int unit) {
+     }
+ 
+     spdlog::info("[AMS HappyHare] Stopping dryer");
+-    return execute_gcode("MMU_HEATER DRY=0");
++    return execute_gcode("MMU_HEATER STOP=1");
+ }
+ 
+ // ============================================================================
+diff --git a/src/printer/ams_state.cpp b/src/printer/ams_state.cpp
+index ec17b34..67ba059 100644
+--- a/src/printer/ams_state.cpp
++++ b/src/printer/ams_state.cpp
+@@ -1175,6 +1175,8 @@ void AmsState::sync_from_backend() {
+         }
+     }
+ 
++    const auto& dryer = backend->get_dryer_info();
++
+     // Update per-unit environment indicator display subjects (formatted text for XML)
+     for (const auto& unit : info.units) {
+         int idx = unit.unit_index;
+@@ -1244,6 +1246,36 @@ void AmsState::sync_from_backend() {
+             if (lv_subject_get_int(&env_ind_humidity_visible_[idx]) != hum_vis) {
+                 lv_subject_set_int(&env_ind_humidity_visible_[idx], hum_vis);
+             }
++        } else if (dryer.supported) {
++            char buf[ENV_IND_TEXT_BUF_SIZE];
++            if (dryer.current_temp_c > 0) {
++                snprintf(buf, sizeof(buf),
++                         "%d\xC2\xB0"
++                         "C",
++                         static_cast<int>(dryer.current_temp_c));
++            } else if (dryer.target_temp_c > 0) {
++                snprintf(buf, sizeof(buf),
++                         "%d\xC2\xB0"
++                         "C",
++                         static_cast<int>(dryer.target_temp_c));
++            } else {
++                snprintf(buf, sizeof(buf), "--");
++            }
++            if (strcmp(lv_subject_get_string(&env_ind_temp_text_[idx]), buf) != 0) {
++                lv_subject_copy_string(&env_ind_temp_text_[idx], buf);
++            }
++            if (strcmp(lv_subject_get_string(&env_ind_humidity_text_[idx]), "--") != 0) {
++                lv_subject_copy_string(&env_ind_humidity_text_[idx], "--");
++            }
++            if (lv_subject_get_int(&env_ind_humidity_status_[idx]) != 0) {
++                lv_subject_set_int(&env_ind_humidity_status_[idx], 0);
++            }
++            if (lv_subject_get_int(&env_ind_visible_[idx]) != 1) {
++                lv_subject_set_int(&env_ind_visible_[idx], 1);
++            }
++            if (lv_subject_get_int(&env_ind_humidity_visible_[idx]) != 0) {
++                lv_subject_set_int(&env_ind_humidity_visible_[idx], 0);
++            }
+         } else {
+             // Hide indicator when no environment data
+             if (lv_subject_get_int(&env_ind_visible_[idx]) != 0) {
+@@ -1256,7 +1288,6 @@ void AmsState::sync_from_backend() {
+     }
+ 
+     // Update drying state for indicator (system-level dryer applies to all units)
+-    const auto& dryer = backend->get_dryer_info();
+     for (int i = 0; i < MAX_UNITS; ++i) {
+         // Only update drying for units that have environment data visible
+         if (lv_subject_get_int(&env_ind_visible_[i]) != 1) {
+diff --git a/src/ui/ui_ams_environment_overlay.cpp b/src/ui/ui_ams_environment_overlay.cpp
+index ce893f3..a1b55d4 100644
+--- a/src/ui/ui_ams_environment_overlay.cpp
++++ b/src/ui/ui_ams_environment_overlay.cpp
+@@ -245,6 +245,10 @@ void AmsEnvironmentOverlay::update_from_backend() {
+     if (has_env) {
+         float display_temp = (dryer.active && dryer.current_temp_c > 0) ? dryer.current_temp_c : temp_c;
+         snprintf(temp_text_buf_, sizeof(temp_text_buf_), "%.0f\xC2\xB0""C", display_temp);
++    } else if (dryer.current_temp_c > 0) {
++        snprintf(temp_text_buf_, sizeof(temp_text_buf_), "%.0f\xC2\xB0""C", dryer.current_temp_c);
++    } else if (dryer.target_temp_c > 0) {
++        snprintf(temp_text_buf_, sizeof(temp_text_buf_), "%.0f\xC2\xB0""C", dryer.target_temp_c);
+     } else {
+         snprintf(temp_text_buf_, sizeof(temp_text_buf_), "--");
+     }
