@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.34'
+AIO_VERSION='RC1.35'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -2064,15 +2064,18 @@ _install_bunnybox() {
         ok "BunnyBox install step complete"
 
         banner "Installing HelixScreen"
-        local helix_zip
-        helix_zip=$(mktemp /tmp/helixscreen-pi.XXXXXX) || return 1
+        local helix_tmp helix_zip
+        helix_tmp=$(mktemp /tmp/helixscreen-pi.XXXXXX) || return 1
+        helix_zip="${helix_tmp}.zip"
+        mv "$helix_tmp" "$helix_zip" || { rm -f "$helix_tmp" "$helix_zip"; return 1; }
         fetch "$HELIXSCREEN_RELEASE_ZIP" "$helix_zip" || { rm -f "$helix_zip"; return 1; }
         info "Using HelixScreen release archive: ${HELIXSCREEN_RELEASE_ZIP}"
         run_remote_script "$HELIXSCREEN_INSTALLER" --local "$helix_zip"
         local hs_exit=$?
         rm -f "$helix_zip"
         if [ $hs_exit -ne 0 ]; then
-            warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
+            err "HelixScreen installer failed with exit ${hs_exit}"
+            return 1
         fi
         ok "HelixScreen install step complete"
         patch_helixscreen_happy_hare_dryer_command || return 1
