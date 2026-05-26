@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC1.33'
+AIO_VERSION='RC1.34'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -140,6 +140,75 @@ verify_qidi_box_helixscreen() {
     else
         warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
     fi
+
+    local patched=0
+    local target
+    for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
+        [ -f "$target" ] || continue
+        if LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
+            patched=1
+        elif LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}' "$target"; then
+            warn "$(basename "$target") still uses DURATION= for Happy Hare drying - native dryer button duration may be ignored"
+        fi
+    done
+    if [ "$patched" -eq 1 ]; then
+        ok "HelixScreen Happy Hare dryer command uses TIMER= (native dryer menu compatible)"
+    fi
+}
+
+patch_helixscreen_happy_hare_dryer_command() {
+    banner "Patching HelixScreen native Happy Hare dryer command"
+    local target seen=0 patched=0 already=0 failed=0
+    for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
+        [ -f "$target" ] || continue
+        seen=1
+        python3 - "$target" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+old = b"MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}"
+new_cmd = b"MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}"
+new = new_cmd + b"\0" * (len(old) - len(new_cmd))
+data = path.read_bytes()
+
+if new_cmd in data:
+    sys.exit(2)
+if old not in data:
+    sys.exit(3)
+
+path.write_bytes(data.replace(old, new, 1))
+sys.exit(0)
+PY
+        case $? in
+            0)
+                ok "$(basename "$target"): patched DURATION= to TIMER="
+                patched=1
+                ;;
+            2)
+                ok "$(basename "$target"): already uses TIMER="
+                already=1
+                ;;
+            3)
+                warn "$(basename "$target"): known Happy Hare dryer command not found"
+                failed=1
+                ;;
+            *)
+                warn "$(basename "$target"): patch failed"
+                failed=1
+                ;;
+        esac
+    done
+
+    if [ "$seen" -eq 0 ]; then
+        warn "No HelixScreen binary found under ${HELIX_DIR}/bin"
+        return 1
+    fi
+    if [ "$failed" -ne 0 ] && [ "$patched" -eq 0 ] && [ "$already" -eq 0 ]; then
+        warn "Native HelixScreen dryer command could not be verified"
+        return 1
+    fi
+    return 0
 }
 
 QIDI_BOX_WRITE_DROPIN='/etc/systemd/system/helixscreen.service.d/qidi-box-write.conf'
@@ -2006,6 +2075,7 @@ _install_bunnybox() {
             warn "HelixScreen installer exited ${hs_exit} (may be normal for reinstalls)"
         fi
         ok "HelixScreen install step complete"
+        patch_helixscreen_happy_hare_dryer_command || return 1
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
         fetch "${REPO_BASE}/gcode_macro-BunnyBox%26HelixScreen.cfg" \
