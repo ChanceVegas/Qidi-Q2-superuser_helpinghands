@@ -55,7 +55,7 @@ chmod +x aio_menu.sh
 
 | # | Option | What it does |
 |---|--------|-------------|
-| 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the HelixScreen touchscreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. Happier Hare patched HelixScreen builds expose the native AMS environment UI; macro buttons remain the fallback. |
+| 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the HelixScreen touchscreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. Option 1 automatically installs the Happier Hare patched HelixScreen build when `/home/mks/helixscreen-pi-happier-hare.zip` is present or `HAPPIER_HARE_ZIP_URL` is set; macro buttons remain the fallback. |
 | 2 | **Install KlipperScreen** | Installs KlipperScreen Happy Hare Edition — a touchscreen UI built specifically for Happy Hare MMU setups. Configures 4-gate support for the Qidi Box. Does not install BunnyBox or modify Klipper configs. |
 | 3 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, and adaptive bed meshing. |
 | 4 | **Revert to Backup** | Fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. Runs a health check automatically at the end. |
@@ -104,6 +104,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.12 | Option 1 now automatically installs the Happier Hare patched HelixScreen archive from `/home/mks/helixscreen-pi-happier-hare.zip` when present, without requiring `HAPPIER_HARE_ZIP_URL` |
 | RC2.11 | Hardened Happier Hare install verification so it scans all installed `helix-screen*` binaries and reports which binary contains the dryer and Qidi Box sensor patches |
 | RC2.10 | Updated Happier Hare Qidi Box sensor matching for the Happy Hare config names (`temperature_sensor box1_env`, `heater_generic box1_heater`) and made install/revert instructions explicitly require `FIRMWARE_RESTART` followed by `sudo reboot` |
 | RC2.9 | Hardened Revert to Backup stock display restoration: resets failed lightdm/makerbase state, restores `graphical.target`, unmasks `display-manager.service`, prints recent service logs if the stock display stack does not come back, and keeps `/home/mks/mudstockbackups/` when stock display verification fails |

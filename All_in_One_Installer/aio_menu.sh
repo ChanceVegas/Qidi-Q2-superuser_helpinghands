@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.11'
+AIO_VERSION='RC2.12'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -36,6 +36,7 @@ HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-su
 HAPPIER_HARE_RELEASE_TAG="${HAPPIER_HARE_RELEASE_TAG:-happier-hare-rc2.0}"
 HAPPIER_HARE_RELEASE_ZIP="https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip"
 HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
+HAPPIER_HARE_LOCAL_ZIP="${HAPPIER_HARE_LOCAL_ZIP:-/home/mks/helixscreen-pi-happier-hare.zip}"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
@@ -1358,6 +1359,10 @@ happier_hare_zip_url() {
         printf '%s\n' "$HAPPIER_HARE_ZIP_URL"
         return 0
     fi
+    if [ -f "$HAPPIER_HARE_LOCAL_ZIP" ]; then
+        printf '%s\n' "$HAPPIER_HARE_LOCAL_ZIP"
+        return 0
+    fi
     if url_exists "$HAPPIER_HARE_RELEASE_ZIP"; then
         printf '%s\n' "$HAPPIER_HARE_RELEASE_ZIP"
         return 0
@@ -2608,6 +2613,7 @@ _install_bunnybox() {
                 run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$happier_zip_url"
         else
             info "No rebuilt Happier Hare archive found - keeping macro fallback for drying"
+            info "Checked local archive: ${HAPPIER_HARE_LOCAL_ZIP}"
             info "Checked release asset: ${HAPPIER_HARE_RELEASE_ZIP}"
             info "Command strings were patched locally, but native Box humidity/dryer UI"
             info "requires a rebuilt HelixScreen binary with the source-level patch"
@@ -2910,8 +2916,9 @@ ${C_BOLD}What it can install:${C_RESET}
     - Happy Hare MMU firmware/macros for multi-material printing
     - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
     - Happier Hare hook: installs a rebuilt HelixScreen archive from
-      HAPPIER_HARE_ZIP_URL when provided for native Box humidity/dryer UI
-      and Happy Hare-compatible dryer commands
+      HAPPIER_HARE_ZIP_URL, or from ${HAPPIER_HARE_LOCAL_ZIP} when that
+      file is present, for native Box humidity/dryer UI and Happy
+      Hare-compatible dryer commands
     - Unified printer.cfg + gcode_macro.cfg
     - box_drying.cfg: spool rotation during filament drying using
       Happy Hare's Environment Manager, with humidity-based early
@@ -2956,7 +2963,8 @@ ${C_BOLD}Safety:${C_RESET}
 
 ${C_BOLD}Known limitations:${C_RESET}
   - Native HelixScreen Qidi Box humidity/dryer UI currently requires the
-    Happier Hare patched HelixScreen zip via HAPPIER_HARE_ZIP_URL.
+    Happier Hare patched HelixScreen zip via HAPPIER_HARE_ZIP_URL or
+    ${HAPPIER_HARE_LOCAL_ZIP}.
     Macro buttons remain the fallback when using the stock HelixScreen zip.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
   - BunnyBox currently requires HelixScreen for MMU workflows; the
