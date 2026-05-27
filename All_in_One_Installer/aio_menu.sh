@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.5'
+AIO_VERSION='RC2.6'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -1578,6 +1578,7 @@ cleanup_aio_config_residue() {
         bunnybox_macros.cfg \
         box_drying.cfg \
         idle_fan_shutdown.cfg \
+        KlipperScreen.conf \
         KAMP_Settings.cfg \
         KAMP_settings.cfg \
         Adaptive_Meshing.cfg \
@@ -1605,7 +1606,13 @@ cleanup_aio_config_residue() {
 
     while IFS= read -r -d '' f; do
         rm -f "$f" && ok "Removed $f"
-    done < <(find "$CONFIG_DIR" -maxdepth 1 -type f -name 'mmu*.cfg' -print0 2>/dev/null)
+    done < <(
+        find "$CONFIG_DIR" -maxdepth 1 -type f \
+            \( -name 'mmu*.cfg' -o -name 'mmu_klipperscreen.*' \
+               -o -name 'moonraker.conf.aio-bak' \
+               -o -name 'moonraker.conf.bak.helixscreen*' \) \
+            -print0 2>/dev/null
+    )
 
     while IFS= read -r -d '' d; do
         sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
