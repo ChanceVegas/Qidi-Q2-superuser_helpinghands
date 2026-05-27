@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.4'
+AIO_VERSION='RC2.5'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -1629,6 +1629,45 @@ cleanup_aio_install_artifacts() {
     cleanup_aio_config_artifacts
 }
 
+restore_stock_display_services() {
+    info "Re-enabling Qidi stock display services..."
+    sudo systemctl unmask  lightdm           2>/dev/null || true
+    sudo systemctl enable  lightdm           2>/dev/null || true
+    sudo systemctl restart lightdm           2>/dev/null || true
+    sudo systemctl unmask  makerbase-client  2>/dev/null || true
+    sudo systemctl enable  makerbase-client  2>/dev/null || true
+    sudo systemctl restart makerbase-client  2>/dev/null || true
+
+    if systemctl is-active --quiet lightdm 2>/dev/null && \
+       systemctl is-active --quiet makerbase-client 2>/dev/null; then
+        ok "Qidi stock display services are active"
+    else
+        warn "Qidi stock display services were requested but one is not active"
+        warn "  → check: systemctl status lightdm makerbase-client"
+    fi
+}
+
+remove_backup_root_after_revert() {
+    [ -e "$BACKUP_ROOT" ] || { ok "${BACKUP_ROOT}/ already absent"; return 0; }
+
+    banner "Removing AIO backup root"
+    local moved
+    moved="${BACKUP_ROOT}.revert-delete.$(date +%Y%m%d_%H%M%S)"
+
+    if sudo mv "$BACKUP_ROOT" "$moved" 2>/dev/null; then
+        sudo rm -rf "$moved"
+    else
+        warn "Could not move ${BACKUP_ROOT}; trying direct removal"
+        sudo rm -rf "$BACKUP_ROOT"
+    fi
+
+    if [ -e "$BACKUP_ROOT" ]; then
+        warn "Could not remove ${BACKUP_ROOT}/"
+        return 1
+    fi
+    ok "Removed ${BACKUP_ROOT}/ after successful stock restore"
+}
+
 # Switch the Q2's active display from the stock Qidi services
 # (lightdm + makerbase-client) to HelixScreen. Inverse of the
 # unmask/enable/restart block in uninstall_helixscreen().
@@ -1695,13 +1734,7 @@ uninstall_helixscreen() {
     # HelixScreen leaves the printer with NO running display - the user
     # is forced to recover by hand. Done unconditionally even if the
     # service files look healthy; unmask+enable+restart is idempotent.
-    info "Re-enabling Qidi stock display services..."
-    sudo systemctl unmask  lightdm           2>/dev/null || true
-    sudo systemctl enable  lightdm           2>/dev/null || true
-    sudo systemctl restart lightdm           2>/dev/null || true
-    sudo systemctl unmask  makerbase-client  2>/dev/null || true
-    sudo systemctl enable  makerbase-client  2>/dev/null || true
-    sudo systemctl restart makerbase-client  2>/dev/null || true
+    restore_stock_display_services
 
     ok "HelixScreen uninstalled, stock display services re-enabled"
 }
@@ -1835,14 +1868,16 @@ revert_to_backup() {
         fi
 
         cleanup_aio_runtime_artifacts
-        if [ "$restore_ok" = true ] && [ -d "$BACKUP_ROOT" ]; then
-            sudo rm -rf "$BACKUP_ROOT" && \
-                ok "Removed ${BACKUP_ROOT}/ after successful stock restore" || \
-                warn "Could not remove ${BACKUP_ROOT}/"
-        fi
     else
         warn "Restore failed - leaving backup directories in place for recovery."
         info "Inspect: ${BACKUP_ROOT}/"
+    fi
+
+    # Make stock display restoration and backup-root deletion the final
+    # successful-revert actions so no later cleanup can recreate backup markers.
+    if [ "$restore_ok" = true ]; then
+        restore_stock_display_services
+        remove_backup_root_after_revert || true
     fi
 
     banner "Revert complete"
