@@ -59,6 +59,33 @@ stable release asset
 `happier-hare-rc2.0/helixscreen-pi.zip` and installs it automatically once that
 asset exists.
 
+## Local Docker Build
+
+To avoid waiting on GitHub Actions, build the patched Pi archive locally:
+
+```bash
+./Happier_Hare/build_patched_helixscreen_zip_docker.sh
+```
+
+The script clones HelixScreen v0.99.70 into `/private/tmp`, applies the Happier
+Hare patch, builds the Pi DRM/fbdev binaries in Docker, and writes:
+
+```text
+Happier_Hare/dist/helixscreen-pi.zip
+Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.8.zip
+```
+
+Copy the plain zip to the Q2 and point AIO at that local file:
+
+```bash
+scp Happier_Hare/dist/helixscreen-pi.zip mks@<printer-ip>:/home/mks/helixscreen-pi-happier-hare.zip
+
+curl -fsSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/claude/happier-hare-patched-zip-rc20/All_in_One_Installer/aio_menu.sh |
+HAPPIER_HARE_ZIP_URL=/home/mks/helixscreen-pi-happier-hare.zip \
+AIO_REPO_REF=claude/happier-hare-patched-zip-rc20 \
+bash
+```
+
 Local source builds target the Pi DRM binary used on the Qidi Q2
 (`/dev/dri/card0`) and require the `aarch64-linux-gnu-g++` toolchain.
 

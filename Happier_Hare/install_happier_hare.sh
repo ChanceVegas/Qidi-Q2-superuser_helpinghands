@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.0'
+HAPPIER_HARE_VERSION='RC2.8'
 HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_REPO='https://github.com/prestonbrown/helixscreen.git'
@@ -41,7 +41,7 @@ Usage:
   install_happier_hare.sh [mode]
 
 Modes:
-  --install-zip URL       Install a prebuilt patched HelixScreen zip
+  --install-zip URL|PATH  Install a prebuilt patched HelixScreen zip
   --patch-installed-binary
                           Patch installed HelixScreen command strings in place
   --patch-source          Clone/update HelixScreen ${HELIXSCREEN_PIN} and apply the patch
@@ -49,7 +49,7 @@ Modes:
   --verify                Verify the installed HelixScreen binary carries known patches
 
 Environment:
-  HAPPIER_HARE_ZIP_URL    Default patched zip URL for no-argument install
+  HAPPIER_HARE_ZIP_URL    Default patched zip URL/path for no-argument install
   HAPPIER_HARE_PATCH_URL  Override source patch URL
   HAPPIER_HARE_REPO_REF   Repo branch/tag used for default patch URL
   HAPPIER_HARE_WORK_ROOT  Override source/build directory
@@ -91,8 +91,13 @@ install_zip() {
     base=$(mktemp /tmp/happier-hare-helixscreen.XXXXXX) || return 1
     tmp="${base}.zip"
     mv "$base" "$tmp"
-    fetch "$url" "$tmp" || { rm -f "$tmp"; return 1; }
-    info "Using patched archive: $url"
+    if [ -f "$url" ]; then
+        cp "$url" "$tmp" || { rm -f "$tmp"; return 1; }
+        info "Using local patched archive: $url"
+    else
+        fetch "$url" "$tmp" || { rm -f "$tmp"; return 1; }
+        info "Using patched archive: $url"
+    fi
     run_remote_script "$HELIXSCREEN_INSTALLER" --local "$tmp"
     rm -f "$tmp"
     verify_installed
