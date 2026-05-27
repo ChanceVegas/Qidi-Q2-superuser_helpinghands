@@ -42,7 +42,7 @@ Usage:
 Modes:
   --install-zip URL       Install a prebuilt patched HelixScreen zip
   --patch-source          Clone/update HelixScreen ${HELIXSCREEN_PIN} and apply the patch
-  --build-source          Patch source, build pi-both, and install rebuilt binaries
+  --build-source          Patch source, build Pi DRM, and install rebuilt binary
   --verify                Verify the installed HelixScreen binary carries known patches
 
 Environment:
@@ -139,19 +139,16 @@ build_source() {
 
     banner "Building patched HelixScreen"
     if ! command -v aarch64-linux-gnu-g++ >/dev/null 2>&1; then
-        err "aarch64-linux-gnu-g++ not found; cannot build pi-both locally"
+        err "aarch64-linux-gnu-g++ not found; cannot build Pi DRM locally"
         warn "Use the GitHub Happier Hare build workflow or provide HAPPIER_HARE_ZIP_URL"
         return 1
     fi
 
-    make -C "$SOURCE_DIR" PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j"$(nproc 2>/dev/null || printf '2')"
+    make -C "$SOURCE_DIR" PLATFORM_TARGET=pi SKIP_OPTIONAL_DEPS=1 -j"$(nproc 2>/dev/null || printf '2')"
 
     banner "Installing patched binaries"
     sudo systemctl stop helixscreen 2>/dev/null || true
     sudo install -m 0755 "${SOURCE_DIR}/build/pi/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen"
-    if [ -f "${SOURCE_DIR}/build/pi-fbdev/bin/helix-screen" ]; then
-        sudo install -m 0755 "${SOURCE_DIR}/build/pi-fbdev/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"
-    fi
     sudo systemctl restart helixscreen 2>/dev/null || true
     verify_installed
 }

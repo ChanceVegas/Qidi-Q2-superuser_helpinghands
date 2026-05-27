@@ -16,7 +16,7 @@ jobs:
   build-pi:
     name: Build patched Pi archive
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 75
 
     steps:
       - name: Checkout AIO repo
@@ -71,8 +71,8 @@ jobs:
             -f helixscreen/docker/Dockerfile.pi \
             helixscreen/docker/
 
-      - name: Cross-compile HelixScreen pi-both
-        timeout-minutes: 45
+      - name: Cross-compile HelixScreen Pi DRM
+        timeout-minutes: 60
         run: |
           set -euxo pipefail
           docker run --rm \
@@ -84,11 +84,11 @@ jobs:
               set -euxo pipefail
               echo "nproc=$(nproc)"
               make --version | head -n 1
-              make PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j"$(nproc)" &
+              make PLATFORM_TARGET=pi SKIP_OPTIONAL_DEPS=1 -j"$(nproc)" &
               make_pid=$!
               while kill -0 "$make_pid" 2>/dev/null; do
                 sleep 60
-                echo "::notice::HelixScreen pi-both build still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo "::notice::HelixScreen Pi DRM build still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
               done &
               heartbeat_pid=$!
               set +e
@@ -108,13 +108,25 @@ jobs:
             helixscreen/toolchain-pi \
             ccache -s || true
 
-      - name: Package patched Pi release
-        working-directory: helixscreen
+      - name: Package patched Pi archive
+        working-directory: ${{ github.workspace }}
         timeout-minutes: 20
         run: |
           set -euxo pipefail
-          make RELEASE_VERSION=${{ inputs.release_version }} release-pi
-          ls -lh releases/
+          archive_url="https://github.com/prestonbrown/helixscreen/releases/download/${{ inputs.helix_tag }}/helixscreen-pi.zip"
+          curl --fail --location --show-error --silent "$archive_url" --output /tmp/helixscreen-pi.zip
+
+          rm -rf /tmp/happier-hare-pi helixscreen/releases
+          mkdir -p /tmp/happier-hare-pi helixscreen/releases/helixscreen
+          unzip -q /tmp/helixscreen-pi.zip -d helixscreen/releases/helixscreen
+
+          install -m 0755 helixscreen/build/pi/bin/helix-screen helixscreen/releases/helixscreen/bin/helix-screen
+          printf '{"project_name":"helixscreen","project_owner":"ChanceVegas","version":"%s","asset_name":"helixscreen-pi.zip","base_tag":"%s","patch":"happier-hare"}\n' \
+            "${{ inputs.release_version }}" "${{ inputs.helix_tag }}" > helixscreen/releases/helixscreen/release_info.json
+
+          (cd helixscreen/releases/helixscreen && zip -qr ../helixscreen-pi.zip .)
+          (cd helixscreen/releases && COPYFILE_DISABLE=1 tar -czf "helixscreen-pi-${{ inputs.release_version }}.tar.gz" helixscreen)
+          ls -lh helixscreen/releases/helixscreen-pi.zip "helixscreen/releases/helixscreen-pi-${{ inputs.release_version }}.tar.gz"
 
       - name: Verify patched command strings
         working-directory: helixscreen
