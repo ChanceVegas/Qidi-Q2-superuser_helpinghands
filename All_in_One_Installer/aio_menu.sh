@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.2'
+AIO_VERSION='RC2.3'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -33,6 +33,8 @@ HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_RELEASE_ZIP="https://github.com/prestonbrown/helixscreen/releases/download/${HELIXSCREEN_PIN}/helixscreen-pi.zip"
 HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${REPO_REF}/Happier_Hare/install_happier_hare.sh"
+HAPPIER_HARE_RELEASE_TAG="${HAPPIER_HARE_RELEASE_TAG:-happier-hare-rc2.0}"
+HAPPIER_HARE_RELEASE_ZIP="https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip"
 HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
@@ -1225,6 +1227,23 @@ run_remote_script_as_root() {
     return $rc
 }
 
+url_exists() {
+    local url="$1"
+    curl --fail --silent --location --head --max-time 10 "$url" >/dev/null 2>&1
+}
+
+happier_hare_zip_url() {
+    if [ -n "${HAPPIER_HARE_ZIP_URL:-}" ]; then
+        printf '%s\n' "$HAPPIER_HARE_ZIP_URL"
+        return 0
+    fi
+    if url_exists "$HAPPIER_HARE_RELEASE_ZIP"; then
+        printf '%s\n' "$HAPPIER_HARE_RELEASE_ZIP"
+        return 0
+    fi
+    return 1
+}
+
 # ---------- safety: refuse root --------------------------------------
 if [ "$(id -u)" -eq 0 ]; then
     err "Do not run this script as root."
@@ -2370,12 +2389,15 @@ _install_bunnybox() {
         patch_helixscreen_happy_hare_dryer_command || return 1
 
         banner "Happier Hare native dryer integration"
-        if [ -n "${HAPPIER_HARE_ZIP_URL:-}" ]; then
+        local happier_zip_url
+        if happier_zip_url=$(happier_hare_zip_url); then
             info "Installing patched Happier Hare HelixScreen archive"
-            info "Using Happier Hare archive: ${HAPPIER_HARE_ZIP_URL}"
-            run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$HAPPIER_HARE_ZIP_URL"
+            info "Using Happier Hare archive: ${happier_zip_url}"
+            HAPPIER_HARE_REPO_REF="$REPO_REF" \
+                run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$happier_zip_url"
         else
-            info "No HAPPIER_HARE_ZIP_URL set - keeping macro fallback for drying"
+            info "No Happier Hare patched zip found - keeping macro fallback for drying"
+            info "Checked release asset: ${HAPPIER_HARE_RELEASE_ZIP}"
             info "Native dryer UI remains a separate patched HelixScreen artifact track"
         fi
 

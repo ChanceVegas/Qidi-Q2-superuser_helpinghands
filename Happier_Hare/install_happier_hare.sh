@@ -13,7 +13,8 @@ HAPPIER_HARE_VERSION='RC2.0'
 HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_REPO='https://github.com/prestonbrown/helixscreen.git'
-PATCH_URL="${HAPPIER_HARE_PATCH_URL:-https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/Happier_Hare/patches/helixscreen-v0.99.70-happier-hare.patch}"
+HAPPIER_HARE_REPO_REF="${HAPPIER_HARE_REPO_REF:-main}"
+PATCH_URL="${HAPPIER_HARE_PATCH_URL:-https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${HAPPIER_HARE_REPO_REF}/Happier_Hare/patches/helixscreen-v0.99.70-happier-hare.patch}"
 PATCHED_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
 WORK_ROOT="${HAPPIER_HARE_WORK_ROOT:-/home/mks/happier-hare}"
 SOURCE_DIR="${WORK_ROOT}/helixscreen-${HELIXSCREEN_PIN}"
@@ -48,6 +49,7 @@ Modes:
 Environment:
   HAPPIER_HARE_ZIP_URL    Default patched zip URL for no-argument install
   HAPPIER_HARE_PATCH_URL  Override source patch URL
+  HAPPIER_HARE_REPO_REF   Repo branch/tag used for default patch URL
   HAPPIER_HARE_WORK_ROOT  Override source/build directory
 EOF
 }

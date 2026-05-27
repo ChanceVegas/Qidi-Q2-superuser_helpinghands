@@ -40,9 +40,12 @@ backend so the native environment indicator and dryer controls can appear.
 ```
 
 On the printer, the expected production path is a prebuilt patched zip supplied
-through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. Local source builds target
-the Pi DRM binary used on the Qidi Q2 (`/dev/dri/card0`) and require the
-`aarch64-linux-gnu-g++` toolchain.
+through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. The AIO also probes the
+stable release asset `happier-hare-rc2.0/helixscreen-pi.zip` and installs it
+automatically once that asset exists.
+
+Local source builds target the Pi DRM binary used on the Qidi Q2
+(`/dev/dri/card0`) and require the `aarch64-linux-gnu-g++` toolchain.
 
 ## RC2.0 Scope
 
