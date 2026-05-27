@@ -12,6 +12,9 @@ on:
         default: happier-hare-rc2.0
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   build-pi:
     name: Build patched Pi archive
@@ -144,3 +147,21 @@ jobs:
             helixscreen/releases/helixscreen-pi.zip
             helixscreen/releases/helixscreen-pi-${{ inputs.release_version }}.tar.gz
           retention-days: 14
+
+      - name: Publish patched archive release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_version }}
+        run: |
+          set -euxo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Happier Hare ${RELEASE_TAG}" \
+              --notes "Patched HelixScreen ${{ inputs.helix_tag }} Pi archive for Qidi Q2 Happier Hare testing." \
+              --prerelease
+          fi
+          gh release upload "$RELEASE_TAG" \
+            helixscreen/releases/helixscreen-pi.zip \
+            "helixscreen/releases/helixscreen-pi-${{ inputs.release_version }}.tar.gz" \
+            --clobber

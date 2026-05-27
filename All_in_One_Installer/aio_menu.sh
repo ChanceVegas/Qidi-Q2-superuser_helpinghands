@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.0'
+AIO_VERSION='RC2.1'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -33,6 +33,8 @@ HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_RELEASE_ZIP="https://github.com/prestonbrown/helixscreen/releases/download/${HELIXSCREEN_PIN}/helixscreen-pi.zip"
 HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${REPO_REF}/Happier_Hare/install_happier_hare.sh"
+HAPPIER_HARE_RELEASE_TAG='happier-hare-rc2.0'
+HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip}"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
@@ -2289,13 +2291,9 @@ _install_bunnybox() {
         patch_helixscreen_happy_hare_dryer_command || return 1
 
         banner "Happier Hare native dryer integration"
-        if [ -n "${HAPPIER_HARE_ZIP_URL:-}" ]; then
-            info "Installing patched Happier Hare HelixScreen archive"
-            run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$HAPPIER_HARE_ZIP_URL"
-        else
-            info "No HAPPIER_HARE_ZIP_URL set - keeping macro fallback for drying"
-            info "Native dryer UI requires the patched RC2.0 HelixScreen artifact"
-        fi
+        info "Installing patched Happier Hare HelixScreen archive"
+        info "Using Happier Hare archive: ${HAPPIER_HARE_ZIP_URL}"
+        run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$HAPPIER_HARE_ZIP_URL"
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
         fetch "${REPO_BASE}/gcode_macro-BunnyBox%26HelixScreen.cfg" \
