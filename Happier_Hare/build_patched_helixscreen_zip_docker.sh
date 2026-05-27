@@ -12,6 +12,8 @@ set -euo pipefail
 HAPPIER_HARE_VERSION='RC2.8'
 HELIXSCREEN_PIN="${HELIXSCREEN_PIN:-v0.99.70}"
 HELIXSCREEN_REPO="${HELIXSCREEN_REPO:-https://github.com/prestonbrown/helixscreen.git}"
+HELIXSCREEN_BUILD_JOBS="${HELIXSCREEN_BUILD_JOBS:-1}"
+HELIXSCREEN_TOOLCHAIN_IMAGE="${HELIXSCREEN_TOOLCHAIN_IMAGE:-helixscreen/toolchain-pi-happier-hare}"
 WORK_ROOT="${HAPPIER_HARE_BUILD_ROOT:-/private/tmp/happier-hare-helixscreen-build}"
 SOURCE_DIR="${WORK_ROOT}/helixscreen-${HELIXSCREEN_PIN}"
 
@@ -49,6 +51,28 @@ docker_build() {
     fi
 }
 
+build_toolchain_image() {
+    local dockerfile="${WORK_ROOT}/Dockerfile.toolchain-pi-happier-hare"
+
+    banner "Building HelixScreen Pi toolchain image"
+    docker_build \
+        -t helixscreen/toolchain-pi \
+        -f "${SOURCE_DIR}/docker/Dockerfile.pi" \
+        "${SOURCE_DIR}/docker"
+
+    info "Adding release packaging tools to ${HELIXSCREEN_TOOLCHAIN_IMAGE}"
+    cat > "$dockerfile" <<'EOF'
+FROM helixscreen/toolchain-pi
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zip \
+    && rm -rf /var/lib/apt/lists/*
+EOF
+    docker_build \
+        -t "$HELIXSCREEN_TOOLCHAIN_IMAGE" \
+        -f "$dockerfile" \
+        "$WORK_ROOT"
+}
+
 prepare_source() {
     require_cmd git
     require_cmd patch
@@ -83,26 +107,27 @@ apply_patchset() {
 
 build_zip() {
     require_cmd docker
+    if ! [[ "$HELIXSCREEN_BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+        err "HELIXSCREEN_BUILD_JOBS must be a positive integer"
+        return 1
+    fi
 
-    banner "Building HelixScreen Pi toolchain image"
-    docker_build \
-        -t helixscreen/toolchain-pi \
-        -f "${SOURCE_DIR}/docker/Dockerfile.pi" \
-        "${SOURCE_DIR}/docker"
+    build_toolchain_image
 
     banner "Building patched Pi binaries"
+    info "Using ${HELIXSCREEN_BUILD_JOBS} compile job(s)"
     docker run --rm \
         -v "${SOURCE_DIR}:/src" \
         -w /src \
-        helixscreen/toolchain-pi \
-        make PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j
+        "$HELIXSCREEN_TOOLCHAIN_IMAGE" \
+        make _PARALLEL_CHECKED=1 PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j"${HELIXSCREEN_BUILD_JOBS}"
 
     banner "Packaging patched Pi archive"
     docker run --rm \
         -v "${SOURCE_DIR}:/src" \
         -w /src \
-        helixscreen/toolchain-pi \
-        make release-pi
+        "$HELIXSCREEN_TOOLCHAIN_IMAGE" \
+        make _PARALLEL_CHECKED=1 release-pi
 
     mkdir -p "$OUT_DIR"
     cp "${SOURCE_DIR}/releases/helixscreen-pi.zip" "$OUT_ZIP"
@@ -117,21 +142,24 @@ verify_zip() {
     require_cmd strings
 
     local checks=0
-    if unzip -p "$PLAIN_ZIP" bin/helix-screen | LC_ALL=C strings | grep -q 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}'; then
+    local strings_file="${WORK_ROOT}/helix-screen.strings"
+    unzip -p "$PLAIN_ZIP" bin/helix-screen | LC_ALL=C strings > "$strings_file"
+
+    if grep -Fq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$strings_file"; then
         ok "helix-screen uses TIMER= for Happy Hare dryer start"
         checks=$((checks + 1))
     else
         warn "Could not verify TIMER= in helix-screen"
     fi
 
-    if unzip -p "$PLAIN_ZIP" bin/helix-screen | LC_ALL=C strings | grep -q 'MMU_HEATER STOP=1'; then
+    if grep -Fq 'MMU_HEATER STOP=1' "$strings_file"; then
         ok "helix-screen uses STOP=1 for Happy Hare dryer stop"
         checks=$((checks + 1))
     else
         warn "Could not verify STOP=1 in helix-screen"
     fi
 
-    if unzip -p "$PLAIN_ZIP" bin/helix-screen | LC_ALL=C strings | grep -q 'aht20_f heater_box'; then
+    if grep -Fq 'aht20_f heater_box' "$strings_file"; then
         ok "helix-screen contains Qidi Box AHT20 humidity path"
         checks=$((checks + 1))
     else
