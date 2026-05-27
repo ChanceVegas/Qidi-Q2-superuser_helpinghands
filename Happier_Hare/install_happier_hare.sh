@@ -177,7 +177,7 @@ verify_installed() {
         warn "Known dryer command strings were not found; source/UI patch may not be installed"
         return 1
     fi
-    if LC_ALL=C strings "$bin" | grep -q 'temperature_sensor box1_env' && \
+    if LC_ALL=C strings "$bin" | grep -q 'temperature_sensor box' && \
        LC_ALL=C strings "$bin" | grep -q 'heater_generic box'; then
         ok "Qidi Box Happy Hare environment sensor paths are patched"
     elif LC_ALL=C strings "$bin" | grep -q 'aht20_f heater_box'; then

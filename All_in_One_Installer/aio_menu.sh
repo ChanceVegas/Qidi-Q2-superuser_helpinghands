@@ -389,7 +389,7 @@ verify_qidi_box_helixscreen() {
         elif LC_ALL=C grep -aq 'MMU_HEATER DRY=0' "$target"; then
             warn "$(basename "$target") still uses DRY=0 for Happy Hare dryer stop - native stop may be ignored"
         fi
-        if LC_ALL=C grep -aq 'temperature_sensor box1_env' "$target" || \
+        if LC_ALL=C grep -aq 'temperature_sensor box' "$target" || \
            LC_ALL=C grep -aq 'aht20_f heater_box' "$target"; then
             env_sensor_patch=1
         fi

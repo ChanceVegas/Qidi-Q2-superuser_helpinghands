@@ -159,7 +159,7 @@ verify_zip() {
         warn "Could not verify STOP=1 in helix-screen"
     fi
 
-    if grep -Fq 'temperature_sensor box1_env' "$strings_file" && \
+    if grep -Fq 'temperature_sensor box' "$strings_file" && \
        grep -Fq 'heater_generic box' "$strings_file"; then
         ok "helix-screen contains Happy Hare Qidi Box sensor paths"
         checks=$((checks + 1))
