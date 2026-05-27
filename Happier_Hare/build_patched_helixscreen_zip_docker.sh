@@ -60,9 +60,11 @@ prepare_source() {
         git -C "$SOURCE_DIR" fetch --tags origin
         git -C "$SOURCE_DIR" checkout "$HELIXSCREEN_PIN"
         git -C "$SOURCE_DIR" reset --hard "$HELIXSCREEN_PIN"
+        git -C "$SOURCE_DIR" submodule update --init --recursive
     else
         info "Cloning ${HELIXSCREEN_REPO} (${HELIXSCREEN_PIN})"
         git clone --branch "$HELIXSCREEN_PIN" --depth 1 "$HELIXSCREEN_REPO" "$SOURCE_DIR"
+        git -C "$SOURCE_DIR" submodule update --init --recursive
     fi
 }
 
