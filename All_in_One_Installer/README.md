@@ -85,7 +85,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
    MMU_CALIBRATE_GEAR GATE=0 LENGTH=100
    ```
    Mark the filament at the entry point, measure how far it moved, then re-run with `MEASURED=<mm>`. Repeat for each gate.
-4. Load filament into each gate and start a drying preset from the HelixScreen macro buttons or console.
+4. Load filament into each gate and start a drying preset from the HelixScreen AMS environment UI when using the Happier Hare patched zip, or from the macro buttons/console as a fallback.
 
 ## After installing KlipperScreen (option 2)
 
@@ -101,6 +101,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.9 | Hardened Revert to Backup stock display restoration: resets failed lightdm/makerbase state, restores `graphical.target`, unmasks `display-manager.service`, prints recent service logs if the stock display stack does not come back, and keeps `/home/mks/mudstockbackups/` when stock display verification fails |
 | RC1.30 | Option 2 (KlipperScreen) temporarily disabled — display not rendering despite service running; under investigation |
 | RC1.29 | Fixed KlipperScreen Xorg crash: Q2 kernel lacks `/dev/tty0` (no VT subsystem); systemd drop-in now creates the device node via `ExecStartPre` before each service start and clears the `ConditionPathExists` gate |
 | RC1.28 | Fixed KlipperScreen not launching: upstream service unit has `ConditionPathExists=/dev/tty0` which fails on the Q2; a systemd drop-in now clears this condition after install |
@@ -124,7 +125,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 ## Known limitations
 
-- **Native Qidi Box AMS panel is unavailable while BunnyBox is installed.** Revert to Backup restores it.
+- **Native Qidi Box humidity/dryer UI requires the Happier Hare patched HelixScreen zip.** Without that zip, use the macro buttons or Klipper console.
 - **MMU gear calibration is required after a fresh install.**
 - **Camera streaming (Mainsail)** requires a USB camera connected to the printer.
 
@@ -139,6 +140,8 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 **KlipperScreen not showing on display** — Check `sudo journalctl -u KlipperScreen -n 50`. Verify lightdm is running (`systemctl status lightdm`) and that `display-setup-script` is set in `/etc/lightdm/lightdm.conf`.
 
 **Klipper won't start after uninstall** — Use option 4 (Revert to Backup) for a clean restore.
+
+**LightDM fails after Revert to Backup** — Run option 8 (Health Check) or inspect `journalctl -u lightdm -n 80 --no-pager` and `journalctl -u makerbase-client -n 80 --no-pager`. RC2.9+ prints recent stock-display service logs during revert when either service fails.
 
 **No stock backup exists** — `/home/mks/mudstockbackups/` is created automatically on first run. If configs were already changed before the first AIO run, restore from a Qidi factory image first, then run AIO to capture a clean baseline.
 

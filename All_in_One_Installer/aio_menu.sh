@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.8'
+AIO_VERSION='RC2.9'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -165,6 +165,22 @@ verify_systemd_service_health() {
     fi
 }
 
+show_systemd_journal_tail() {
+    local service="$1"
+    local label="$2"
+    local lines
+
+    lines=$(journalctl -u "$service" -n 12 --no-pager 2>/dev/null || true)
+    if [ -n "$lines" ]; then
+        warn "${label}: recent journal lines:"
+        printf '%s\n' "$lines" | while IFS= read -r line; do
+            warn "  $line"
+        done
+    else
+        warn "${label}: no recent journal lines available"
+    fi
+}
+
 verify_klipper_runtime_health() {
     banner "Klipper / Moonraker runtime health"
 
@@ -218,6 +234,20 @@ verify_helixscreen_runtime_health() {
         verify_qidi_box_helixscreen
     else
         info "HelixScreen not installed"
+    fi
+}
+
+verify_stock_display_runtime_health() {
+    banner "Qidi stock display runtime health"
+
+    verify_systemd_service_health lightdm "LightDM" true
+    verify_systemd_service_health makerbase-client "Makerbase stock UI" true
+
+    if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+        show_systemd_journal_tail lightdm "LightDM"
+    fi
+    if ! systemctl is-active --quiet makerbase-client 2>/dev/null; then
+        show_systemd_journal_tail makerbase-client "Makerbase stock UI"
     fi
 }
 
@@ -291,6 +321,9 @@ verify_runtime_health() {
     verify_klipper_runtime_health
     verify_happy_hare_runtime_health
     verify_helixscreen_runtime_health
+    if ! helixscreen_installed && ! klipperscreen_installed; then
+        verify_stock_display_runtime_health
+    fi
 }
 
 # Post-install sanity check for the Qidi Box read-path on HelixScreen.
@@ -1416,17 +1449,11 @@ uninstall_klipperscreen() {
     sudo systemctl daemon-reload 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_DIR" 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_VENV" 2>/dev/null || true
-    # Undo KlipperScreen-install.sh's switch to console boot and restore
-    # the stock Qidi display stack (lightdm + makerbase-client)
-    info "Re-enabling Qidi stock display services..."
-    sudo systemctl set-default graphical.target   2>/dev/null || true
-    sudo systemctl unmask  lightdm                2>/dev/null || true
-    sudo systemctl enable  lightdm                2>/dev/null || true
-    sudo systemctl unmask  makerbase-client       2>/dev/null || true
-    sudo systemctl enable  makerbase-client       2>/dev/null || true
-    sudo systemctl restart lightdm                2>/dev/null || true
-    sudo systemctl restart makerbase-client       2>/dev/null || true
-    ok "KlipperScreen uninstalled, stock display services re-enabled"
+    if restore_stock_display_services; then
+        ok "KlipperScreen uninstalled, stock display services re-enabled"
+    else
+        warn "KlipperScreen uninstalled, but stock display services need attention"
+    fi
 }
 
 verify_klipperscreen() {
@@ -1691,19 +1718,41 @@ cleanup_aio_install_artifacts() {
 
 restore_stock_display_services() {
     info "Re-enabling Qidi stock display services..."
-    sudo systemctl unmask  lightdm           2>/dev/null || true
-    sudo systemctl enable  lightdm           2>/dev/null || true
-    sudo systemctl restart lightdm           2>/dev/null || true
-    sudo systemctl unmask  makerbase-client  2>/dev/null || true
-    sudo systemctl enable  makerbase-client  2>/dev/null || true
-    sudo systemctl restart makerbase-client  2>/dev/null || true
+
+    # HelixScreen owns the framebuffer directly, so installs mask the stock
+    # display stack. Revert must undo both service masking and the boot target.
+    sudo systemctl daemon-reload                     2>/dev/null || true
+    sudo systemctl set-default graphical.target      2>/dev/null || true
+    sudo systemctl reset-failed lightdm makerbase-client display-manager.service \
+                                                   2>/dev/null || true
+
+    sudo systemctl unmask  lightdm                   2>/dev/null || true
+    sudo systemctl unmask  display-manager.service   2>/dev/null || true
+    sudo systemctl unmask  makerbase-client          2>/dev/null || true
+    sudo systemctl enable  lightdm                   2>/dev/null || true
+    sudo systemctl enable  makerbase-client          2>/dev/null || true
+
+    sudo systemctl stop helixscreen KlipperScreen    2>/dev/null || true
+    sudo systemctl start lightdm                     2>/dev/null || true
+    if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+        sudo systemctl start display-manager.service 2>/dev/null || true
+    fi
+    sleep 2
+    sudo systemctl start makerbase-client            2>/dev/null || true
 
     if systemctl is-active --quiet lightdm 2>/dev/null && \
        systemctl is-active --quiet makerbase-client 2>/dev/null; then
         ok "Qidi stock display services are active"
     else
         warn "Qidi stock display services were requested but one is not active"
-        warn "  → check: systemctl status lightdm makerbase-client"
+        warn "Run Option 8 or check: systemctl status lightdm makerbase-client"
+        if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+            show_systemd_journal_tail lightdm "LightDM"
+        fi
+        if ! systemctl is-active --quiet makerbase-client 2>/dev/null; then
+            show_systemd_journal_tail makerbase-client "Makerbase stock UI"
+        fi
+        return 1
     fi
 }
 
@@ -1794,9 +1843,11 @@ uninstall_helixscreen() {
     # HelixScreen leaves the printer with NO running display - the user
     # is forced to recover by hand. Done unconditionally even if the
     # service files look healthy; unmask+enable+restart is idempotent.
-    restore_stock_display_services
-
-    ok "HelixScreen uninstalled, stock display services re-enabled"
+    if restore_stock_display_services; then
+        ok "HelixScreen uninstalled, stock display services re-enabled"
+    else
+        warn "HelixScreen uninstalled, but stock display services need attention"
+    fi
 }
 
 # Full upstream-style revert: re-enables lightdm + makerbase-client and
@@ -1936,12 +1987,16 @@ revert_to_backup() {
     # Make stock display restoration and backup-root deletion the final
     # successful-revert actions so no later cleanup can recreate backup markers.
     if [ "$restore_ok" = true ]; then
-        restore_stock_display_services
-        remove_backup_root_after_revert || true
+        if restore_stock_display_services; then
+            remove_backup_root_after_revert || true
+        else
+            warn "Keeping ${BACKUP_ROOT}/ because stock display services did not verify"
+            warn "Fix LightDM/makerbase-client, then rerun Revert to Backup to remove AIO backups."
+        fi
     fi
 
     banner "Revert complete"
-    info "FIRMWARE_RESTART or reboot the printer to apply."
+    info "Reboot the printer after Revert to Backup to confirm stock display startup."
 }
 
 # ---------- post-install verification --------------------------------
@@ -2817,9 +2872,9 @@ ${C_BOLD}What it can install:${C_RESET}
   ${C_GREEN}BunnyBox & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
     - Happy Hare MMU firmware/macros for multi-material printing
     - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
-    - Happier Hare hook: patches Happy Hare dryer command strings locally;
-      installs a rebuilt HelixScreen archive from HAPPIER_HARE_ZIP_URL
-      when provided for native Box humidity/dryer UI
+    - Happier Hare hook: installs a rebuilt HelixScreen archive from
+      HAPPIER_HARE_ZIP_URL when provided for native Box humidity/dryer UI
+      and Happy Hare-compatible dryer commands
     - Unified printer.cfg + gcode_macro.cfg
     - box_drying.cfg: spool rotation during filament drying using
       Happy Hare's Environment Manager, with humidity-based early
@@ -2849,6 +2904,10 @@ ${C_BOLD}What it can uninstall:${C_RESET}
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
     optional addons, display-service overrides, AIO-created KIAUH dirs,
     helix_print, and ${BACKUP_ROOT}/ after a successful restore.
+  - Revert re-enables lightdm + makerbase-client, sets graphical.target,
+    and prints recent service logs if the stock display stack fails.
+    If the stock display stack does not verify, ${BACKUP_ROOT}/ is kept
+    for recovery instead of being deleted.
   - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
     oldest timestamped backup.
 
@@ -2859,8 +2918,9 @@ ${C_BOLD}Safety:${C_RESET}
   Refuses to run as root.
 
 ${C_BOLD}Known limitations:${C_RESET}
-  - HelixScreen has ${C_YELLOW}no native dryer progress UI${C_RESET} yet.
-    Use the BOX_DRY macro (or Klipper console) to trigger drying.
+  - Native HelixScreen Qidi Box humidity/dryer UI currently requires the
+    Happier Hare patched HelixScreen zip via HAPPIER_HARE_ZIP_URL.
+    Macro buttons remain the fallback when using the stock HelixScreen zip.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
   - BunnyBox currently requires HelixScreen for MMU workflows; the
     stock Qidi screen does not yet expose the MMU UI.
@@ -2992,8 +3052,8 @@ main_loop() {
             2) warn "KlipperScreen install is temporarily disabled — display issue under investigation." ; press_enter ;;
             3) install_just_faster ;;
             4)
-                warn "Revert to Backup will fully uninstall BunnyBox + display UI"
-                warn "and restore configs from ${BACKUP_ROOT}/."
+                warn "Revert to Backup will uninstall AIO display/MMU changes,"
+                warn "restore configs from ${BACKUP_ROOT}/, and re-enable stock lightdm + makerbase-client."
                 if confirm "Proceed with full revert?"; then
                     revert_to_backup
                     press_enter
