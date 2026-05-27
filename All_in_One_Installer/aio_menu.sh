@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.6'
+AIO_VERSION='RC2.12'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -36,6 +36,7 @@ HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-su
 HAPPIER_HARE_RELEASE_TAG="${HAPPIER_HARE_RELEASE_TAG:-happier-hare-rc2.0}"
 HAPPIER_HARE_RELEASE_ZIP="https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip"
 HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
+HAPPIER_HARE_LOCAL_ZIP="${HAPPIER_HARE_LOCAL_ZIP:-/home/mks/helixscreen-pi-happier-hare.zip}"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
@@ -118,6 +119,12 @@ moonraker_get() {
         "http://127.0.0.1:${MOONRAKER_PORT}${path}" 2>/dev/null
 }
 
+helixscreen_binary_candidates() {
+    [ -d "${HELIX_DIR}/bin" ] || return 0
+    find "${HELIX_DIR}/bin" -maxdepth 1 -type f -name 'helix-screen*' \
+        -print 2>/dev/null
+}
+
 verify_systemd_service_health() {
     local service="$1"
     local label="$2"
@@ -162,6 +169,22 @@ verify_systemd_service_health() {
     fi
     if [ "$restarts" -gt 0 ]; then
         warn "${label}: systemd restart count=${restarts}"
+    fi
+}
+
+show_systemd_journal_tail() {
+    local service="$1"
+    local label="$2"
+    local lines
+
+    lines=$(journalctl -u "$service" -n 12 --no-pager 2>/dev/null || true)
+    if [ -n "$lines" ]; then
+        warn "${label}: recent journal lines:"
+        printf '%s\n' "$lines" | while IFS= read -r line; do
+            warn "  $line"
+        done
+    else
+        warn "${label}: no recent journal lines available"
     fi
 }
 
@@ -218,6 +241,20 @@ verify_helixscreen_runtime_health() {
         verify_qidi_box_helixscreen
     else
         info "HelixScreen not installed"
+    fi
+}
+
+verify_stock_display_runtime_health() {
+    banner "Qidi stock display runtime health"
+
+    verify_systemd_service_health lightdm "LightDM" true
+    verify_systemd_service_health makerbase-client "Makerbase stock UI" true
+
+    if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+        show_systemd_journal_tail lightdm "LightDM"
+    fi
+    if ! systemctl is-active --quiet makerbase-client 2>/dev/null; then
+        show_systemd_journal_tail makerbase-client "Makerbase stock UI"
     fi
 }
 
@@ -291,6 +328,9 @@ verify_runtime_health() {
     verify_klipper_runtime_health
     verify_happy_hare_runtime_health
     verify_helixscreen_runtime_health
+    if ! helixscreen_installed && ! klipperscreen_installed; then
+        verify_stock_display_runtime_health
+    fi
 }
 
 # Post-install sanity check for the Qidi Box read-path on HelixScreen.
@@ -342,23 +382,45 @@ verify_qidi_box_helixscreen() {
         warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
     fi
 
-    local patched=0
+    local timer_patched=0 stop_patched=0 env_sensor_patch=0 seen_binary=0
     local target
-    for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
+    while IFS= read -r target; do
         [ -f "$target" ] || continue
-        if LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
-            patched=1
-        elif LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}' "$target"; then
+        seen_binary=1
+        if LC_ALL=C grep -aFq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
+            timer_patched=1
+        elif LC_ALL=C grep -aFq 'MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}' "$target"; then
             warn "$(basename "$target") still uses DURATION= for Happy Hare drying - native dryer button duration may be ignored"
         fi
-    done
-    if [ "$patched" -eq 1 ]; then
-        ok "HelixScreen Happy Hare dryer command uses TIMER= (native dryer menu compatible)"
+        if LC_ALL=C grep -aFq 'MMU_HEATER STOP=1' "$target"; then
+            stop_patched=1
+        elif LC_ALL=C grep -aFq 'MMU_HEATER DRY=0' "$target"; then
+            warn "$(basename "$target") still uses DRY=0 for Happy Hare dryer stop - native stop may be ignored"
+        fi
+        if LC_ALL=C grep -aFq 'temperature_sensor box' "$target" || \
+           LC_ALL=C grep -aFq 'aht20_f heater_box' "$target"; then
+            env_sensor_patch=1
+        fi
+    done < <(helixscreen_binary_candidates)
+    if [ "$seen_binary" -eq 0 ]; then
+        warn "No helix-screen* binaries found under ${HELIX_DIR}/bin"
+    fi
+    if [ "$timer_patched" -eq 1 ]; then
+        ok "HelixScreen Happy Hare dryer start command uses TIMER="
+    fi
+    if [ "$stop_patched" -eq 1 ]; then
+        ok "HelixScreen Happy Hare dryer stop command uses STOP=1"
+    fi
+    if [ "$env_sensor_patch" -eq 1 ]; then
+        ok "HelixScreen binary has Happier Hare Qidi Box environment sensor support"
+    elif bunnybox_installed; then
+        warn "HelixScreen binary does not show Happier Hare Qidi Box sensor support"
+        warn "Native Box temperature/humidity may stay blank; rebuild/reinstall the patched zip."
     fi
 }
 
 patch_helixscreen_happy_hare_dryer_command() {
-    banner "Patching HelixScreen native Happy Hare dryer command"
+    banner "Patching HelixScreen Happy Hare dryer command strings"
     local target seen=0 patched=0 already=0 failed=0
     for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
         [ -f "$target" ] || continue
@@ -397,6 +459,51 @@ PY
             *)
                 warn "$(basename "$target"): patch failed"
                 failed=1
+                ;;
+        esac
+
+        python3 - "$target" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+old = b"MMU_HEATER DRY=0"
+new_cmd = b"MMU_HEATER STOP=1"
+data = path.read_bytes()
+
+if new_cmd in data:
+    sys.exit(2)
+
+# STOP=1 is one byte longer than DRY=0, so only patch when the original
+# string has two NUL bytes available. That preserves C-string termination
+# and avoids corrupting the following read-only data.
+pattern = old + b"\0\0"
+replacement = new_cmd + b"\0"
+if pattern in data:
+    path.write_bytes(data.replace(pattern, replacement, 1))
+    sys.exit(0)
+
+if old in data:
+    sys.exit(4)
+sys.exit(3)
+PY
+        case $? in
+            0)
+                ok "$(basename "$target"): patched DRY=0 to STOP=1"
+                patched=1
+                ;;
+            2)
+                ok "$(basename "$target"): already uses STOP=1"
+                already=1
+                ;;
+            3)
+                warn "$(basename "$target"): known Happy Hare dryer stop command not found"
+                ;;
+            4)
+                warn "$(basename "$target"): DRY=0 found, but no safe padding for in-place STOP=1 patch"
+                ;;
+            *)
+                warn "$(basename "$target"): stop command patch failed"
                 ;;
         esac
     done
@@ -513,7 +620,7 @@ menu_idle_fan_shutdown() {
             preflight || { press_enter; return 1; }
             do_backup || { press_enter; return 1; }
             install_idle_fan_shutdown || warn "Setup had problems (see above)"
-            info "FIRMWARE_RESTART to activate."
+            info "Run FIRMWARE_RESTART, then sudo reboot to activate."
         fi
     fi
     press_enter
@@ -978,7 +1085,11 @@ menu_mainsail() {
             if confirm "Migrate camera to RC13 format now?"; then
                 preflight || { press_enter; return 1; }
                 do_backup || { press_enter; return 1; }
-                install_camera || warn "Camera migration had problems (see above)"
+                if install_camera; then
+                    info "Run FIRMWARE_RESTART, then sudo reboot to finish applying changes."
+                else
+                    warn "Camera migration had problems (see above)"
+                fi
                 press_enter
                 return
             fi
@@ -986,7 +1097,11 @@ menu_mainsail() {
             if confirm "Camera streaming not configured. Set it up now?"; then
                 preflight || { press_enter; return 1; }
                 do_backup || { press_enter; return 1; }
-                install_camera || warn "Camera setup had problems (see above)"
+                if install_camera; then
+                    info "Run FIRMWARE_RESTART, then sudo reboot to finish applying changes."
+                else
+                    warn "Camera setup had problems (see above)"
+                fi
                 press_enter
                 return
             fi
@@ -1002,7 +1117,11 @@ menu_mainsail() {
         if confirm "Install Mainsail now?"; then
             preflight || { press_enter; return 1; }
             do_backup || { press_enter; return 1; }
-            install_mainsail || warn "Setup had problems (see above)"
+            if install_mainsail; then
+                info "Run FIRMWARE_RESTART, then sudo reboot to finish applying changes."
+            else
+                warn "Setup had problems (see above)"
+            fi
         fi
     fi
     press_enter
@@ -1240,6 +1359,10 @@ happier_hare_zip_url() {
         printf '%s\n' "$HAPPIER_HARE_ZIP_URL"
         return 0
     fi
+    if [ -f "$HAPPIER_HARE_LOCAL_ZIP" ]; then
+        printf '%s\n' "$HAPPIER_HARE_LOCAL_ZIP"
+        return 0
+    fi
     if url_exists "$HAPPIER_HARE_RELEASE_ZIP"; then
         printf '%s\n' "$HAPPIER_HARE_RELEASE_ZIP"
         return 0
@@ -1363,17 +1486,11 @@ uninstall_klipperscreen() {
     sudo systemctl daemon-reload 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_DIR" 2>/dev/null || true
     rm -rf "$KLIPPERSCREEN_VENV" 2>/dev/null || true
-    # Undo KlipperScreen-install.sh's switch to console boot and restore
-    # the stock Qidi display stack (lightdm + makerbase-client)
-    info "Re-enabling Qidi stock display services..."
-    sudo systemctl set-default graphical.target   2>/dev/null || true
-    sudo systemctl unmask  lightdm                2>/dev/null || true
-    sudo systemctl enable  lightdm                2>/dev/null || true
-    sudo systemctl unmask  makerbase-client       2>/dev/null || true
-    sudo systemctl enable  makerbase-client       2>/dev/null || true
-    sudo systemctl restart lightdm                2>/dev/null || true
-    sudo systemctl restart makerbase-client       2>/dev/null || true
-    ok "KlipperScreen uninstalled, stock display services re-enabled"
+    if restore_stock_display_services; then
+        ok "KlipperScreen uninstalled, stock display services re-enabled"
+    else
+        warn "KlipperScreen uninstalled, but stock display services need attention"
+    fi
 }
 
 verify_klipperscreen() {
@@ -1638,19 +1755,41 @@ cleanup_aio_install_artifacts() {
 
 restore_stock_display_services() {
     info "Re-enabling Qidi stock display services..."
-    sudo systemctl unmask  lightdm           2>/dev/null || true
-    sudo systemctl enable  lightdm           2>/dev/null || true
-    sudo systemctl restart lightdm           2>/dev/null || true
-    sudo systemctl unmask  makerbase-client  2>/dev/null || true
-    sudo systemctl enable  makerbase-client  2>/dev/null || true
-    sudo systemctl restart makerbase-client  2>/dev/null || true
+
+    # HelixScreen owns the framebuffer directly, so installs mask the stock
+    # display stack. Revert must undo both service masking and the boot target.
+    sudo systemctl daemon-reload                     2>/dev/null || true
+    sudo systemctl set-default graphical.target      2>/dev/null || true
+    sudo systemctl reset-failed lightdm makerbase-client display-manager.service \
+                                                   2>/dev/null || true
+
+    sudo systemctl unmask  lightdm                   2>/dev/null || true
+    sudo systemctl unmask  display-manager.service   2>/dev/null || true
+    sudo systemctl unmask  makerbase-client          2>/dev/null || true
+    sudo systemctl enable  lightdm                   2>/dev/null || true
+    sudo systemctl enable  makerbase-client          2>/dev/null || true
+
+    sudo systemctl stop helixscreen KlipperScreen    2>/dev/null || true
+    sudo systemctl start lightdm                     2>/dev/null || true
+    if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+        sudo systemctl start display-manager.service 2>/dev/null || true
+    fi
+    sleep 2
+    sudo systemctl start makerbase-client            2>/dev/null || true
 
     if systemctl is-active --quiet lightdm 2>/dev/null && \
        systemctl is-active --quiet makerbase-client 2>/dev/null; then
         ok "Qidi stock display services are active"
     else
         warn "Qidi stock display services were requested but one is not active"
-        warn "  → check: systemctl status lightdm makerbase-client"
+        warn "Run Option 8 or check: systemctl status lightdm makerbase-client"
+        if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+            show_systemd_journal_tail lightdm "LightDM"
+        fi
+        if ! systemctl is-active --quiet makerbase-client 2>/dev/null; then
+            show_systemd_journal_tail makerbase-client "Makerbase stock UI"
+        fi
+        return 1
     fi
 }
 
@@ -1741,9 +1880,11 @@ uninstall_helixscreen() {
     # HelixScreen leaves the printer with NO running display - the user
     # is forced to recover by hand. Done unconditionally even if the
     # service files look healthy; unmask+enable+restart is idempotent.
-    restore_stock_display_services
-
-    ok "HelixScreen uninstalled, stock display services re-enabled"
+    if restore_stock_display_services; then
+        ok "HelixScreen uninstalled, stock display services re-enabled"
+    else
+        warn "HelixScreen uninstalled, but stock display services need attention"
+    fi
 }
 
 # Full upstream-style revert: re-enables lightdm + makerbase-client and
@@ -1883,12 +2024,17 @@ revert_to_backup() {
     # Make stock display restoration and backup-root deletion the final
     # successful-revert actions so no later cleanup can recreate backup markers.
     if [ "$restore_ok" = true ]; then
-        restore_stock_display_services
-        remove_backup_root_after_revert || true
+        if restore_stock_display_services; then
+            remove_backup_root_after_revert || true
+        else
+            warn "Keeping ${BACKUP_ROOT}/ because stock display services did not verify"
+            warn "Fix LightDM/makerbase-client, then rerun Revert to Backup to remove AIO backups."
+        fi
     fi
 
     banner "Revert complete"
-    info "FIRMWARE_RESTART or reboot the printer to apply."
+    info "Run FIRMWARE_RESTART from Klipper/Moonraker, then sudo reboot."
+    info "After reboot, confirm stock display startup with systemctl status lightdm makerbase-client."
 }
 
 # ---------- post-install verification --------------------------------
@@ -2458,17 +2604,19 @@ _install_bunnybox() {
         ok "HelixScreen install step complete"
         patch_helixscreen_happy_hare_dryer_command || return 1
 
-        banner "Happier Hare native dryer integration"
+        banner "Happier Hare dryer integration"
         local happier_zip_url
         if happier_zip_url=$(happier_hare_zip_url); then
-            info "Installing patched Happier Hare HelixScreen archive"
+            info "Installing rebuilt Happier Hare HelixScreen archive"
             info "Using Happier Hare archive: ${happier_zip_url}"
             HAPPIER_HARE_REPO_REF="$REPO_REF" \
                 run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$happier_zip_url"
         else
-            info "No Happier Hare patched zip found - keeping macro fallback for drying"
+            info "No rebuilt Happier Hare archive found - keeping macro fallback for drying"
+            info "Checked local archive: ${HAPPIER_HARE_LOCAL_ZIP}"
             info "Checked release asset: ${HAPPIER_HARE_RELEASE_ZIP}"
-            info "Native dryer UI remains a separate patched HelixScreen artifact track"
+            info "Command strings were patched locally, but native Box humidity/dryer UI"
+            info "requires a rebuilt HelixScreen binary with the source-level patch"
         fi
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
@@ -2582,14 +2730,16 @@ _install_bunnybox() {
     cat <<EOF
 ${C_BOLD}Next steps:${C_RESET}
   1. FIRMWARE_RESTART (Klipper console or HelixScreen)
-  2. Verify:    systemctl status klipper
-  3. First-time only - calibrate MMU gear steppers:
+  2. sudo reboot
+  3. Verify:    systemctl status klipper
+  4. First-time only - calibrate MMU gear steppers:
         ${C_CYAN}MMU_CALIBRATE_GEAR GATE=0 LENGTH=100${C_RESET}
      Mark filament, measure travel, re-run with MEASURED=<mm>
-  4. Start drying (use HelixScreen macro buttons or console):
+  5. Start drying (use HelixScreen AMS environment UI when the patched
+     Happier Hare zip is installed; otherwise use macro buttons or console):
         ${C_CYAN}DRY_PLA${C_RESET}  ${C_CYAN}DRY_PETG${C_RESET}  ${C_CYAN}DRY_ABS${C_RESET}  ${C_CYAN}DRY_TPU${C_RESET}  ${C_CYAN}DRY_PA${C_RESET}
-  5. Check status:   ${C_CYAN}BOX_DRY_STATUS${C_RESET}
-  6. Stop drying:    ${C_CYAN}BOX_DRY_STOP${C_RESET}
+  6. Check status:   ${C_CYAN}BOX_DRY_STATUS${C_RESET}
+  7. Stop drying:    ${C_CYAN}BOX_DRY_STOP${C_RESET}
 
 Install log:    ${INSTALL_LOG}
 Config backup:  ${BACKUP_DIR}
@@ -2696,8 +2846,9 @@ DROPIN
     cat <<EOF
 ${C_BOLD}Next steps:${C_RESET}
   1. FIRMWARE_RESTART (Klipper console or KlipperScreen)
-  2. Verify:    systemctl status klipper
-  3. Verify:    systemctl status ${KLIPPERSCREEN_SERVICE}
+  2. sudo reboot
+  3. Verify:    systemctl status klipper
+  4. Verify:    systemctl status ${KLIPPERSCREEN_SERVICE}
 
 Install log:    ${INSTALL_LOG}
 Config backup:  ${BACKUP_DIR}
@@ -2739,7 +2890,8 @@ ${C_BOLD}Your Q2 is now running the 'Just Faster' setup.${C_RESET}
 
 ${C_BOLD}Next steps:${C_RESET}
   1. FIRMWARE_RESTART (Klipper console or stock screen)
-  2. Run a bed level + screws_tilt_adjust before your first print.
+  2. sudo reboot
+  3. Run a bed level + screws_tilt_adjust before your first print.
 
 Config backup:  ${BACKUP_DIR}
 EOF
@@ -2763,8 +2915,10 @@ ${C_BOLD}What it can install:${C_RESET}
   ${C_GREEN}BunnyBox & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
     - Happy Hare MMU firmware/macros for multi-material printing
     - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
-    - Happier Hare hook: installs a patched HelixScreen archive from
-      HAPPIER_HARE_ZIP_URL when provided, enabling native Happy Hare dryer UI
+    - Happier Hare hook: installs a rebuilt HelixScreen archive from
+      HAPPIER_HARE_ZIP_URL, or from ${HAPPIER_HARE_LOCAL_ZIP} when that
+      file is present, for native Box humidity/dryer UI and Happy
+      Hare-compatible dryer commands
     - Unified printer.cfg + gcode_macro.cfg
     - box_drying.cfg: spool rotation during filament drying using
       Happy Hare's Environment Manager, with humidity-based early
@@ -2794,6 +2948,10 @@ ${C_BOLD}What it can uninstall:${C_RESET}
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
     optional addons, display-service overrides, AIO-created KIAUH dirs,
     helix_print, and ${BACKUP_ROOT}/ after a successful restore.
+  - Revert re-enables lightdm + makerbase-client, sets graphical.target,
+    and prints recent service logs if the stock display stack fails.
+    If the stock display stack does not verify, ${BACKUP_ROOT}/ is kept
+    for recovery instead of being deleted.
   - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
     oldest timestamped backup.
 
@@ -2804,8 +2962,10 @@ ${C_BOLD}Safety:${C_RESET}
   Refuses to run as root.
 
 ${C_BOLD}Known limitations:${C_RESET}
-  - HelixScreen has ${C_YELLOW}no native dryer progress UI${C_RESET} yet.
-    Use the BOX_DRY macro (or Klipper console) to trigger drying.
+  - Native HelixScreen Qidi Box humidity/dryer UI currently requires the
+    Happier Hare patched HelixScreen zip via HAPPIER_HARE_ZIP_URL or
+    ${HAPPIER_HARE_LOCAL_ZIP}.
+    Macro buttons remain the fallback when using the stock HelixScreen zip.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
   - BunnyBox currently requires HelixScreen for MMU workflows; the
     stock Qidi screen does not yet expose the MMU UI.
@@ -2937,8 +3097,8 @@ main_loop() {
             2) warn "KlipperScreen install is temporarily disabled — display issue under investigation." ; press_enter ;;
             3) install_just_faster ;;
             4)
-                warn "Revert to Backup will fully uninstall BunnyBox + display UI"
-                warn "and restore configs from ${BACKUP_ROOT}/."
+                warn "Revert to Backup will uninstall AIO display/MMU changes,"
+                warn "restore configs from ${BACKUP_ROOT}/, and re-enable stock lightdm + makerbase-client."
                 if confirm "Proceed with full revert?"; then
                     revert_to_backup
                     press_enter
