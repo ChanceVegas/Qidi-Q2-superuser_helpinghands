@@ -12,11 +12,14 @@ on:
         default: happier-hare-rc2.0
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   build-pi:
     name: Build patched Pi archive
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 75
 
     steps:
       - name: Checkout AIO repo
@@ -33,13 +36,36 @@ jobs:
           submodules: recursive
 
       - name: Apply Happier Hare patch
-        run: patch -d helixscreen -p1 < aio/Happier_Hare/patches/helixscreen-v0.99.70-happier-hare.patch
+        run: |
+          set -euxo pipefail
+          patch -d helixscreen -p1 < aio/Happier_Hare/patches/helixscreen-v0.99.70-happier-hare.patch
+          git -C helixscreen diff --stat
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Pi toolchain image
+      - name: Compute ccache bucket
+        id: ccache-bucket
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Pi ccache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.ccache-happier-hare-pi
+          key: ccache-happier-hare-pi-${{ steps.ccache-bucket.outputs.month }}
+          restore-keys: |
+            ccache-happier-hare-pi-
+
+      - name: Configure ccache
         run: |
+          set -euxo pipefail
+          mkdir -p /tmp/.ccache-happier-hare-pi
+          printf 'max_size = 2G\ncompression = true\n' > /tmp/.ccache-happier-hare-pi/ccache.conf
+
+      - name: Build Pi toolchain image
+        timeout-minutes: 20
+        run: |
+          set -euxo pipefail
           docker buildx build \
             --cache-from type=gha,scope=happier-hare-toolchain-pi \
             --cache-to type=gha,mode=max,scope=happier-hare-toolchain-pi \
@@ -48,21 +74,67 @@ jobs:
             -f helixscreen/docker/Dockerfile.pi \
             helixscreen/docker/
 
-      - name: Cross-compile HelixScreen pi-both
+      - name: Cross-compile HelixScreen Pi DRM
+        timeout-minutes: 60
         run: |
+          set -euxo pipefail
           docker run --rm \
             -v "${{ github.workspace }}/helixscreen":/src \
+            -v /tmp/.ccache-happier-hare-pi:/root/.cache/ccache \
             -w /src \
             helixscreen/toolchain-pi \
-            make PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j$(nproc)
+            /bin/bash -lc '
+              set -euxo pipefail
+              echo "nproc=$(nproc)"
+              make --version | head -n 1
+              make PLATFORM_TARGET=pi SKIP_OPTIONAL_DEPS=1 -j"$(nproc)" &
+              make_pid=$!
+              while kill -0 "$make_pid" 2>/dev/null; do
+                sleep 60
+                echo "::notice::HelixScreen Pi DRM build still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              done &
+              heartbeat_pid=$!
+              set +e
+              wait "$make_pid"
+              build_status=$?
+              set -e
+              kill "$heartbeat_pid" 2>/dev/null || true
+              exit "$build_status"
+            '
+          find helixscreen -maxdepth 3 -type f \( -name 'helix-screen' -o -name '*.zip' -o -name '*.tar.gz' \) -print
 
-      - name: Package patched Pi release
-        working-directory: helixscreen
-        run: make RELEASE_VERSION=${{ inputs.release_version }} release-pi
+      - name: Show ccache stats
+        if: always()
+        run: |
+          docker run --rm \
+            -v /tmp/.ccache-happier-hare-pi:/root/.cache/ccache \
+            helixscreen/toolchain-pi \
+            ccache -s || true
+
+      - name: Package patched Pi archive
+        working-directory: ${{ github.workspace }}
+        timeout-minutes: 20
+        run: |
+          set -euxo pipefail
+          archive_url="https://github.com/prestonbrown/helixscreen/releases/download/${{ inputs.helix_tag }}/helixscreen-pi.zip"
+          curl --fail --location --show-error --silent "$archive_url" --output /tmp/helixscreen-pi.zip
+
+          rm -rf /tmp/happier-hare-pi helixscreen/releases
+          mkdir -p /tmp/happier-hare-pi helixscreen/releases/helixscreen
+          unzip -q /tmp/helixscreen-pi.zip -d helixscreen/releases/helixscreen
+
+          install -m 0755 helixscreen/build/pi/bin/helix-screen helixscreen/releases/helixscreen/bin/helix-screen
+          printf '{"project_name":"helixscreen","project_owner":"ChanceVegas","version":"%s","asset_name":"helixscreen-pi.zip","base_tag":"%s","patch":"happier-hare"}\n' \
+            "${{ inputs.release_version }}" "${{ inputs.helix_tag }}" > helixscreen/releases/helixscreen/release_info.json
+
+          (cd helixscreen/releases/helixscreen && zip -qr ../helixscreen-pi.zip .)
+          (cd helixscreen/releases && COPYFILE_DISABLE=1 tar -czf "helixscreen-pi-${{ inputs.release_version }}.tar.gz" helixscreen)
+          ls -lh helixscreen/releases/helixscreen-pi.zip "helixscreen/releases/helixscreen-pi-${{ inputs.release_version }}.tar.gz"
 
       - name: Verify patched command strings
         working-directory: helixscreen
         run: |
+          set -euxo pipefail
           unzip -q releases/helixscreen-pi.zip -d /tmp/happier-hare-pi
           strings /tmp/happier-hare-pi/bin/helix-screen | grep 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}'
           strings /tmp/happier-hare-pi/bin/helix-screen | grep 'MMU_HEATER STOP=1'
@@ -75,3 +147,21 @@ jobs:
             helixscreen/releases/helixscreen-pi.zip
             helixscreen/releases/helixscreen-pi-${{ inputs.release_version }}.tar.gz
           retention-days: 14
+
+      - name: Publish patched archive release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_version }}
+        run: |
+          set -euxo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Happier Hare ${RELEASE_TAG}" \
+              --notes "Patched HelixScreen ${{ inputs.helix_tag }} Pi archive for Qidi Q2 Happier Hare testing." \
+              --prerelease
+          fi
+          gh release upload "$RELEASE_TAG" \
+            helixscreen/releases/helixscreen-pi.zip \
+            "helixscreen/releases/helixscreen-pi-${{ inputs.release_version }}.tar.gz" \
+            --clobber

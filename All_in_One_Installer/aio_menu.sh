@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.0'
+AIO_VERSION='RC2.6'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -33,6 +33,9 @@ HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_RELEASE_ZIP="https://github.com/prestonbrown/helixscreen/releases/download/${HELIXSCREEN_PIN}/helixscreen-pi.zip"
 HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${REPO_REF}/Happier_Hare/install_happier_hare.sh"
+HAPPIER_HARE_RELEASE_TAG="${HAPPIER_HARE_RELEASE_TAG:-happier-hare-rc2.0}"
+HAPPIER_HARE_RELEASE_ZIP="https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip"
+HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
@@ -46,8 +49,13 @@ MAINSAIL_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-supe
 CONFIG_DIR='/home/mks/printer_data/config'
 BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
+HELIX_PRINT_DIR='/home/mks/helix_print'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
+KIAUH_DIR='/home/mks/kiauh'
+KIAUH_BACKUPS_DIR='/home/mks/kiauh-backups'
+KIAUH_UPPER_DIR='/home/mks/KIAUH'
+KIAUH_UPPER_BACKUPS_DIR='/home/mks/KIAUH-backups'
 MAINSAIL_DIR='/home/mks/mainsail'
 MAINSAIL_NGINX_SITE_AVAIL='/etc/nginx/sites-available/mainsail'
 MAINSAIL_NGINX_SITE_ENABLED='/etc/nginx/sites-enabled/mainsail'
@@ -1054,12 +1062,15 @@ purge_happy_hare_all() {
     info "Removing MMU config: ${CONFIG_DIR}/mmu"
     sudo rm -rf "${CONFIG_DIR}/mmu"
     sudo rm -rf "${CONFIG_DIR}"/mmu-* 2>/dev/null || true
+    sudo rm -rf "${CONFIG_DIR}"/mmu_* 2>/dev/null || true
+    sudo rm -rf "${CONFIG_DIR}"/mmu[0-9]* 2>/dev/null || true
 
     # Timestamped backup directories Happy Hare and BunnyBox drop into the
     # config root (backup_hh_<ts>, backup_revert_<ts>). These pile up across
     # repeated installs and are not restored by any uninstall flow.
     find "$CONFIG_DIR" -maxdepth 1 -type d \
-        \( -name 'backup_hh_*' -o -name 'backup_revert_*' \) \
+        \( -name 'backup_hh_*' -o -name 'backup_revert_*' -o -name 'backup_mmu_*' \
+           -o -name 'backup_bunnybox_*' \) \
         -exec sudo rm -rf {} + 2>/dev/null || true
 
     # BunnyBox's KAMP/ subdirectory. We install KAMP files at the config
@@ -1217,6 +1228,23 @@ run_remote_script_as_root() {
     local rc=$?
     rm -f "$tmp"
     return $rc
+}
+
+url_exists() {
+    local url="$1"
+    curl --fail --silent --location --head --max-time 10 "$url" >/dev/null 2>&1
+}
+
+happier_hare_zip_url() {
+    if [ -n "${HAPPIER_HARE_ZIP_URL:-}" ]; then
+        printf '%s\n' "$HAPPIER_HARE_ZIP_URL"
+        return 0
+    fi
+    if url_exists "$HAPPIER_HARE_RELEASE_ZIP"; then
+        printf '%s\n' "$HAPPIER_HARE_RELEASE_ZIP"
+        return 0
+    fi
+    return 1
 }
 
 # ---------- safety: refuse root --------------------------------------
@@ -1388,6 +1416,71 @@ preflight() {
     return 0
 }
 
+aio_state_dir() {
+    printf '%s\n' "${BACKUP_ROOT}/_AIO_STATE"
+}
+
+aio_preexisting_paths_file() {
+    printf '%s\n' "$(aio_state_dir)/preexisting_paths"
+}
+
+capture_first_run_state() {
+    local state_dir preexisting path
+    state_dir=$(aio_state_dir)
+    preexisting=$(aio_preexisting_paths_file)
+    if [ -f "$preexisting" ]; then
+        return 0
+    fi
+
+    mkdir -p "$state_dir" || {
+        warn "Could not create AIO state manifest directory"
+        return 0
+    }
+    : > "$preexisting" || {
+        warn "Could not write AIO state manifest"
+        return 0
+    }
+
+    for path in \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$HELIX_PRINT_DIR" \
+        "$KLIPPERSCREEN_DIR" \
+        "$KLIPPERSCREEN_VENV" \
+        "$KIAUH_DIR" \
+        "$KIAUH_BACKUPS_DIR" \
+        "$KIAUH_UPPER_DIR" \
+        "$KIAUH_UPPER_BACKUPS_DIR" \
+        "$MAINSAIL_DIR" \
+        /opt/helixscreen \
+        /var/lib/helixscreen \
+        /var/log/helixscreen \
+        "${HOME}/.helixscreen" \
+        /root/.helixscreen; do
+        if [ -e "$path" ]; then
+            printf '%s\n' "$path" >> "$preexisting"
+        fi
+    done
+    ok "First-run runtime state manifest saved to ${state_dir}"
+}
+
+path_was_preexisting() {
+    local path="$1"
+    local preexisting
+    preexisting=$(aio_preexisting_paths_file)
+    [ -f "$preexisting" ] && grep -Fxq "$path" "$preexisting"
+}
+
+should_remove_aio_path() {
+    local path="$1"
+    [ -e "$path" ] || return 1
+    if path_was_preexisting "$path"; then
+        info "Keeping pre-existing path: $path"
+        return 1
+    fi
+    return 0
+}
+
 do_backup() {
     banner "Backing up current configs"
     BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d_%H%M%S)"
@@ -1403,6 +1496,7 @@ do_backup() {
     # the AIO before tinkering, it's their true stock. Once written, it
     # is never overwritten.
     if [ ! -d "${BACKUP_ROOT}/_FIRST_STOCK" ]; then
+        capture_first_run_state
         mkdir -p "${BACKUP_ROOT}/_FIRST_STOCK"
         if rsync -a "${CONFIG_DIR}/" "${BACKUP_ROOT}/_FIRST_STOCK/"; then
             ok "First-run stock snapshot saved to ${BACKUP_ROOT}/_FIRST_STOCK"
@@ -1440,14 +1534,19 @@ cleanup_aio_runtime_artifacts() {
     for d in \
         "$HAPPY_HARE_DIR" \
         "$HELIX_DIR" \
+        "$HELIX_PRINT_DIR" \
         "$KLIPPERSCREEN_DIR" \
         "$KLIPPERSCREEN_VENV" \
+        "$KIAUH_DIR" \
+        "$KIAUH_BACKUPS_DIR" \
+        "$KIAUH_UPPER_DIR" \
+        "$KIAUH_UPPER_BACKUPS_DIR" \
         /opt/helixscreen \
         /var/lib/helixscreen \
         /var/log/helixscreen \
         "${HOME}/.helixscreen" \
         /root/.helixscreen; do
-        if [ -e "$d" ]; then
+        if should_remove_aio_path "$d"; then
             sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
         fi
     done
@@ -1468,20 +1567,36 @@ cleanup_aio_config_artifacts() {
     banner "Cleaning AIO config artifacts"
 
     uninstall_idle_fan_shutdown
+    cleanup_aio_config_residue
+    fix_printer_cfg_after_uninstall
+}
+
+cleanup_aio_config_residue() {
+    banner "Cleaning AIO config residue"
 
     for f in \
         bunnybox_macros.cfg \
         box_drying.cfg \
         idle_fan_shutdown.cfg \
+        KlipperScreen.conf \
         KAMP_Settings.cfg \
         KAMP_settings.cfg \
         Adaptive_Meshing.cfg \
         Adaptive_Mesh.cfg \
         Line_Purge.cfg \
         Smart_Park.cfg \
+        mmu_cut_tip.cfg \
+        mmu_form_tip.cfg \
+        mmu_heater_vent.cfg \
+        mmu_leds.cfg \
+        mmu_purge.cfg \
+        mmu_sequence.cfg \
+        mmu_software.cfg \
+        mmu_state.cfg \
         mmu_parameters.cfg \
         mmu_macro_vars.cfg \
         mmu_hardware.cfg \
+        mmu_vars.cfg \
         mmu.cfg; do
         if [ -e "${CONFIG_DIR}/${f}" ]; then
             rm -f "${CONFIG_DIR}/${f}"
@@ -1489,21 +1604,75 @@ cleanup_aio_config_artifacts() {
         fi
     done
 
-    for d in \
-        "${CONFIG_DIR}/mmu" \
-        "${CONFIG_DIR}/KAMP" \
-        "${CONFIG_DIR}/helixscreen"; do
+    while IFS= read -r -d '' f; do
+        rm -f "$f" && ok "Removed $f"
+    done < <(
+        find "$CONFIG_DIR" -maxdepth 1 -type f \
+            \( -name 'mmu*.cfg' -o -name 'mmu_klipperscreen.*' \
+               -o -name 'moonraker.conf.aio-bak' \
+               -o -name 'moonraker.conf.bak.helixscreen*' \) \
+            -print0 2>/dev/null
+    )
+
+    while IFS= read -r -d '' d; do
+        sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
+    done < <(
+        find "$CONFIG_DIR" -maxdepth 1 -type d \
+            \( -name 'mmu' -o -name 'mmu-*' -o -name 'mmu_*' -o -name 'mmu[0-9]*' \
+               -o -name 'backup_hh_*' -o -name 'backup_revert_*' -o -name 'backup_mmu_*' \
+               -o -name 'backup_bunnybox_*' \) \
+            -print0 2>/dev/null
+    )
+
+    for d in "${CONFIG_DIR}/KAMP" "${CONFIG_DIR}/helixscreen"; do
         if [ -e "$d" ]; then
             sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
         fi
     done
-
-    fix_printer_cfg_after_uninstall
 }
 
 cleanup_aio_install_artifacts() {
     cleanup_aio_runtime_artifacts
     cleanup_aio_config_artifacts
+}
+
+restore_stock_display_services() {
+    info "Re-enabling Qidi stock display services..."
+    sudo systemctl unmask  lightdm           2>/dev/null || true
+    sudo systemctl enable  lightdm           2>/dev/null || true
+    sudo systemctl restart lightdm           2>/dev/null || true
+    sudo systemctl unmask  makerbase-client  2>/dev/null || true
+    sudo systemctl enable  makerbase-client  2>/dev/null || true
+    sudo systemctl restart makerbase-client  2>/dev/null || true
+
+    if systemctl is-active --quiet lightdm 2>/dev/null && \
+       systemctl is-active --quiet makerbase-client 2>/dev/null; then
+        ok "Qidi stock display services are active"
+    else
+        warn "Qidi stock display services were requested but one is not active"
+        warn "  → check: systemctl status lightdm makerbase-client"
+    fi
+}
+
+remove_backup_root_after_revert() {
+    [ -e "$BACKUP_ROOT" ] || { ok "${BACKUP_ROOT}/ already absent"; return 0; }
+
+    banner "Removing AIO backup root"
+    local moved
+    moved="${BACKUP_ROOT}.revert-delete.$(date +%Y%m%d_%H%M%S)"
+
+    if sudo mv "$BACKUP_ROOT" "$moved" 2>/dev/null; then
+        sudo rm -rf "$moved"
+    else
+        warn "Could not move ${BACKUP_ROOT}; trying direct removal"
+        sudo rm -rf "$BACKUP_ROOT"
+    fi
+
+    if [ -e "$BACKUP_ROOT" ]; then
+        warn "Could not remove ${BACKUP_ROOT}/"
+        return 1
+    fi
+    ok "Removed ${BACKUP_ROOT}/ after successful stock restore"
 }
 
 # Switch the Q2's active display from the stock Qidi services
@@ -1572,13 +1741,7 @@ uninstall_helixscreen() {
     # HelixScreen leaves the printer with NO running display - the user
     # is forced to recover by hand. Done unconditionally even if the
     # service files look healthy; unmask+enable+restart is idempotent.
-    info "Re-enabling Qidi stock display services..."
-    sudo systemctl unmask  lightdm           2>/dev/null || true
-    sudo systemctl enable  lightdm           2>/dev/null || true
-    sudo systemctl restart lightdm           2>/dev/null || true
-    sudo systemctl unmask  makerbase-client  2>/dev/null || true
-    sudo systemctl enable  makerbase-client  2>/dev/null || true
-    sudo systemctl restart makerbase-client  2>/dev/null || true
+    restore_stock_display_services
 
     ok "HelixScreen uninstalled, stock display services re-enabled"
 }
@@ -1655,14 +1818,15 @@ revert_to_backup() {
         warn "No ${BACKUP_ROOT} folder found - nothing to restore"
     fi
 
-    # Post-rsync cleanup: an authoritative snapshot restore already put
-    # CONFIG_DIR back exactly as it was before AIO touched it. Only scrub
-    # runtime/service artifacts outside CONFIG_DIR. If we only had a flat
-    # fallback source, clean known config artifacts because that layout is
-    # not a precise snapshot.
+    # Post-rsync cleanup: even an old "stock" snapshot may have been taken
+    # after a partial AIO/Happy Hare install, so always scrub known config
+    # residue. Only run the printer.cfg repair path for imprecise fallback
+    # restores, where orphan include cleanup may be required.
     if [ "$restore_ok" = true ]; then
         cleanup_aio_runtime_artifacts
-        if [ "$restore_can_delete" != true ]; then
+        if [ "$restore_can_delete" = true ]; then
+            cleanup_aio_config_residue
+        else
             cleanup_aio_config_artifacts
         fi
         if [ "$restore_can_delete" != true ]; then
@@ -1691,30 +1855,36 @@ revert_to_backup() {
     fi
 
     # Final cleanup: remove optional runtime addons and, after a successful
-    # precise restore, remove the backup root too so Revert leaves no AIO
-    # remnants behind.
+    # restore, remove the backup root too so Revert leaves no AIO remnants
+    # behind.
     if [ "$restore_ok" = true ] || [ ! -d "$BACKUP_ROOT" ]; then
         # Optional addons that might be installed outside Happy Hare
         if [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] || \
            grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
             uninstall_idle_fan_shutdown
         fi
-        if mainsail_installed; then
-            uninstall_mainsail
+        if [ -d "$MAINSAIL_DIR" ] || [ -f "$MAINSAIL_NGINX_SITE_AVAIL" ] || [ -L "$MAINSAIL_NGINX_SITE_ENABLED" ]; then
+            if path_was_preexisting "$MAINSAIL_DIR"; then
+                info "Keeping pre-existing Mainsail install: ${MAINSAIL_DIR}"
+            else
+                uninstall_mainsail
+            fi
         fi
         if qidi_box_write_enabled; then
             uninstall_qidi_box_write
         fi
 
         cleanup_aio_runtime_artifacts
-        if [ "$restore_ok" = true ] && [ "$restore_can_delete" = true ] && [ -d "$BACKUP_ROOT" ]; then
-            sudo rm -rf "$BACKUP_ROOT" && \
-                ok "Removed ${BACKUP_ROOT}/ after successful stock restore" || \
-                warn "Could not remove ${BACKUP_ROOT}/"
-        fi
     else
         warn "Restore failed - leaving backup directories in place for recovery."
         info "Inspect: ${BACKUP_ROOT}/"
+    fi
+
+    # Make stock display restoration and backup-root deletion the final
+    # successful-revert actions so no later cleanup can recreate backup markers.
+    if [ "$restore_ok" = true ]; then
+        restore_stock_display_services
+        remove_backup_root_after_revert || true
     fi
 
     banner "Revert complete"
@@ -2289,12 +2459,16 @@ _install_bunnybox() {
         patch_helixscreen_happy_hare_dryer_command || return 1
 
         banner "Happier Hare native dryer integration"
-        if [ -n "${HAPPIER_HARE_ZIP_URL:-}" ]; then
+        local happier_zip_url
+        if happier_zip_url=$(happier_hare_zip_url); then
             info "Installing patched Happier Hare HelixScreen archive"
-            run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$HAPPIER_HARE_ZIP_URL"
+            info "Using Happier Hare archive: ${happier_zip_url}"
+            HAPPIER_HARE_REPO_REF="$REPO_REF" \
+                run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$happier_zip_url"
         else
-            info "No HAPPIER_HARE_ZIP_URL set - keeping macro fallback for drying"
-            info "Native dryer UI requires the patched RC2.0 HelixScreen artifact"
+            info "No Happier Hare patched zip found - keeping macro fallback for drying"
+            info "Checked release asset: ${HAPPIER_HARE_RELEASE_ZIP}"
+            info "Native dryer UI remains a separate patched HelixScreen artifact track"
         fi
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
@@ -2589,7 +2763,7 @@ ${C_BOLD}What it can install:${C_RESET}
   ${C_GREEN}BunnyBox & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
     - Happy Hare MMU firmware/macros for multi-material printing
     - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
-    - Happier Hare RC2.0 hook: installs a patched HelixScreen archive from
+    - Happier Hare hook: installs a patched HelixScreen archive from
       HAPPIER_HARE_ZIP_URL when provided, enabling native Happy Hare dryer UI
     - Unified printer.cfg + gcode_macro.cfg
     - box_drying.cfg: spool rotation during filament drying using
@@ -2618,9 +2792,10 @@ ${C_BOLD}What it can install:${C_RESET}
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
-    optional addons, and display-service overrides.
+    optional addons, display-service overrides, AIO-created KIAUH dirs,
+    helix_print, and ${BACKUP_ROOT}/ after a successful restore.
   - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
-    oldest timestamped backup. ${BACKUP_ROOT}/ is kept as a recovery trail.
+    oldest timestamped backup.
 
 ${C_BOLD}Safety:${C_RESET}
   Every install and uninstall first writes a timestamped backup of

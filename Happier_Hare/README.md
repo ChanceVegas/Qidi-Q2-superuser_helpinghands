@@ -35,13 +35,17 @@ backend so the native environment indicator and dryer controls can appear.
 # Clone HelixScreen v0.99.70 and apply the source patch
 ./install_happier_hare.sh --patch-source
 
-# Patch, build, and install locally when a pi-both toolchain is available
+# Patch, build, and install locally when a Pi DRM toolchain is available
 ./install_happier_hare.sh --build-source
 ```
 
 On the printer, the expected production path is a prebuilt patched zip supplied
-through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. Local source builds require
-the `aarch64-linux-gnu-g++` toolchain and are mainly for development.
+through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. The AIO also probes the
+stable release asset `happier-hare-rc2.0/helixscreen-pi.zip` and installs it
+automatically once that asset exists.
+
+Local source builds target the Pi DRM binary used on the Qidi Q2
+(`/dev/dri/card0`) and require the `aarch64-linux-gnu-g++` toolchain.
 
 ## RC2.0 Scope
 
