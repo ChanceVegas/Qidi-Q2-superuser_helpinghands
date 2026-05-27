@@ -41,6 +41,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Compute ccache bucket
+        id: ccache-bucket
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Pi ccache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.ccache-happier-hare-pi
+          key: ccache-happier-hare-pi-${{ steps.ccache-bucket.outputs.month }}
+          restore-keys: |
+            ccache-happier-hare-pi-
+
+      - name: Configure ccache
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/.ccache-happier-hare-pi
+          printf 'max_size = 2G\ncompression = true\n' > /tmp/.ccache-happier-hare-pi/ccache.conf
+
       - name: Build Pi toolchain image
         timeout-minutes: 20
         run: |
@@ -59,6 +77,7 @@ jobs:
           set -euxo pipefail
           docker run --rm \
             -v "${{ github.workspace }}/helixscreen":/src \
+            -v /tmp/.ccache-happier-hare-pi:/root/.cache/ccache \
             -w /src \
             helixscreen/toolchain-pi \
             /bin/bash -lc '
@@ -80,6 +99,14 @@ jobs:
               exit "$build_status"
             '
           find helixscreen -maxdepth 3 -type f \( -name 'helix-screen' -o -name '*.zip' -o -name '*.tar.gz' \) -print
+
+      - name: Show ccache stats
+        if: always()
+        run: |
+          docker run --rm \
+            -v /tmp/.ccache-happier-hare-pi:/root/.cache/ccache \
+            helixscreen/toolchain-pi \
+            ccache -s || true
 
       - name: Package patched Pi release
         working-directory: helixscreen
