@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.1'
+AIO_VERSION='RC2.2'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -33,8 +33,7 @@ HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_RELEASE_ZIP="https://github.com/prestonbrown/helixscreen/releases/download/${HELIXSCREEN_PIN}/helixscreen-pi.zip"
 HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${REPO_REF}/Happier_Hare/install_happier_hare.sh"
-HAPPIER_HARE_RELEASE_TAG='happier-hare-rc2.0'
-HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip}"
+HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
@@ -48,8 +47,13 @@ MAINSAIL_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-supe
 CONFIG_DIR='/home/mks/printer_data/config'
 BACKUP_ROOT='/home/mks/mudstockbackups'
 HELIX_DIR='/home/mks/helixscreen'
+HELIX_PRINT_DIR='/home/mks/helix_print'
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
 HAPPY_HARE_DIR='/home/mks/Happy-Hare'
+KIAUH_DIR='/home/mks/kiauh'
+KIAUH_BACKUPS_DIR='/home/mks/kiauh-backups'
+KIAUH_UPPER_DIR='/home/mks/KIAUH'
+KIAUH_UPPER_BACKUPS_DIR='/home/mks/KIAUH-backups'
 MAINSAIL_DIR='/home/mks/mainsail'
 MAINSAIL_NGINX_SITE_AVAIL='/etc/nginx/sites-available/mainsail'
 MAINSAIL_NGINX_SITE_ENABLED='/etc/nginx/sites-enabled/mainsail'
@@ -1390,6 +1394,71 @@ preflight() {
     return 0
 }
 
+aio_state_dir() {
+    printf '%s\n' "${BACKUP_ROOT}/_AIO_STATE"
+}
+
+aio_preexisting_paths_file() {
+    printf '%s\n' "$(aio_state_dir)/preexisting_paths"
+}
+
+capture_first_run_state() {
+    local state_dir preexisting path
+    state_dir=$(aio_state_dir)
+    preexisting=$(aio_preexisting_paths_file)
+    if [ -f "$preexisting" ]; then
+        return 0
+    fi
+
+    mkdir -p "$state_dir" || {
+        warn "Could not create AIO state manifest directory"
+        return 0
+    }
+    : > "$preexisting" || {
+        warn "Could not write AIO state manifest"
+        return 0
+    }
+
+    for path in \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$HELIX_PRINT_DIR" \
+        "$KLIPPERSCREEN_DIR" \
+        "$KLIPPERSCREEN_VENV" \
+        "$KIAUH_DIR" \
+        "$KIAUH_BACKUPS_DIR" \
+        "$KIAUH_UPPER_DIR" \
+        "$KIAUH_UPPER_BACKUPS_DIR" \
+        "$MAINSAIL_DIR" \
+        /opt/helixscreen \
+        /var/lib/helixscreen \
+        /var/log/helixscreen \
+        "${HOME}/.helixscreen" \
+        /root/.helixscreen; do
+        if [ -e "$path" ]; then
+            printf '%s\n' "$path" >> "$preexisting"
+        fi
+    done
+    ok "First-run runtime state manifest saved to ${state_dir}"
+}
+
+path_was_preexisting() {
+    local path="$1"
+    local preexisting
+    preexisting=$(aio_preexisting_paths_file)
+    [ -f "$preexisting" ] && grep -Fxq "$path" "$preexisting"
+}
+
+should_remove_aio_path() {
+    local path="$1"
+    [ -e "$path" ] || return 1
+    if path_was_preexisting "$path"; then
+        info "Keeping pre-existing path: $path"
+        return 1
+    fi
+    return 0
+}
+
 do_backup() {
     banner "Backing up current configs"
     BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d_%H%M%S)"
@@ -1405,6 +1474,7 @@ do_backup() {
     # the AIO before tinkering, it's their true stock. Once written, it
     # is never overwritten.
     if [ ! -d "${BACKUP_ROOT}/_FIRST_STOCK" ]; then
+        capture_first_run_state
         mkdir -p "${BACKUP_ROOT}/_FIRST_STOCK"
         if rsync -a "${CONFIG_DIR}/" "${BACKUP_ROOT}/_FIRST_STOCK/"; then
             ok "First-run stock snapshot saved to ${BACKUP_ROOT}/_FIRST_STOCK"
@@ -1442,14 +1512,19 @@ cleanup_aio_runtime_artifacts() {
     for d in \
         "$HAPPY_HARE_DIR" \
         "$HELIX_DIR" \
+        "$HELIX_PRINT_DIR" \
         "$KLIPPERSCREEN_DIR" \
         "$KLIPPERSCREEN_VENV" \
+        "$KIAUH_DIR" \
+        "$KIAUH_BACKUPS_DIR" \
+        "$KIAUH_UPPER_DIR" \
+        "$KIAUH_UPPER_BACKUPS_DIR" \
         /opt/helixscreen \
         /var/lib/helixscreen \
         /var/log/helixscreen \
         "${HOME}/.helixscreen" \
         /root/.helixscreen; do
-        if [ -e "$d" ]; then
+        if should_remove_aio_path "$d"; then
             sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
         fi
     done
@@ -1693,23 +1768,27 @@ revert_to_backup() {
     fi
 
     # Final cleanup: remove optional runtime addons and, after a successful
-    # precise restore, remove the backup root too so Revert leaves no AIO
-    # remnants behind.
+    # restore, remove the backup root too so Revert leaves no AIO remnants
+    # behind.
     if [ "$restore_ok" = true ] || [ ! -d "$BACKUP_ROOT" ]; then
         # Optional addons that might be installed outside Happy Hare
         if [ -f "${CONFIG_DIR}/idle_fan_shutdown.cfg" ] || \
            grep -q '^\[include idle_fan_shutdown\.cfg\]' "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
             uninstall_idle_fan_shutdown
         fi
-        if mainsail_installed; then
-            uninstall_mainsail
+        if [ -d "$MAINSAIL_DIR" ] || [ -f "$MAINSAIL_NGINX_SITE_AVAIL" ] || [ -L "$MAINSAIL_NGINX_SITE_ENABLED" ]; then
+            if path_was_preexisting "$MAINSAIL_DIR"; then
+                info "Keeping pre-existing Mainsail install: ${MAINSAIL_DIR}"
+            else
+                uninstall_mainsail
+            fi
         fi
         if qidi_box_write_enabled; then
             uninstall_qidi_box_write
         fi
 
         cleanup_aio_runtime_artifacts
-        if [ "$restore_ok" = true ] && [ "$restore_can_delete" = true ] && [ -d "$BACKUP_ROOT" ]; then
+        if [ "$restore_ok" = true ] && [ -d "$BACKUP_ROOT" ]; then
             sudo rm -rf "$BACKUP_ROOT" && \
                 ok "Removed ${BACKUP_ROOT}/ after successful stock restore" || \
                 warn "Could not remove ${BACKUP_ROOT}/"
@@ -2291,9 +2370,14 @@ _install_bunnybox() {
         patch_helixscreen_happy_hare_dryer_command || return 1
 
         banner "Happier Hare native dryer integration"
-        info "Installing patched Happier Hare HelixScreen archive"
-        info "Using Happier Hare archive: ${HAPPIER_HARE_ZIP_URL}"
-        run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$HAPPIER_HARE_ZIP_URL"
+        if [ -n "${HAPPIER_HARE_ZIP_URL:-}" ]; then
+            info "Installing patched Happier Hare HelixScreen archive"
+            info "Using Happier Hare archive: ${HAPPIER_HARE_ZIP_URL}"
+            run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$HAPPIER_HARE_ZIP_URL"
+        else
+            info "No HAPPIER_HARE_ZIP_URL set - keeping macro fallback for drying"
+            info "Native dryer UI remains a separate patched HelixScreen artifact track"
+        fi
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
         fetch "${REPO_BASE}/gcode_macro-BunnyBox%26HelixScreen.cfg" \
@@ -2587,7 +2671,7 @@ ${C_BOLD}What it can install:${C_RESET}
   ${C_GREEN}BunnyBox & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
     - Happy Hare MMU firmware/macros for multi-material printing
     - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
-    - Happier Hare RC2.0 hook: installs a patched HelixScreen archive from
+    - Happier Hare hook: installs a patched HelixScreen archive from
       HAPPIER_HARE_ZIP_URL when provided, enabling native Happy Hare dryer UI
     - Unified printer.cfg + gcode_macro.cfg
     - box_drying.cfg: spool rotation during filament drying using
@@ -2616,9 +2700,10 @@ ${C_BOLD}What it can install:${C_RESET}
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
-    optional addons, and display-service overrides.
+    optional addons, display-service overrides, AIO-created KIAUH dirs,
+    helix_print, and ${BACKUP_ROOT}/ after a successful restore.
   - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
-    oldest timestamped backup. ${BACKUP_ROOT}/ is kept as a recovery trail.
+    oldest timestamped backup.
 
 ${C_BOLD}Safety:${C_RESET}
   Every install and uninstall first writes a timestamped backup of
