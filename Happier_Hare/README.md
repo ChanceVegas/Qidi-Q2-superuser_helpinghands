@@ -17,6 +17,9 @@ backend so the native environment indicator and dryer controls can appear.
 
 - exposes Happy Hare as an environment-capable backend for the AMS panel
 - marks Happy Hare dryer support available for the Qidi/BunnyBox path
+- subscribes to Qidi Box `aht20_f heater_box<N>` sensors with humidity fields
+- maps Qidi Box heater/AHT20 temperature and humidity into Happy Hare's AMS
+  environment model while BunnyBox owns the MMU
 - shows the environment indicator even when Happy Hare has no separate humidity
   sensor value to publish
 - displays dryer temperature from `DryerInfo` when per-unit environment data is
@@ -48,10 +51,11 @@ GitHub Actions artifact and fixes the Happy Hare command mismatches:
 `DURATION=` becomes `TIMER=`, and `DRY=0` becomes `STOP=1` when the binary has
 safe padding for the longer string.
 
-The full native UI patch still requires a rebuilt HelixScreen binary, because
-the environment indicator and dryer-overlay visibility are compiled C++ logic.
-That artifact can be supplied through `HAPPIER_HARE_ZIP_URL` or `--install-zip`.
-The AIO also probes the stable release asset
+The full native UI and Box humidity patch still requires a rebuilt HelixScreen
+binary, because Moonraker subscription fields, environment indicator visibility,
+and dryer-overlay behavior are compiled C++ logic. That artifact can be supplied
+through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. The AIO also probes the
+stable release asset
 `happier-hare-rc2.0/helixscreen-pi.zip` and installs it automatically once that
 asset exists.
 

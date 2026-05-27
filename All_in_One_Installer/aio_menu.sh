@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.7'
+AIO_VERSION='RC2.8'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -358,7 +358,7 @@ verify_qidi_box_helixscreen() {
         fi
     done
     if [ "$timer_patched" -eq 1 ]; then
-        ok "HelixScreen Happy Hare dryer command uses TIMER= (native dryer menu compatible)"
+        ok "HelixScreen Happy Hare dryer start command uses TIMER="
     fi
     if [ "$stop_patched" -eq 1 ]; then
         ok "HelixScreen Happy Hare dryer stop command uses STOP=1"
@@ -366,7 +366,7 @@ verify_qidi_box_helixscreen() {
 }
 
 patch_helixscreen_happy_hare_dryer_command() {
-    banner "Patching HelixScreen native Happy Hare dryer commands"
+    banner "Patching HelixScreen Happy Hare dryer command strings"
     local target seen=0 patched=0 already=0 failed=0
     for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
         [ -f "$target" ] || continue
@@ -2511,17 +2511,18 @@ _install_bunnybox() {
         ok "HelixScreen install step complete"
         patch_helixscreen_happy_hare_dryer_command || return 1
 
-        banner "Happier Hare native dryer integration"
+        banner "Happier Hare dryer integration"
         local happier_zip_url
         if happier_zip_url=$(happier_hare_zip_url); then
-            info "Installing patched Happier Hare HelixScreen archive"
+            info "Installing rebuilt Happier Hare HelixScreen archive"
             info "Using Happier Hare archive: ${happier_zip_url}"
             HAPPIER_HARE_REPO_REF="$REPO_REF" \
                 run_remote_script "$HAPPIER_HARE_INSTALLER" --install-zip "$happier_zip_url"
         else
-            info "No Happier Hare patched zip found - keeping macro fallback for drying"
+            info "No rebuilt Happier Hare archive found - keeping macro fallback for drying"
             info "Checked release asset: ${HAPPIER_HARE_RELEASE_ZIP}"
-            info "Native dryer UI remains a separate patched HelixScreen artifact track"
+            info "Command strings were patched locally, but native Box humidity/dryer UI"
+            info "requires a rebuilt HelixScreen binary with the source-level patch"
         fi
 
         banner "Installing unified gcode_macro.cfg & printer.cfg"
@@ -2816,8 +2817,9 @@ ${C_BOLD}What it can install:${C_RESET}
   ${C_GREEN}BunnyBox & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
     - Happy Hare MMU firmware/macros for multi-material printing
     - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
-    - Happier Hare hook: installs a patched HelixScreen archive from
-      HAPPIER_HARE_ZIP_URL when provided, enabling native Happy Hare dryer UI
+    - Happier Hare hook: patches Happy Hare dryer command strings locally;
+      installs a rebuilt HelixScreen archive from HAPPIER_HARE_ZIP_URL
+      when provided for native Box humidity/dryer UI
     - Unified printer.cfg + gcode_macro.cfg
     - box_drying.cfg: spool rotation during filament drying using
       Happy Hare's Environment Manager, with humidity-based early
