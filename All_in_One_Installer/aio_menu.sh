@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.3'
+AIO_VERSION='RC2.4'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -1062,12 +1062,15 @@ purge_happy_hare_all() {
     info "Removing MMU config: ${CONFIG_DIR}/mmu"
     sudo rm -rf "${CONFIG_DIR}/mmu"
     sudo rm -rf "${CONFIG_DIR}"/mmu-* 2>/dev/null || true
+    sudo rm -rf "${CONFIG_DIR}"/mmu_* 2>/dev/null || true
+    sudo rm -rf "${CONFIG_DIR}"/mmu[0-9]* 2>/dev/null || true
 
     # Timestamped backup directories Happy Hare and BunnyBox drop into the
     # config root (backup_hh_<ts>, backup_revert_<ts>). These pile up across
     # repeated installs and are not restored by any uninstall flow.
     find "$CONFIG_DIR" -maxdepth 1 -type d \
-        \( -name 'backup_hh_*' -o -name 'backup_revert_*' \) \
+        \( -name 'backup_hh_*' -o -name 'backup_revert_*' -o -name 'backup_mmu_*' \
+           -o -name 'backup_bunnybox_*' \) \
         -exec sudo rm -rf {} + 2>/dev/null || true
 
     # BunnyBox's KAMP/ subdirectory. We install KAMP files at the config
@@ -1564,6 +1567,12 @@ cleanup_aio_config_artifacts() {
     banner "Cleaning AIO config artifacts"
 
     uninstall_idle_fan_shutdown
+    cleanup_aio_config_residue
+    fix_printer_cfg_after_uninstall
+}
+
+cleanup_aio_config_residue() {
+    banner "Cleaning AIO config residue"
 
     for f in \
         bunnybox_macros.cfg \
@@ -1575,9 +1584,18 @@ cleanup_aio_config_artifacts() {
         Adaptive_Mesh.cfg \
         Line_Purge.cfg \
         Smart_Park.cfg \
+        mmu_cut_tip.cfg \
+        mmu_form_tip.cfg \
+        mmu_heater_vent.cfg \
+        mmu_leds.cfg \
+        mmu_purge.cfg \
+        mmu_sequence.cfg \
+        mmu_software.cfg \
+        mmu_state.cfg \
         mmu_parameters.cfg \
         mmu_macro_vars.cfg \
         mmu_hardware.cfg \
+        mmu_vars.cfg \
         mmu.cfg; do
         if [ -e "${CONFIG_DIR}/${f}" ]; then
             rm -f "${CONFIG_DIR}/${f}"
@@ -1585,16 +1603,25 @@ cleanup_aio_config_artifacts() {
         fi
     done
 
-    for d in \
-        "${CONFIG_DIR}/mmu" \
-        "${CONFIG_DIR}/KAMP" \
-        "${CONFIG_DIR}/helixscreen"; do
+    while IFS= read -r -d '' f; do
+        rm -f "$f" && ok "Removed $f"
+    done < <(find "$CONFIG_DIR" -maxdepth 1 -type f -name 'mmu*.cfg' -print0 2>/dev/null)
+
+    while IFS= read -r -d '' d; do
+        sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
+    done < <(
+        find "$CONFIG_DIR" -maxdepth 1 -type d \
+            \( -name 'mmu' -o -name 'mmu-*' -o -name 'mmu_*' -o -name 'mmu[0-9]*' \
+               -o -name 'backup_hh_*' -o -name 'backup_revert_*' -o -name 'backup_mmu_*' \
+               -o -name 'backup_bunnybox_*' \) \
+            -print0 2>/dev/null
+    )
+
+    for d in "${CONFIG_DIR}/KAMP" "${CONFIG_DIR}/helixscreen"; do
         if [ -e "$d" ]; then
             sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
         fi
     done
-
-    fix_printer_cfg_after_uninstall
 }
 
 cleanup_aio_install_artifacts() {
@@ -1751,14 +1778,15 @@ revert_to_backup() {
         warn "No ${BACKUP_ROOT} folder found - nothing to restore"
     fi
 
-    # Post-rsync cleanup: an authoritative snapshot restore already put
-    # CONFIG_DIR back exactly as it was before AIO touched it. Only scrub
-    # runtime/service artifacts outside CONFIG_DIR. If we only had a flat
-    # fallback source, clean known config artifacts because that layout is
-    # not a precise snapshot.
+    # Post-rsync cleanup: even an old "stock" snapshot may have been taken
+    # after a partial AIO/Happy Hare install, so always scrub known config
+    # residue. Only run the printer.cfg repair path for imprecise fallback
+    # restores, where orphan include cleanup may be required.
     if [ "$restore_ok" = true ]; then
         cleanup_aio_runtime_artifacts
-        if [ "$restore_can_delete" != true ]; then
+        if [ "$restore_can_delete" = true ]; then
+            cleanup_aio_config_residue
+        else
             cleanup_aio_config_artifacts
         fi
         if [ "$restore_can_delete" != true ]; then
