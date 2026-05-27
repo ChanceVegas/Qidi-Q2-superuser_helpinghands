@@ -4,12 +4,12 @@
 #
 # Output:
 #   Happier_Hare/dist/helixscreen-pi.zip
-#   Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.10.zip
+#   Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.11.zip
 # =====================================================================
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.10'
+HAPPIER_HARE_VERSION='RC2.11'
 HELIXSCREEN_PIN="${HELIXSCREEN_PIN:-v0.99.70}"
 HELIXSCREEN_REPO="${HELIXSCREEN_REPO:-https://github.com/prestonbrown/helixscreen.git}"
 HELIXSCREEN_BUILD_JOBS="${HELIXSCREEN_BUILD_JOBS:-1}"

@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.10'
+AIO_VERSION='RC2.11'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -116,6 +116,12 @@ moonraker_get() {
     local path="$1"
     curl --fail --silent --show-error --max-time 3 \
         "http://127.0.0.1:${MOONRAKER_PORT}${path}" 2>/dev/null
+}
+
+helixscreen_binary_candidates() {
+    [ -d "${HELIX_DIR}/bin" ] || return 0
+    find "${HELIX_DIR}/bin" -maxdepth 1 -type f -name 'helix-screen*' \
+        -print 2>/dev/null
 }
 
 verify_systemd_service_health() {
@@ -375,25 +381,29 @@ verify_qidi_box_helixscreen() {
         warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
     fi
 
-    local timer_patched=0 stop_patched=0 env_sensor_patch=0
+    local timer_patched=0 stop_patched=0 env_sensor_patch=0 seen_binary=0
     local target
-    for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
+    while IFS= read -r target; do
         [ -f "$target" ] || continue
-        if LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
+        seen_binary=1
+        if LC_ALL=C grep -aFq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
             timer_patched=1
-        elif LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}' "$target"; then
+        elif LC_ALL=C grep -aFq 'MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}' "$target"; then
             warn "$(basename "$target") still uses DURATION= for Happy Hare drying - native dryer button duration may be ignored"
         fi
-        if LC_ALL=C grep -aq 'MMU_HEATER STOP=1' "$target"; then
+        if LC_ALL=C grep -aFq 'MMU_HEATER STOP=1' "$target"; then
             stop_patched=1
-        elif LC_ALL=C grep -aq 'MMU_HEATER DRY=0' "$target"; then
+        elif LC_ALL=C grep -aFq 'MMU_HEATER DRY=0' "$target"; then
             warn "$(basename "$target") still uses DRY=0 for Happy Hare dryer stop - native stop may be ignored"
         fi
-        if LC_ALL=C grep -aq 'temperature_sensor box' "$target" || \
-           LC_ALL=C grep -aq 'aht20_f heater_box' "$target"; then
+        if LC_ALL=C grep -aFq 'temperature_sensor box' "$target" || \
+           LC_ALL=C grep -aFq 'aht20_f heater_box' "$target"; then
             env_sensor_patch=1
         fi
-    done
+    done < <(helixscreen_binary_candidates)
+    if [ "$seen_binary" -eq 0 ]; then
+        warn "No helix-screen* binaries found under ${HELIX_DIR}/bin"
+    fi
     if [ "$timer_patched" -eq 1 ]; then
         ok "HelixScreen Happy Hare dryer start command uses TIMER="
     fi

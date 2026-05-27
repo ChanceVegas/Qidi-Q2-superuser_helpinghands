@@ -75,7 +75,7 @@ Hare patch, builds the Pi DRM/fbdev binaries in Docker, and writes:
 
 ```text
 Happier_Hare/dist/helixscreen-pi.zip
-Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.10.zip
+Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.11.zip
 ```
 
 Copy the plain zip to the Q2 and point AIO at that local file:

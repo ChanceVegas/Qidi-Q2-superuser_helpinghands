@@ -104,6 +104,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.11 | Hardened Happier Hare install verification so it scans all installed `helix-screen*` binaries and reports which binary contains the dryer and Qidi Box sensor patches |
 | RC2.10 | Updated Happier Hare Qidi Box sensor matching for the Happy Hare config names (`temperature_sensor box1_env`, `heater_generic box1_heater`) and made install/revert instructions explicitly require `FIRMWARE_RESTART` followed by `sudo reboot` |
 | RC2.9 | Hardened Revert to Backup stock display restoration: resets failed lightdm/makerbase state, restores `graphical.target`, unmasks `display-manager.service`, prints recent service logs if the stock display stack does not come back, and keeps `/home/mks/mudstockbackups/` when stock display verification fails |
 | RC1.30 | Option 2 (KlipperScreen) temporarily disabled — display not rendering despite service running; under investigation |

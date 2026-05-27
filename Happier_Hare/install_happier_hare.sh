@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.10'
+HAPPIER_HARE_VERSION='RC2.11'
 HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_REPO='https://github.com/prestonbrown/helixscreen.git'
@@ -164,24 +164,57 @@ build_source() {
 
 verify_installed() {
     banner "Verifying Happier Hare install"
-    require_cmd strings
-    local bin="${HELIX_DIR}/bin/helix-screen"
-    if [ ! -f "$bin" ]; then
-        err "HelixScreen binary not found: $bin"
+
+    local bin_dir="${HELIX_DIR}/bin"
+    if [ ! -d "$bin_dir" ]; then
+        err "HelixScreen binary directory not found: $bin_dir"
         return 1
     fi
-    if LC_ALL=C strings "$bin" | grep -q 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' && \
-       LC_ALL=C strings "$bin" | grep -q 'MMU_HEATER STOP=1'; then
+
+    local seen=0 timer_bin="" stop_bin="" env_bin="" stock_env_bin="" target
+    while IFS= read -r target; do
+        [ -f "$target" ] || continue
+        seen=1
+        if LC_ALL=C grep -aFq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
+            timer_bin="$target"
+        fi
+        if LC_ALL=C grep -aFq 'MMU_HEATER STOP=1' "$target"; then
+            stop_bin="$target"
+        fi
+        if LC_ALL=C grep -aFq 'temperature_sensor box' "$target" && \
+           LC_ALL=C grep -aFq 'heater_generic box' "$target"; then
+            env_bin="$target"
+        fi
+        if LC_ALL=C grep -aFq 'aht20_f heater_box' "$target"; then
+            stock_env_bin="$target"
+        fi
+    done < <(find "$bin_dir" -maxdepth 1 -type f -name 'helix-screen*' -print 2>/dev/null)
+
+    if [ "$seen" -eq 0 ]; then
+        err "No HelixScreen binaries found under ${bin_dir}"
+        return 1
+    fi
+
+    if [ -n "$timer_bin" ] && [ -n "$stop_bin" ]; then
         ok "Happy Hare dryer command strings are patched"
+        info "Dryer start string found in $(basename "$timer_bin")"
+        info "Dryer stop string found in $(basename "$stop_bin")"
     else
-        warn "Known dryer command strings were not found; source/UI patch may not be installed"
+        warn "Known dryer command strings were not found in helix-screen* binaries"
+        warn "Installed files under ${bin_dir}:"
+        while IFS= read -r target; do
+            warn "  $(basename "$target")"
+        done < <(find "$bin_dir" -maxdepth 1 -type f -name 'helix-screen*' -print 2>/dev/null)
+        warn "Source/UI patch may not be installed"
         return 1
     fi
-    if LC_ALL=C strings "$bin" | grep -q 'temperature_sensor box' && \
-       LC_ALL=C strings "$bin" | grep -q 'heater_generic box'; then
+
+    if [ -n "$env_bin" ]; then
         ok "Qidi Box Happy Hare environment sensor paths are patched"
-    elif LC_ALL=C strings "$bin" | grep -q 'aht20_f heater_box'; then
+        info "Happy Hare sensor paths found in $(basename "$env_bin")"
+    elif [ -n "$stock_env_bin" ]; then
         ok "Qidi Box stock AHT20 environment sensor path is patched"
+        info "Stock AHT20 path found in $(basename "$stock_env_bin")"
     else
         warn "Qidi Box environment sensor paths were not found; native temperature/humidity may stay blank"
     fi
