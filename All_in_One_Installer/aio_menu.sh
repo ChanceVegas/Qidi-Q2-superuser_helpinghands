@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.9'
+AIO_VERSION='RC2.10'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -375,7 +375,7 @@ verify_qidi_box_helixscreen() {
         warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
     fi
 
-    local timer_patched=0 stop_patched=0
+    local timer_patched=0 stop_patched=0 env_sensor_patch=0
     local target
     for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
         [ -f "$target" ] || continue
@@ -389,12 +389,22 @@ verify_qidi_box_helixscreen() {
         elif LC_ALL=C grep -aq 'MMU_HEATER DRY=0' "$target"; then
             warn "$(basename "$target") still uses DRY=0 for Happy Hare dryer stop - native stop may be ignored"
         fi
+        if LC_ALL=C grep -aq 'temperature_sensor box1_env' "$target" || \
+           LC_ALL=C grep -aq 'aht20_f heater_box' "$target"; then
+            env_sensor_patch=1
+        fi
     done
     if [ "$timer_patched" -eq 1 ]; then
         ok "HelixScreen Happy Hare dryer start command uses TIMER="
     fi
     if [ "$stop_patched" -eq 1 ]; then
         ok "HelixScreen Happy Hare dryer stop command uses STOP=1"
+    fi
+    if [ "$env_sensor_patch" -eq 1 ]; then
+        ok "HelixScreen binary has Happier Hare Qidi Box environment sensor support"
+    elif bunnybox_installed; then
+        warn "HelixScreen binary does not show Happier Hare Qidi Box sensor support"
+        warn "Native Box temperature/humidity may stay blank; rebuild/reinstall the patched zip."
     fi
 }
 
@@ -599,7 +609,7 @@ menu_idle_fan_shutdown() {
             preflight || { press_enter; return 1; }
             do_backup || { press_enter; return 1; }
             install_idle_fan_shutdown || warn "Setup had problems (see above)"
-            info "FIRMWARE_RESTART to activate."
+            info "Run FIRMWARE_RESTART, then sudo reboot to activate."
         fi
     fi
     press_enter
@@ -1064,7 +1074,11 @@ menu_mainsail() {
             if confirm "Migrate camera to RC13 format now?"; then
                 preflight || { press_enter; return 1; }
                 do_backup || { press_enter; return 1; }
-                install_camera || warn "Camera migration had problems (see above)"
+                if install_camera; then
+                    info "Run FIRMWARE_RESTART, then sudo reboot to finish applying changes."
+                else
+                    warn "Camera migration had problems (see above)"
+                fi
                 press_enter
                 return
             fi
@@ -1072,7 +1086,11 @@ menu_mainsail() {
             if confirm "Camera streaming not configured. Set it up now?"; then
                 preflight || { press_enter; return 1; }
                 do_backup || { press_enter; return 1; }
-                install_camera || warn "Camera setup had problems (see above)"
+                if install_camera; then
+                    info "Run FIRMWARE_RESTART, then sudo reboot to finish applying changes."
+                else
+                    warn "Camera setup had problems (see above)"
+                fi
                 press_enter
                 return
             fi
@@ -1088,7 +1106,11 @@ menu_mainsail() {
         if confirm "Install Mainsail now?"; then
             preflight || { press_enter; return 1; }
             do_backup || { press_enter; return 1; }
-            install_mainsail || warn "Setup had problems (see above)"
+            if install_mainsail; then
+                info "Run FIRMWARE_RESTART, then sudo reboot to finish applying changes."
+            else
+                warn "Setup had problems (see above)"
+            fi
         fi
     fi
     press_enter
@@ -1996,7 +2018,8 @@ revert_to_backup() {
     fi
 
     banner "Revert complete"
-    info "Reboot the printer after Revert to Backup to confirm stock display startup."
+    info "Run FIRMWARE_RESTART from Klipper/Moonraker, then sudo reboot."
+    info "After reboot, confirm stock display startup with systemctl status lightdm makerbase-client."
 }
 
 # ---------- post-install verification --------------------------------
@@ -2691,14 +2714,16 @@ _install_bunnybox() {
     cat <<EOF
 ${C_BOLD}Next steps:${C_RESET}
   1. FIRMWARE_RESTART (Klipper console or HelixScreen)
-  2. Verify:    systemctl status klipper
-  3. First-time only - calibrate MMU gear steppers:
+  2. sudo reboot
+  3. Verify:    systemctl status klipper
+  4. First-time only - calibrate MMU gear steppers:
         ${C_CYAN}MMU_CALIBRATE_GEAR GATE=0 LENGTH=100${C_RESET}
      Mark filament, measure travel, re-run with MEASURED=<mm>
-  4. Start drying (use HelixScreen macro buttons or console):
+  5. Start drying (use HelixScreen AMS environment UI when the patched
+     Happier Hare zip is installed; otherwise use macro buttons or console):
         ${C_CYAN}DRY_PLA${C_RESET}  ${C_CYAN}DRY_PETG${C_RESET}  ${C_CYAN}DRY_ABS${C_RESET}  ${C_CYAN}DRY_TPU${C_RESET}  ${C_CYAN}DRY_PA${C_RESET}
-  5. Check status:   ${C_CYAN}BOX_DRY_STATUS${C_RESET}
-  6. Stop drying:    ${C_CYAN}BOX_DRY_STOP${C_RESET}
+  6. Check status:   ${C_CYAN}BOX_DRY_STATUS${C_RESET}
+  7. Stop drying:    ${C_CYAN}BOX_DRY_STOP${C_RESET}
 
 Install log:    ${INSTALL_LOG}
 Config backup:  ${BACKUP_DIR}
@@ -2805,8 +2830,9 @@ DROPIN
     cat <<EOF
 ${C_BOLD}Next steps:${C_RESET}
   1. FIRMWARE_RESTART (Klipper console or KlipperScreen)
-  2. Verify:    systemctl status klipper
-  3. Verify:    systemctl status ${KLIPPERSCREEN_SERVICE}
+  2. sudo reboot
+  3. Verify:    systemctl status klipper
+  4. Verify:    systemctl status ${KLIPPERSCREEN_SERVICE}
 
 Install log:    ${INSTALL_LOG}
 Config backup:  ${BACKUP_DIR}
@@ -2848,7 +2874,8 @@ ${C_BOLD}Your Q2 is now running the 'Just Faster' setup.${C_RESET}
 
 ${C_BOLD}Next steps:${C_RESET}
   1. FIRMWARE_RESTART (Klipper console or stock screen)
-  2. Run a bed level + screws_tilt_adjust before your first print.
+  2. sudo reboot
+  3. Run a bed level + screws_tilt_adjust before your first print.
 
 Config backup:  ${BACKUP_DIR}
 EOF

@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.8'
+HAPPIER_HARE_VERSION='RC2.10'
 HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_REPO='https://github.com/prestonbrown/helixscreen.git'
@@ -176,6 +176,14 @@ verify_installed() {
     else
         warn "Known dryer command strings were not found; source/UI patch may not be installed"
         return 1
+    fi
+    if LC_ALL=C strings "$bin" | grep -q 'temperature_sensor box1_env' && \
+       LC_ALL=C strings "$bin" | grep -q 'heater_generic box'; then
+        ok "Qidi Box Happy Hare environment sensor paths are patched"
+    elif LC_ALL=C strings "$bin" | grep -q 'aht20_f heater_box'; then
+        ok "Qidi Box stock AHT20 environment sensor path is patched"
+    else
+        warn "Qidi Box environment sensor paths were not found; native temperature/humidity may stay blank"
     fi
 }
 

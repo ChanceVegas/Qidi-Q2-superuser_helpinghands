@@ -4,12 +4,12 @@
 #
 # Output:
 #   Happier_Hare/dist/helixscreen-pi.zip
-#   Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.8.zip
+#   Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.10.zip
 # =====================================================================
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.8'
+HAPPIER_HARE_VERSION='RC2.10'
 HELIXSCREEN_PIN="${HELIXSCREEN_PIN:-v0.99.70}"
 HELIXSCREEN_REPO="${HELIXSCREEN_REPO:-https://github.com/prestonbrown/helixscreen.git}"
 HELIXSCREEN_BUILD_JOBS="${HELIXSCREEN_BUILD_JOBS:-1}"
@@ -159,11 +159,15 @@ verify_zip() {
         warn "Could not verify STOP=1 in helix-screen"
     fi
 
-    if grep -Fq 'aht20_f heater_box' "$strings_file"; then
-        ok "helix-screen contains Qidi Box AHT20 humidity path"
+    if grep -Fq 'temperature_sensor box1_env' "$strings_file" && \
+       grep -Fq 'heater_generic box' "$strings_file"; then
+        ok "helix-screen contains Happy Hare Qidi Box sensor paths"
+        checks=$((checks + 1))
+    elif grep -Fq 'aht20_f heater_box' "$strings_file"; then
+        ok "helix-screen contains stock Qidi Box AHT20 humidity path"
         checks=$((checks + 1))
     else
-        warn "Could not verify Qidi Box AHT20 humidity path in helix-screen"
+        warn "Could not verify Qidi Box environment sensor paths in helix-screen"
     fi
 
     if [ "$checks" -lt 2 ]; then

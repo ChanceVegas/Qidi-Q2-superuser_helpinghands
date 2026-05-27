@@ -17,9 +17,12 @@ backend so the native environment indicator and dryer controls can appear.
 
 - exposes Happy Hare as an environment-capable backend for the AMS panel
 - marks Happy Hare dryer support available for the Qidi/BunnyBox path
-- subscribes to Qidi Box `aht20_f heater_box<N>` sensors with humidity fields
-- maps Qidi Box heater/AHT20 temperature and humidity into Happy Hare's AMS
-  environment model while BunnyBox owns the MMU
+- subscribes to Happy Hare/Qidi Box `temperature_sensor box<N>_env` sensors
+  and stock-path `aht20_f heater_box<N>` sensors with humidity fields
+- maps `heater_generic box<N>_heater` temperature/target state into the dryer
+  status model
+- maps Qidi Box heater/environment temperature and humidity into Happy Hare's
+  AMS environment model while BunnyBox owns the MMU
 - shows the environment indicator even when Happy Hare has no separate humidity
   sensor value to publish
 - displays dryer temperature from `DryerInfo` when per-unit environment data is
@@ -72,7 +75,7 @@ Hare patch, builds the Pi DRM/fbdev binaries in Docker, and writes:
 
 ```text
 Happier_Hare/dist/helixscreen-pi.zip
-Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.8.zip
+Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.10.zip
 ```
 
 Copy the plain zip to the Q2 and point AIO at that local file:
