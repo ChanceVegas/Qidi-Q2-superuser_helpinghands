@@ -26,11 +26,14 @@ backend so the native environment indicator and dryer controls can appear.
 
 ## Installer
 
-`install_happier_hare.sh` supports three paths:
+`install_happier_hare.sh` supports four paths:
 
 ```bash
 # Install a prebuilt patched HelixScreen zip
 ./install_happier_hare.sh --install-zip URL
+
+# Patch command strings in the HelixScreen binary already installed on the Q2
+./install_happier_hare.sh --patch-installed-binary
 
 # Clone HelixScreen v0.99.70 and apply the source patch
 ./install_happier_hare.sh --patch-source
@@ -39,10 +42,18 @@ backend so the native environment indicator and dryer controls can appear.
 ./install_happier_hare.sh --build-source
 ```
 
-On the printer, the expected production path is a prebuilt patched zip supplied
-through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. The AIO also probes the
-stable release asset `happier-hare-rc2.0/helixscreen-pi.zip` and installs it
-automatically once that asset exists.
+On the printer, the AIO always installs the official HelixScreen zip first and
+then applies an in-place binary command patch. That local patch does not need a
+GitHub Actions artifact and fixes the Happy Hare command mismatches:
+`DURATION=` becomes `TIMER=`, and `DRY=0` becomes `STOP=1` when the binary has
+safe padding for the longer string.
+
+The full native UI patch still requires a rebuilt HelixScreen binary, because
+the environment indicator and dryer-overlay visibility are compiled C++ logic.
+That artifact can be supplied through `HAPPIER_HARE_ZIP_URL` or `--install-zip`.
+The AIO also probes the stable release asset
+`happier-hare-rc2.0/helixscreen-pi.zip` and installs it automatically once that
+asset exists.
 
 Local source builds target the Pi DRM binary used on the Qidi Q2
 (`/dev/dri/card0`) and require the `aarch64-linux-gnu-g++` toolchain.

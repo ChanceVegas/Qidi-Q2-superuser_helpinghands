@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.6'
+AIO_VERSION='RC2.7'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -342,23 +342,31 @@ verify_qidi_box_helixscreen() {
         warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
     fi
 
-    local patched=0
+    local timer_patched=0 stop_patched=0
     local target
     for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
         [ -f "$target" ] || continue
         if LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}' "$target"; then
-            patched=1
+            timer_patched=1
         elif LC_ALL=C grep -aq 'MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}' "$target"; then
             warn "$(basename "$target") still uses DURATION= for Happy Hare drying - native dryer button duration may be ignored"
         fi
+        if LC_ALL=C grep -aq 'MMU_HEATER STOP=1' "$target"; then
+            stop_patched=1
+        elif LC_ALL=C grep -aq 'MMU_HEATER DRY=0' "$target"; then
+            warn "$(basename "$target") still uses DRY=0 for Happy Hare dryer stop - native stop may be ignored"
+        fi
     done
-    if [ "$patched" -eq 1 ]; then
+    if [ "$timer_patched" -eq 1 ]; then
         ok "HelixScreen Happy Hare dryer command uses TIMER= (native dryer menu compatible)"
+    fi
+    if [ "$stop_patched" -eq 1 ]; then
+        ok "HelixScreen Happy Hare dryer stop command uses STOP=1"
     fi
 }
 
 patch_helixscreen_happy_hare_dryer_command() {
-    banner "Patching HelixScreen native Happy Hare dryer command"
+    banner "Patching HelixScreen native Happy Hare dryer commands"
     local target seen=0 patched=0 already=0 failed=0
     for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
         [ -f "$target" ] || continue
@@ -397,6 +405,51 @@ PY
             *)
                 warn "$(basename "$target"): patch failed"
                 failed=1
+                ;;
+        esac
+
+        python3 - "$target" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+old = b"MMU_HEATER DRY=0"
+new_cmd = b"MMU_HEATER STOP=1"
+data = path.read_bytes()
+
+if new_cmd in data:
+    sys.exit(2)
+
+# STOP=1 is one byte longer than DRY=0, so only patch when the original
+# string has two NUL bytes available. That preserves C-string termination
+# and avoids corrupting the following read-only data.
+pattern = old + b"\0\0"
+replacement = new_cmd + b"\0"
+if pattern in data:
+    path.write_bytes(data.replace(pattern, replacement, 1))
+    sys.exit(0)
+
+if old in data:
+    sys.exit(4)
+sys.exit(3)
+PY
+        case $? in
+            0)
+                ok "$(basename "$target"): patched DRY=0 to STOP=1"
+                patched=1
+                ;;
+            2)
+                ok "$(basename "$target"): already uses STOP=1"
+                already=1
+                ;;
+            3)
+                warn "$(basename "$target"): known Happy Hare dryer stop command not found"
+                ;;
+            4)
+                warn "$(basename "$target"): DRY=0 found, but no safe padding for in-place STOP=1 patch"
+                ;;
+            *)
+                warn "$(basename "$target"): stop command patch failed"
                 ;;
         esac
     done

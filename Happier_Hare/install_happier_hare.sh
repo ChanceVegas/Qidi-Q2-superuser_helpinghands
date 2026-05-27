@@ -42,6 +42,8 @@ Usage:
 
 Modes:
   --install-zip URL       Install a prebuilt patched HelixScreen zip
+  --patch-installed-binary
+                          Patch installed HelixScreen command strings in place
   --patch-source          Clone/update HelixScreen ${HELIXSCREEN_PIN} and apply the patch
   --build-source          Patch source, build Pi DRM, and install rebuilt binary
   --verify                Verify the installed HelixScreen binary carries known patches
@@ -172,6 +174,109 @@ verify_installed() {
     fi
 }
 
+patch_installed_binary() {
+    banner "Patching installed HelixScreen binary commands"
+    require_cmd python3
+
+    local target seen=0 patched=0 already=0 failed=0
+    for target in "${HELIX_DIR}/bin/helix-screen" "${HELIX_DIR}/bin/helix-screen-fbdev"; do
+        [ -f "$target" ] || continue
+        seen=1
+        python3 - "$target" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+old = b"MMU_HEATER DRY=1 TEMP={:.0f} DURATION={}"
+new_cmd = b"MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}"
+new = new_cmd + b"\0" * (len(old) - len(new_cmd))
+data = path.read_bytes()
+
+if new_cmd in data:
+    sys.exit(2)
+if old not in data:
+    sys.exit(3)
+
+path.write_bytes(data.replace(old, new, 1))
+sys.exit(0)
+PY
+        case $? in
+            0)
+                ok "$(basename "$target"): patched DURATION= to TIMER="
+                patched=1
+                ;;
+            2)
+                ok "$(basename "$target"): already uses TIMER="
+                already=1
+                ;;
+            3)
+                warn "$(basename "$target"): known Happy Hare dryer command not found"
+                failed=1
+                ;;
+            *)
+                warn "$(basename "$target"): timer command patch failed"
+                failed=1
+                ;;
+        esac
+
+        python3 - "$target" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+old = b"MMU_HEATER DRY=0"
+new_cmd = b"MMU_HEATER STOP=1"
+data = path.read_bytes()
+
+if new_cmd in data:
+    sys.exit(2)
+
+pattern = old + b"\0\0"
+replacement = new_cmd + b"\0"
+if pattern in data:
+    path.write_bytes(data.replace(pattern, replacement, 1))
+    sys.exit(0)
+
+if old in data:
+    sys.exit(4)
+sys.exit(3)
+PY
+        case $? in
+            0)
+                ok "$(basename "$target"): patched DRY=0 to STOP=1"
+                patched=1
+                ;;
+            2)
+                ok "$(basename "$target"): already uses STOP=1"
+                already=1
+                ;;
+            3)
+                warn "$(basename "$target"): known Happy Hare dryer stop command not found"
+                failed=1
+                ;;
+            4)
+                warn "$(basename "$target"): DRY=0 found, but no safe padding for in-place STOP=1 patch"
+                failed=1
+                ;;
+            *)
+                warn "$(basename "$target"): stop command patch failed"
+                failed=1
+                ;;
+        esac
+    done
+
+    if [ "$seen" -eq 0 ]; then
+        err "No HelixScreen binary found under ${HELIX_DIR}/bin"
+        return 1
+    fi
+    if [ "$failed" -ne 0 ] && [ "$patched" -eq 0 ] && [ "$already" -eq 0 ]; then
+        err "Installed HelixScreen binary command patch could not be verified"
+        return 1
+    fi
+
+    verify_installed
+}
+
 main() {
     local mode="${1:-}"
     case "$mode" in
@@ -180,6 +285,9 @@ main() {
             ;;
         --install-zip)
             install_zip "${2:-}"
+            ;;
+        --patch-installed-binary)
+            patch_installed_binary
             ;;
         --patch-source)
             apply_patchset
