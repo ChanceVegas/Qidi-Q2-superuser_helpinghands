@@ -104,6 +104,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.13 | Points Option 1 at the hosted Happier Hare patched HelixScreen release asset (`happier-hare-rc2.12/helixscreen-pi.zip`) so installs no longer require SCP when the release asset is available |
 | RC2.12 | Option 1 now automatically installs the Happier Hare patched HelixScreen archive from `/home/mks/helixscreen-pi-happier-hare.zip` when present, without requiring `HAPPIER_HARE_ZIP_URL` |
 | RC2.11 | Hardened Happier Hare install verification so it scans all installed `helix-screen*` binaries and reports which binary contains the dryer and Qidi Box sensor patches |
 | RC2.10 | Updated Happier Hare Qidi Box sensor matching for the Happy Hare config names (`temperature_sensor box1_env`, `heater_generic box1_heater`) and made install/revert instructions explicitly require `FIRMWARE_RESTART` followed by `sudo reboot` |
