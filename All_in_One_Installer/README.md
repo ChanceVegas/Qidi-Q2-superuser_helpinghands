@@ -104,6 +104,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.14 | Preserves stock `/home/mks/printer_data/config/KAMP` during Revert to Backup: Option 1 backs it up with the config snapshot, cleanup no longer blindly deletes it after restore, and Revert verifies it returned when present in the selected backup |
 | RC2.13 | Points Option 1 at the hosted Happier Hare patched HelixScreen release asset (`happier-hare-rc2.12/helixscreen-pi.zip`) so installs no longer require SCP when the release asset is available |
 | RC2.12 | Option 1 now automatically installs the Happier Hare patched HelixScreen archive from `/home/mks/helixscreen-pi-happier-hare.zip` when present, without requiring `HAPPIER_HARE_ZIP_URL` |
 | RC2.11 | Hardened Happier Hare install verification so it scans all installed `helix-screen*` binaries and reports which binary contains the dryer and Qidi Box sensor patches |

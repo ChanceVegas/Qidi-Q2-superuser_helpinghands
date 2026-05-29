@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.13'
+AIO_VERSION='RC2.14'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -1192,10 +1192,6 @@ purge_happy_hare_all() {
            -o -name 'backup_bunnybox_*' \) \
         -exec sudo rm -rf {} + 2>/dev/null || true
 
-    # BunnyBox's KAMP/ subdirectory. We install KAMP files at the config
-    # root (PR #8); BunnyBox's KAMP/ copy is no longer referenced.
-    sudo rm -rf "${CONFIG_DIR}/KAMP"
-
     # Config files Happy Hare / BunnyBox may have written at config root
     rm -f "${CONFIG_DIR}/bunnybox_macros.cfg"
     rm -f "${CONFIG_DIR}/box_drying.cfg"
@@ -1226,10 +1222,9 @@ purge_happy_hare_all() {
     info "Removing Moonraker component: mmu_server.py"
     sudo rm -f "${HOME}/moonraker/moonraker/components/mmu_server.py"
 
-    # Root-level KAMP files installed by the AIO BunnyBox flow. Removing them
-    # lets fix_printer_cfg_after_uninstall() comment out their [include] lines
-    # so Klipper can start cleanly. The KAMP/ subdir (BunnyBox's copy) was
-    # already removed above.
+    # Root-level KAMP files installed by the AIO BunnyBox flow. Do not remove
+    # ${CONFIG_DIR}/KAMP here: Qidi stock configs may own that directory and
+    # Revert must restore it from _FIRST_STOCK.
     for f in KAMP_Settings.cfg Adaptive_Meshing.cfg Line_Purge.cfg Smart_Park.cfg; do
         rm -f "${CONFIG_DIR}/${f}"
     done
@@ -1569,6 +1564,7 @@ capture_first_run_state() {
         "$KIAUH_UPPER_DIR" \
         "$KIAUH_UPPER_BACKUPS_DIR" \
         "$MAINSAIL_DIR" \
+        "${CONFIG_DIR}/KAMP" \
         /opt/helixscreen \
         /var/lib/helixscreen \
         /var/log/helixscreen \
@@ -1607,6 +1603,9 @@ do_backup() {
         return 1
     fi
     ok "Backup written to ${BACKUP_DIR}"
+    if [ -d "${BACKUP_DIR}/KAMP" ]; then
+        ok "KAMP directory included in backup: ${BACKUP_DIR}/KAMP"
+    fi
 
     # One-time permanent snapshot of the very first observed state. This
     # is what "Revert to Backup" should restore - assuming the user ran
@@ -1741,11 +1740,16 @@ cleanup_aio_config_residue() {
             -print0 2>/dev/null
     )
 
-    for d in "${CONFIG_DIR}/KAMP" "${CONFIG_DIR}/helixscreen"; do
-        if [ -e "$d" ]; then
-            sudo rm -rf "$d" && ok "Removed $d" || warn "Could not remove $d"
-        fi
-    done
+    # Do not blindly remove ${CONFIG_DIR}/KAMP. It may be part of the stock
+    # Qidi config tree. Revert uses rsync --delete against the selected stock
+    # snapshot, so an AIO-created KAMP directory is removed only when absent
+    # from that snapshot.
+    local helixscreen_config_dir="${CONFIG_DIR}/helixscreen"
+    if [ -e "$helixscreen_config_dir" ]; then
+        sudo rm -rf "$helixscreen_config_dir" && \
+            ok "Removed $helixscreen_config_dir" || \
+            warn "Could not remove $helixscreen_config_dir"
+    fi
 }
 
 cleanup_aio_install_artifacts() {
@@ -1920,6 +1924,7 @@ revert_to_backup() {
     info "Restoring configs from ${BACKUP_ROOT}..."
     local restore_ok=false
     local restore_can_delete=false
+    local restore_src=""
     if [ -d "$BACKUP_ROOT" ]; then
         # Prefer the one-time _FIRST_STOCK snapshot (closest to factory).
         # Fall back to the OLDEST timestamped backup - the first one
@@ -1952,6 +1957,7 @@ revert_to_backup() {
         if rsync "${rsync_args[@]}" "${src}/" "${CONFIG_DIR}/"; then
             ok "Config restore complete"
             restore_ok=true
+            restore_src="$src"
         else
             err "Restore failed"
         fi
@@ -1969,6 +1975,13 @@ revert_to_backup() {
             cleanup_aio_config_residue
         else
             cleanup_aio_config_artifacts
+        fi
+        if [ -n "$restore_src" ] && [ -d "${restore_src}/KAMP" ]; then
+            if [ -d "${CONFIG_DIR}/KAMP" ]; then
+                ok "Stock KAMP directory restored from backup"
+            else
+                warn "Backup contained KAMP/, but ${CONFIG_DIR}/KAMP is missing after restore"
+            fi
         fi
         if [ "$restore_can_delete" != true ]; then
             # Re-clean moonraker.conf Happy Hare sections
