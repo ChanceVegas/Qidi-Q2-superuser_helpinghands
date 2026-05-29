@@ -64,6 +64,12 @@ chmod +x aio_menu.sh
 | 7 | **About** | Shows the current AIO version and a brief description. |
 | 8 | **Health Check / Run Verifiers** | Scans your Klipper config for common problems — duplicate macros, broken include lines, invalid settings — and offers to fix each one. Safe to run any time. |
 
+## Backup and revert behavior
+
+Option 1 captures the current `/home/mks/printer_data/config` state before it installs BunnyBox, Happy Hare, HelixScreen, Happier Hare, or AIO config files. The first clean snapshot is preserved as the stock baseline and includes `/home/mks/printer_data/config/KAMP` when that directory exists.
+
+Option 4 (**Revert to Backup**) prefers that first stock snapshot, restores it over the active Klipper config directory, removes AIO-installed runtime directories and residue, and verifies stock display services. Root-level AIO KAMP files such as `KAMP_Settings.cfg`, `Adaptive_Meshing.cfg`, `Line_Purge.cfg`, and `Smart_Park.cfg` are treated as install artifacts; the stock `KAMP/` directory is preserved through backup/restore instead of being blindly removed.
+
 ## Filament drying (BunnyBox installs only)
 
 After installing BunnyBox (option 1), the following one-tap drying macros are available from the touchscreen or the Klipper console. Spools rotate automatically throughout each cycle.

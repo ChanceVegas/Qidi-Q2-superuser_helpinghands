@@ -14,28 +14,30 @@ The `helpinghands` fork hardens the upstream installers and adds the AIO menu so
 
 Single-entry, ANSI-colored bash menu that drives every install and uninstall path. Merges all logic from `BunnyBox&HelixScreen.sh` directly - one script, no shelling out to siblings. Refuses to run as root.
 
-Menu items:
+Current menu items:
 
 | # | Action |
 |---|--------|
 | 1 | Install BunnyBox & HelixScreen (Q2 with Qidi Box) |
-| 2 | Install Just Faster Printer (Q2 without Box, stock screen) |
-| 3 | Uninstall BunnyBox only |
-| 4 | Uninstall HelixScreen only |
-| 5 | Uninstall Both |
-| 6 | Revert to Backup (uninstall both + rsync stock backup back) |
+| 2 | Install KlipperScreen (temporarily disabled while Q2 display behavior is investigated) |
+| 3 | Install Just Faster Printer (Q2 without Box, stock screen) |
+| 4 | Revert to Backup (full uninstall + restore stock) |
+| 5 | Idle Fan Shutdown |
+| 6 | Mainsail |
 | 7 | About |
+| 8 | Health Check / Run Verifiers |
 | 0 | Exit |
 
 Features:
 - Preflight (network reachability to GitHub, `${CONFIG_DIR}` present, `enable_force_move` sanity check)
-- Timestamped backups to `/home/mks/mudstockbackups/YYYYMMDD_HHMMSS/` before every install **and** every uninstall
+- First-run stock snapshot plus timestamped backups to `/home/mks/mudstockbackups/YYYYMMDD_HHMMSS/` before install/revert operations
+- Stock `/home/mks/printer_data/config/KAMP` is included in the config snapshot when present, so Revert to Backup can restore the original Qidi KAMP directory
 - Install log via `tee` for BunnyBox+HelixScreen flow
 - Per-action `[OK] / [INFO] / [WARN] / [ERR]` status lines (green / cyan / yellow / red)
-- Live status header showing BunnyBox / HelixScreen installed-state
-- Y/N confirmation on every uninstall action
-- Post-install verification: confirms all key files landed and `mmu_parameters.cfg` was patched correctly
-- "Revert to Backup" mirrors the upstream Camden-Winder `uninstall.sh`: removes HelixScreen via its official releases-server uninstaller, re-enables `lightdm` + `makerbase-client`, calls BunnyBox `--revert`, then rsyncs the newest timestamped stock backup back over `${CONFIG_DIR}`.
+- Live status header showing BunnyBox, display UI, IdleFan, BoxWrite, Mainsail, and camera state
+- Y/N confirmation on destructive restore paths
+- Post-install and option 8 verification: confirms key files, Klipper/Moonraker health, Happy Hare/MMU state, HelixScreen state, duplicate macros, invalid options, and orphan includes
+- "Revert to Backup" removes AIO-installed services/config residue, restores `${CONFIG_DIR}` from the first stock snapshot when available, re-enables `lightdm` + `makerbase-client`, verifies the stock display stack, and only removes `/home/mks/mudstockbackups` after the stock restore succeeds.
 
 ### `Install-Script/BunnyBox&HelixScreen.sh` (hardened)
 
@@ -47,7 +49,7 @@ What it installs / does:
 - Unified `gcode_macro.cfg` and `printer.cfg` from this repo
 - `box_drying.cfg` (Qidi Box spool rotation during drying)
 - Patches `mmu/base/mmu_parameters.cfg` with `heater_vent_macro: _QIDI_BOX_VENT` and `heater_vent_interval: 5`
-- KAMP settings (`KAMP_settings.cfg`)
+- AIO KAMP root files for the BunnyBox/HelixScreen path (`KAMP_Settings.cfg`, `Adaptive_Meshing.cfg`, `Line_Purge.cfg`, `Smart_Park.cfg`)
 - HelixScreen `settings.json`
 - Fixes the KAMP double-nesting include bug if it appears
 - Wraps third-party installers in `set +e` so a "warning" exit code doesn't abort the run
@@ -87,7 +89,7 @@ Klipper Adaptive Meshing & Purging settings - tuned for the Q2 bed.
 
 ### `Install-Script/uninstall.sh` (upstream)
 
-Original Camden-Winder revert script. Reverts BunnyBox, removes HelixScreen, re-enables the stock screen services, and rsyncs `mudstockbackups` back into place. Its logic is integrated as the `revert_to_backup()` function in `aio_menu.sh` (AIO menu item 6).
+Original Camden-Winder revert script. The current AIO keeps the revert concept but expands it substantially: Revert to Backup is now menu item 4, prefers the first clean stock snapshot, restores the stock `KAMP/` directory when it was present in the backup, removes AIO leftovers, and verifies stock display services before deleting `/home/mks/mudstockbackups`.
 
 ## Achievements
 
@@ -98,7 +100,7 @@ Original Camden-Winder revert script. Reverts BunnyBox, removes HelixScreen, re-
 - **`screws_tilt_adjust`** for guided manual bed leveling.
 - **Faster, cleaner `PRINT_START` / `PRINT_END`** macros.
 - **Spoolman hooks** for filament inventory.
-- **Full backup/restore safety net** - every install and uninstall writes a timestamped backup; `Revert to Backup` is one menu choice away.
+- **Full backup/restore safety net** - first-run stock snapshot plus timestamped backups; `Revert to Backup` restores the pre-AIO config state, including stock `KAMP/` when present.
 - **Single-entry AIO menu** so users do not have to remember which `.sh` to run for which Q2 variant.
 
 ## File Paths Reference
@@ -115,10 +117,12 @@ Original Camden-Winder revert script. Reverts BunnyBox, removes HelixScreen, re-
 | `KAMP_settings.cfg` (JFP)              | `/home/mks/printer_data/config/KAMP/KAMP_Settings.cfg` |
 | `mmu_parameters.cfg` (patch target)    | `/home/mks/printer_data/config/mmu/base/mmu_parameters.cfg` |
 | Backups                                | `/home/mks/mudstockbackups/YYYYMMDD_HHMMSS/` |
+| First stock snapshot                   | `/home/mks/mudstockbackups/_FIRST_STOCK/` |
+| Stock KAMP restore source              | `/home/mks/mudstockbackups/_FIRST_STOCK/KAMP/` when present |
 
 ## Known Limitations
 
-- **HelixScreen has no native UI panel for Happy Hare's dryer yet.** Use the `BOX_DRY` macro or the Klipper console as a workaround.
+- **Native Qidi Box humidity/dryer UI requires the Happier Hare patched HelixScreen zip.** Without that zip, use the `BOX_DRY` macro or the Klipper console as a workaround.
 - **`MMU_CALIBRATE_GEAR` is required after clean installs.** Mark filament, run `MMU_CALIBRATE_GEAR GATE=0 LENGTH=100`, measure travel, re-run with `MEASURED=<mm>`.
 - **BunnyBox currently requires HelixScreen for MMU workflows** - the stock Qidi screen does not yet expose the MMU UI.
 

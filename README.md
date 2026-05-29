@@ -65,7 +65,7 @@ This becomes especially useful once Bunny Box is installed on the Qidi Box.
 
 # All-in-One Installer (AIO)
 
-The AIO is a single ANSI-colored bash menu that handles every supported install and uninstall path for the Q2 — no need to remember which `.sh` to run for which variant.
+The AIO is a single ANSI-colored bash menu that handles every supported install and uninstall path for the Q2 — no need to remember which `.sh` to run for which variant. It captures a first-run stock backup before changing configs, including the stock `/home/mks/printer_data/config/KAMP` directory when present, so **Revert to Backup** can restore the printer to its pre-AIO config state.
 
 SSH into the Q2 as `mks`, then run:
 

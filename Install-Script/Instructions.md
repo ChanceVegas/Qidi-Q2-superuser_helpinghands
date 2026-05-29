@@ -89,20 +89,22 @@ curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs
 
 ## Uninstall and Revert
 
-If you want to remove everything and go back to your previous configuration, you can run the uninstaller.
+If you want to remove everything and go back to your previous configuration, use the AIO menu's **Option 4 - Revert to Backup**. The AIO restore path is the maintained path for this fork.
 
 This removes:
 
 - Bunny Box  
 - HelixScreen  
 - All applied config changes  
-- And restores your backed‑up configs (if available)
+- And restores your backed-up configs (if available), including the stock `/home/mks/printer_data/config/KAMP` directory when it was present in the first AIO backup
 
-### Uninstall command
+### Recommended revert command
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install-Script/uninstall.sh | sh
+curl -sSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/main/All_in_One_Installer/aio_menu.sh | bash
 ```
+
+Then choose option 4.
 
 ---
 
@@ -110,7 +112,7 @@ curl -sSL https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs
 
 - All scripts are designed for the Qidi Q2’s default user (`mks`).  
 - Do **not** run these scripts as root — it will break permissions.  
-- Backups are stored in your `printer_data/config` directory and `/home/mks/mudstockbackups`.  
+- AIO backups are stored in `/home/mks/mudstockbackups`; the first clean stock snapshot is preserved there so Revert to Backup can restore stock behavior.
 - More variants will be added as the project evolves.
 
 ---

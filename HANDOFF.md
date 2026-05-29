@@ -43,7 +43,8 @@ No GitHub Actions are configured on the repo. PR is waiting for manual review an
 - **Helpers:** use `banner`, `info`, `warn`, `ok`, `err` — never raw `echo`
 - **Write files:** use `sudo tee` pattern, never `echo >` with sudo
 - **Never touch:** `Configurations/` and `Plugins/` are stock Qidi reference files — read-only mirrors
-- **Dev branch:** all work goes to `claude/qidi-q2-aio-menu-lwyb6`, never push to `main` directly
+- **Dev branch:** all work goes to a `claude/*` branch, never push to `main` directly
+- **Stock KAMP:** preserve `/home/mks/printer_data/config/KAMP` through the first-run backup and Revert to Backup flow; remove AIO root-level KAMP artifacts separately.
 
 ---
 
