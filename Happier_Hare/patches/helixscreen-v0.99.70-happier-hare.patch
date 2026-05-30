@@ -17,7 +17,7 @@ index f126319..ded48c2 100644
      void parse_mmu_state(const nlohmann::json& mmu_data);
 
 +    /**
-+     * @brief Parse Qidi Box heater/AHT20 status while Happy Hare owns the MMU.
++     * @brief Parse Qidi Box heater/AHT status while Happy Hare owns the MMU.
 +     *
 +     * BunnyBox disables Qidi's stock box.cfg write path, but the Happy Hare
 +     * hardware config still publishes the Qidi Box heater and environment
@@ -43,7 +43,7 @@ index cbb60ac..1c66462 100644
      for (const auto& sensor : sensors) {
          subscription_objects[sensor] = temp_sensor_fields;
      }
-@@ -1361,8 +1361,11 @@ void MoonrakerDiscoverySequence::parse_objects(const json& objects) {
+@@ -1361,8 +1361,13 @@ void MoonrakerDiscoverySequence::parse_objects(const json& objects) {
          else if (name.rfind("heater_generic ", 0) == 0) {
              heaters_.push_back(name);
          }
@@ -51,8 +51,10 @@ index cbb60ac..1c66462 100644
 -        else if (name.rfind("temperature_sensor ", 0) == 0) {
 +        // Read-only temperature sensors. Qidi Box environment sensors publish
 +        // as "temperature_sensor box<N>_env" through Happy Hare configs and
-+        // may also publish as "aht20_f heater_box<N>" on stock/Qidi paths.
++        // publish humidity as "aht10 box<N>_env" through BunnyBox, and may
++        // publish as "aht20_f heater_box<N>" on stock/Qidi paths.
 +        else if (name.rfind("temperature_sensor ", 0) == 0 ||
++                 name.rfind("aht10 ", 0) == 0 ||
 +                 name.rfind("aht20_f ", 0) == 0) {
              sensors_.push_back(name);
          }
@@ -86,7 +88,7 @@ index 68c8345..ace0625 100644
 
      spdlog::debug("[AMS HappyHare] Backend created");
  }
-@@ -246,24 +256,110 @@ void AmsBackendHappyHare::handle_status_update(const nlohmann::json& notificatio
+@@ -246,24 +256,113 @@ void AmsBackendHappyHare::handle_status_update(const nlohmann::json& notificatio
          return;
      }
 
@@ -125,6 +127,7 @@ index 68c8345..ace0625 100644
 +bool AmsBackendHappyHare::apply_qidi_box_environment_status(
 +    const nlohmann::json& notification) {
 +    constexpr std::string_view kHappyHareHeaterPrefix = "heater_generic box";
++    constexpr std::string_view kHappyHareAhtPrefix = "aht10 box";
 +    constexpr std::string_view kAht20Prefix = "aht20_f heater_box";
 +    constexpr std::string_view kHappyHareEnvPrefix = "temperature_sensor box";
 
@@ -143,7 +146,9 @@ index 68c8345..ace0625 100644
 +        const bool is_heater =
 +            key.rfind(kHappyHareHeaterPrefix, 0) == 0 &&
 +            key.find("_heater") != std::string::npos;
-+        const bool is_aht = key.rfind(kAht20Prefix, 0) == 0;
++        const bool is_aht =
++            key.rfind(kHappyHareAhtPrefix, 0) == 0 ||
++            key.rfind(kAht20Prefix, 0) == 0;
 +        const bool is_env =
 +            key.rfind(kHappyHareEnvPrefix, 0) == 0 &&
 +            key.find("_env") != std::string::npos;
@@ -207,7 +212,7 @@ index 68c8345..ace0625 100644
  }
 
  void AmsBackendHappyHare::parse_mmu_state(const nlohmann::json& mmu_data) {
-@@ -2014,7 +2104,7 @@ AmsError AmsBackendHappyHare::start_drying(float temp_c, int duration_min, int f
+@@ -2014,7 +2107,7 @@ AmsError AmsBackendHappyHare::start_drying(float temp_c, int duration_min, int f
          }
      }
 
@@ -216,7 +221,7 @@ index 68c8345..ace0625 100644
      if (fan_pct >= 0) {
          cmd += fmt::format(" FAN={}", fan_pct);
      }
-@@ -2033,7 +2123,7 @@ AmsError AmsBackendHappyHare::stop_drying(int unit) {
+@@ -2033,7 +2126,7 @@ AmsError AmsBackendHappyHare::stop_drying(int unit) {
      }
 
      spdlog::info("[AMS HappyHare] Stopping dryer");

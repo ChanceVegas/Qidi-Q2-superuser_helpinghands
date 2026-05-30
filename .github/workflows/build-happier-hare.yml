@@ -9,7 +9,7 @@ on:
         required: true
       release_version:
         description: Artifact version label
-        default: happier-hare-rc2.0
+        default: happier-hare-rc2.15
         required: true
 
 permissions:
@@ -138,6 +138,7 @@ jobs:
           unzip -q releases/helixscreen-pi.zip -d /tmp/happier-hare-pi
           strings /tmp/happier-hare-pi/bin/helix-screen | grep 'MMU_HEATER DRY=1 TEMP={:.0f} TIMER={}'
           strings /tmp/happier-hare-pi/bin/helix-screen | grep 'MMU_HEATER STOP=1'
+          strings /tmp/happier-hare-pi/bin/helix-screen | grep 'aht10 box'
 
       - name: Upload patched archive
         uses: actions/upload-artifact@v4

@@ -171,7 +171,7 @@ verify_installed() {
         return 1
     fi
 
-    local seen=0 timer_bin="" stop_bin="" env_bin="" stock_env_bin="" target
+    local seen=0 timer_bin="" stop_bin="" env_bin="" aht10_env_bin="" stock_env_bin="" target
     while IFS= read -r target; do
         [ -f "$target" ] || continue
         seen=1
@@ -184,6 +184,9 @@ verify_installed() {
         if LC_ALL=C grep -aFq 'temperature_sensor box' "$target" && \
            LC_ALL=C grep -aFq 'heater_generic box' "$target"; then
             env_bin="$target"
+        fi
+        if LC_ALL=C grep -aFq 'aht10 box' "$target"; then
+            aht10_env_bin="$target"
         fi
         if LC_ALL=C grep -aFq 'aht20_f heater_box' "$target"; then
             stock_env_bin="$target"
@@ -209,9 +212,13 @@ verify_installed() {
         return 1
     fi
 
-    if [ -n "$env_bin" ]; then
+    if [ -n "$aht10_env_bin" ]; then
+        ok "Qidi Box Happy Hare AHT10 humidity path is patched"
+        info "Happy Hare AHT10 path found in $(basename "$aht10_env_bin")"
+    elif [ -n "$env_bin" ]; then
         ok "Qidi Box Happy Hare environment sensor paths are patched"
         info "Happy Hare sensor paths found in $(basename "$env_bin")"
+        warn "BunnyBox AHT10 humidity path is missing; native humidity may stay blank"
     elif [ -n "$stock_env_bin" ]; then
         ok "Qidi Box stock AHT20 environment sensor path is patched"
         info "Stock AHT20 path found in $(basename "$stock_env_bin")"
