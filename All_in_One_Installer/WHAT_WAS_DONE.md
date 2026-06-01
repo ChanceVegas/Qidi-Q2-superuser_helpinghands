@@ -37,6 +37,7 @@ Features:
 - Live status header showing BunnyBox, display UI, IdleFan, BoxWrite, Mainsail, and camera state
 - Y/N confirmation on destructive restore paths
 - Post-install and option 8 verification: confirms key files, Klipper/Moonraker health, Happy Hare/MMU state, HelixScreen state, duplicate macros, invalid options, and orphan includes
+- Duplicate-macro verification follows the active `printer.cfg` include graph, so stock files preserved on disk for Revert to Backup do not generate false warnings
 - "Revert to Backup" removes AIO-installed services/config residue, restores `${CONFIG_DIR}` from the first stock snapshot when available, re-enables `lightdm` + `makerbase-client`, verifies the stock display stack, and only removes `/home/mks/mudstockbackups` after the stock restore succeeds.
 
 ### `Install-Script/BunnyBox&HelixScreen.sh` (hardened)

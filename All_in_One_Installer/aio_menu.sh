@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.15'
+AIO_VERSION='RC2.16'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -2390,33 +2390,62 @@ run_all_verifiers() {
     press_enter
 }
 
-# Scan every .cfg under CONFIG_DIR for duplicate [gcode_macro NAME] decls.
-# Klipper refuses to start with "gcode command X already registered" if any
-# macro name is defined twice across included files. This pinpoints exactly
-# which file pair is the conflict so the user can comment one out.
+# Print the active Klipper config graph as NUL-delimited paths. This mirrors
+# Klipper's include handling: includes resolve relative to the file containing
+# them, globs are supported, and commented-out include lines are ignored.
+list_active_klipper_configs() {
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    [ -f "$pcfg" ] || return 1
+
+    python3 - "$pcfg" <<'PY'
+import glob
+import os
+import re
+import sys
+
+include_re = re.compile(r"^\[include\s+([^\]]+)\]$")
+seen = set()
+
+def walk(filename):
+    filename = os.path.abspath(filename)
+    if filename in seen:
+        return
+    seen.add(filename)
+    sys.stdout.write(filename + "\0")
+    try:
+        with open(filename, encoding="utf-8", errors="replace") as config_file:
+            lines = config_file
+            for line in lines:
+                line = line.split("#", 1)[0].strip()
+                match = include_re.match(line)
+                if not match:
+                    continue
+                include_glob = os.path.join(os.path.dirname(filename), match.group(1).strip())
+                for child in sorted(glob.glob(include_glob)):
+                    if os.path.isfile(child):
+                        walk(child)
+    except OSError:
+        pass
+
+walk(sys.argv[1])
+PY
+}
+
+# Scan the active printer.cfg include graph for duplicate [gcode_macro NAME]
+# declarations. Files preserved on disk for stock restore are intentionally not
+# scanned unless printer.cfg can reach them through an active [include] line.
 find_duplicate_macros() {
     banner "Scanning for duplicate gcode_macro declarations"
 
-    if [ ! -d "$CONFIG_DIR" ]; then
-        warn "Config directory not found - skipping scan"
+    if [ ! -f "${CONFIG_DIR}/printer.cfg" ]; then
+        warn "printer.cfg not found - skipping scan"
         return 0
     fi
 
     local tmp
     tmp=$(mktemp /tmp/aio_macros.XXXXXX) || return 0
 
-    # Skip backup files/dirs Klipper does not load. Happy Hare and the AIO
-    # leave timestamped printer-*.cfg / gcode_macro-*.cfg snapshots directly
-    # in CONFIG_DIR, and scanning them creates false duplicate warnings.
-    find "$CONFIG_DIR" -maxdepth 4 -type f -name '*.cfg' \
-        -not -path '*/backup_*/*' \
-        -not -path '*/mmu-2*/*' \
-        -not -path '*/_FIRST_STOCK/*' \
-        -not -name 'printer-*.cfg' \
-        -not -name 'gcode_macro-*.cfg' \
-        -not -name '*.bak' \
-        -not -name '*.bak.*' \
-        -print0 2>/dev/null | \
+    list_active_klipper_configs | \
     xargs -0 grep -Hn -E '^\[gcode_macro [^]]+\]' 2>/dev/null > "$tmp" || true
 
     if [ ! -s "$tmp" ]; then
@@ -2435,7 +2464,7 @@ find_duplicate_macros() {
         return 0
     fi
 
-    warn "Duplicate gcode_macro declarations detected — Klipper will refuse to load:"
+    warn "Duplicate active gcode_macro declarations detected — Klipper will refuse to load:"
     while IFS= read -r name; do
         warn "  [gcode_macro ${name}]:"
         grep -F "[gcode_macro ${name}]" "$tmp" | while IFS=: read -r path line _; do
