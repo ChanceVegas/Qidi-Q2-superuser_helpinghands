@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC2.18)
+   Qidi Q2 Superuser - AIO Setup Menu (RC2.19)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -70,6 +70,10 @@ Option 1 captures the current `/home/mks/printer_data/config` state before it in
 
 Option 4 (**Revert to Backup**) prefers that first stock snapshot, restores it over the active Klipper config directory, removes AIO-installed runtime directories and residue, and verifies stock display services. Root-level AIO KAMP files such as `KAMP_Settings.cfg`, `Adaptive_Meshing.cfg`, `Line_Purge.cfg`, and `Smart_Park.cfg` are treated as install artifacts; the stock `KAMP/` directory is preserved through backup/restore instead of being blindly removed.
 
+## What is Happier Hare?
+
+Happier Hare is this project's Qidi Q2 compatibility layer for HelixScreen's upstream Happy Hare backend. It is not a replacement for Happy Hare. The patched HelixScreen build enables the native AMS environment indicator, Qidi Box temperature and humidity readings, and dryer overlay controls while BunnyBox owns the Box hardware. The macro dryer buttons remain available as a fallback.
+
 ## Filament drying (BunnyBox installs only)
 
 After installing BunnyBox (option 1), the following one-tap drying macros are available from the touchscreen or the Klipper console. Spools rotate automatically throughout each cycle.
@@ -112,6 +116,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.19 | Adds a dedicated Happier Hare explanation to the in-app About screen and README, clarifying how the Qidi Q2 HelixScreen compatibility layer relates to upstream Happy Hare |
 | RC2.18 | Refreshes the in-app About screen and README to describe hosted Happier Hare archive installs, native Qidi Box sensor/dryer support, optional addons, option 8 runtime health checks, full restore behavior, and the currently disabled KlipperScreen path |
 | RC2.17 | Updates the validated HelixScreen pin to `v0.99.71` and adds a guarded upstream-release monitor plus local prepare script for future HelixScreen upgrades |
 | RC2.16 | Makes option 8's duplicate-macro verifier follow the active `printer.cfg` include graph, so stock `KAMP/` files preserved for Revert to Backup are not mistaken for active duplicate macros |

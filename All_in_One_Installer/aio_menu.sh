@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.18'
+AIO_VERSION='RC2.19'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -3036,6 +3036,14 @@ ${C_BOLD}What it can install:${C_RESET}
   ${C_YELLOW}KlipperScreen Happy Hare Edition${C_RESET}
     - Installer body is preserved, but menu option 2 is disabled while
       the Q2 display backend issue is investigated
+
+${C_BOLD}What is Happier Hare?${C_RESET}
+  Happier Hare is this project's Qidi Q2 compatibility layer for
+  HelixScreen's upstream Happy Hare backend. It is not a replacement
+  for Happy Hare. The patched HelixScreen build adds the native AMS
+  environment indicator, Qidi Box temperature and humidity readings,
+  and dryer overlay controls while BunnyBox owns the Box hardware.
+  The macro dryer buttons remain available as a fallback.
 
 ${C_BOLD}Optional addons:${C_RESET}
   - Idle Fan Shutdown: temperature-gated fan/heater shutdown after 10m idle
