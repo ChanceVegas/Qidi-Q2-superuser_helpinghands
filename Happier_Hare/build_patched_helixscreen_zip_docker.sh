@@ -4,12 +4,12 @@
 #
 # Output:
 #   Happier_Hare/dist/helixscreen-pi.zip
-#   Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.11.zip
+#   Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.15.zip
 # =====================================================================
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.11'
+HAPPIER_HARE_VERSION='RC2.15'
 HELIXSCREEN_PIN="${HELIXSCREEN_PIN:-v0.99.70}"
 HELIXSCREEN_REPO="${HELIXSCREEN_REPO:-https://github.com/prestonbrown/helixscreen.git}"
 HELIXSCREEN_BUILD_JOBS="${HELIXSCREEN_BUILD_JOBS:-1}"
@@ -18,6 +18,8 @@ WORK_ROOT="${HAPPIER_HARE_BUILD_ROOT:-/private/tmp/happier-hare-helixscreen-buil
 SOURCE_DIR="${WORK_ROOT}/helixscreen-${HELIXSCREEN_PIN}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AIO_TEST_REF="${AIO_TEST_REF:-$(git -C "${SCRIPT_DIR}/.." branch --show-current 2>/dev/null || printf 'main')}"
+[ -n "$AIO_TEST_REF" ] || AIO_TEST_REF='main'
 PATCH_FILE="${SCRIPT_DIR}/patches/helixscreen-v0.99.70-happier-hare.patch"
 OUT_DIR="${SCRIPT_DIR}/dist"
 OUT_ZIP="${OUT_DIR}/helixscreen-pi-happier-hare-${HAPPIER_HARE_VERSION}.zip"
@@ -159,9 +161,10 @@ verify_zip() {
         warn "Could not verify STOP=1 in helix-screen"
     fi
 
-    if grep -Fq 'temperature_sensor box' "$strings_file" && \
+    if grep -Fq 'aht10 box' "$strings_file" && \
+       grep -Fq 'temperature_sensor box' "$strings_file" && \
        grep -Fq 'heater_generic box' "$strings_file"; then
-        ok "helix-screen contains Happy Hare Qidi Box sensor paths"
+        ok "helix-screen contains Happy Hare Qidi Box AHT10 sensor paths"
         checks=$((checks + 1))
     elif grep -Fq 'aht20_f heater_box' "$strings_file"; then
         ok "helix-screen contains stock Qidi Box AHT20 humidity path"
@@ -188,9 +191,9 @@ Copy the archive to the Q2:
   scp "${PLAIN_ZIP}" mks@<printer-ip>:/home/mks/helixscreen-pi-happier-hare.zip
 
 Then run the AIO branch with the local patched zip:
-  curl -fsSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/claude/happier-hare-patched-zip-rc20/All_in_One_Installer/aio_menu.sh | \\
+  curl -fsSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/${AIO_TEST_REF}/All_in_One_Installer/aio_menu.sh | \\
   HAPPIER_HARE_ZIP_URL=/home/mks/helixscreen-pi-happier-hare.zip \\
-  AIO_REPO_REF=claude/happier-hare-patched-zip-rc20 \\
+  AIO_REPO_REF=${AIO_TEST_REF} \\
   bash
 EOF
 }

@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.14'
+AIO_VERSION='RC2.16'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -33,7 +33,7 @@ HELIXSCREEN_PIN='v0.99.70'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_RELEASE_ZIP="https://github.com/prestonbrown/helixscreen/releases/download/${HELIXSCREEN_PIN}/helixscreen-pi.zip"
 HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${REPO_REF}/Happier_Hare/install_happier_hare.sh"
-HAPPIER_HARE_RELEASE_TAG="${HAPPIER_HARE_RELEASE_TAG:-happier-hare-rc2.12}"
+HAPPIER_HARE_RELEASE_TAG="${HAPPIER_HARE_RELEASE_TAG:-happier-hare-rc2.15}"
 HAPPIER_HARE_RELEASE_ZIP="https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip"
 HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
 HAPPIER_HARE_LOCAL_ZIP="${HAPPIER_HARE_LOCAL_ZIP:-/home/mks/helixscreen-pi-happier-hare.zip}"
@@ -322,6 +322,56 @@ print(", ".join(parts) if parts else "mmu object reachable")
     else
         warn "Could not query Moonraker mmu object"
     fi
+
+    verify_qidi_box_runtime_sensors
+}
+
+verify_qidi_box_runtime_sensors() {
+    banner "Qidi Box live sensor health"
+
+    local response summary level message
+    if ! response=$(moonraker_get "/printer/objects/query?aht10%20box1_env=temperature,humidity&temperature_sensor%20box1_env=temperature,humidity&heater_generic%20box1_heater=temperature,target,power"); then
+        warn "Could not query Qidi Box sensor objects through Moonraker"
+        return 0
+    fi
+
+    summary=$(printf '%s' "$response" | python3 -c '
+import json
+import sys
+
+status = json.load(sys.stdin).get("result", {}).get("status", {})
+aht = status.get("aht10 box1_env", {})
+env = status.get("temperature_sensor box1_env", {})
+heater = status.get("heater_generic box1_heater", {})
+
+def emit(level, label, value, suffix=""):
+    if isinstance(value, (int, float)):
+        print(f"{level}|{label}: {value}{suffix}")
+    else:
+        print(f"WARN|{label}: not published")
+
+emit("OK", "Box environment temperature", aht.get("temperature"), " C")
+emit("OK", "Box environment humidity", aht.get("humidity"), " %")
+emit("OK", "Box heater temperature", heater.get("temperature"), " C")
+emit("OK", "Box heater target", heater.get("target"), " C")
+emit("OK", "Box heater power", heater.get("power"), "")
+
+if not isinstance(env.get("humidity"), (int, float)):
+    print("INFO|temperature_sensor box1_env wrapper does not publish humidity; HelixScreen must read aht10 box1_env")
+' 2>/dev/null || true)
+
+    if [ -z "$summary" ]; then
+        warn "Qidi Box sensor query returned, but status could not be parsed"
+        return 0
+    fi
+
+    while IFS='|' read -r level message; do
+        case "$level" in
+            OK) ok "$message" ;;
+            INFO) info "$message" ;;
+            *) warn "$message" ;;
+        esac
+    done <<< "$summary"
 }
 
 verify_runtime_health() {
@@ -382,7 +432,7 @@ verify_qidi_box_helixscreen() {
         warn "HelixScreen version ${v} is older than v0.99.66 - Qidi Box AMS may not be detected"
     fi
 
-    local timer_patched=0 stop_patched=0 env_sensor_patch=0 seen_binary=0
+    local timer_patched=0 stop_patched=0 env_sensor_patch=0 aht10_sensor_patch=0 seen_binary=0
     local target
     while IFS= read -r target; do
         [ -f "$target" ] || continue
@@ -397,6 +447,9 @@ verify_qidi_box_helixscreen() {
         elif LC_ALL=C grep -aFq 'MMU_HEATER DRY=0' "$target"; then
             warn "$(basename "$target") still uses DRY=0 for Happy Hare dryer stop - native stop may be ignored"
         fi
+        if LC_ALL=C grep -aFq 'aht10 box' "$target"; then
+            aht10_sensor_patch=1
+        fi
         if LC_ALL=C grep -aFq 'temperature_sensor box' "$target" || \
            LC_ALL=C grep -aFq 'aht20_f heater_box' "$target"; then
             env_sensor_patch=1
@@ -410,6 +463,12 @@ verify_qidi_box_helixscreen() {
     fi
     if [ "$stop_patched" -eq 1 ]; then
         ok "HelixScreen Happy Hare dryer stop command uses STOP=1"
+    fi
+    if [ "$aht10_sensor_patch" -eq 1 ]; then
+        ok "HelixScreen binary has BunnyBox AHT10 humidity sensor support"
+    elif bunnybox_installed; then
+        warn "HelixScreen binary does not show BunnyBox AHT10 humidity support"
+        warn "Native Box humidity may stay blank; install the RC2.15+ Happier Hare zip."
     fi
     if [ "$env_sensor_patch" -eq 1 ]; then
         ok "HelixScreen binary has Happier Hare Qidi Box environment sensor support"
@@ -2331,33 +2390,62 @@ run_all_verifiers() {
     press_enter
 }
 
-# Scan every .cfg under CONFIG_DIR for duplicate [gcode_macro NAME] decls.
-# Klipper refuses to start with "gcode command X already registered" if any
-# macro name is defined twice across included files. This pinpoints exactly
-# which file pair is the conflict so the user can comment one out.
+# Print the active Klipper config graph as NUL-delimited paths. This mirrors
+# Klipper's include handling: includes resolve relative to the file containing
+# them, globs are supported, and commented-out include lines are ignored.
+list_active_klipper_configs() {
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    [ -f "$pcfg" ] || return 1
+
+    python3 - "$pcfg" <<'PY'
+import glob
+import os
+import re
+import sys
+
+include_re = re.compile(r"^\[include\s+([^\]]+)\]$")
+seen = set()
+
+def walk(filename):
+    filename = os.path.abspath(filename)
+    if filename in seen:
+        return
+    seen.add(filename)
+    sys.stdout.write(filename + "\0")
+    try:
+        with open(filename, encoding="utf-8", errors="replace") as config_file:
+            lines = config_file
+            for line in lines:
+                line = line.split("#", 1)[0].strip()
+                match = include_re.match(line)
+                if not match:
+                    continue
+                include_glob = os.path.join(os.path.dirname(filename), match.group(1).strip())
+                for child in sorted(glob.glob(include_glob)):
+                    if os.path.isfile(child):
+                        walk(child)
+    except OSError:
+        pass
+
+walk(sys.argv[1])
+PY
+}
+
+# Scan the active printer.cfg include graph for duplicate [gcode_macro NAME]
+# declarations. Files preserved on disk for stock restore are intentionally not
+# scanned unless printer.cfg can reach them through an active [include] line.
 find_duplicate_macros() {
     banner "Scanning for duplicate gcode_macro declarations"
 
-    if [ ! -d "$CONFIG_DIR" ]; then
-        warn "Config directory not found - skipping scan"
+    if [ ! -f "${CONFIG_DIR}/printer.cfg" ]; then
+        warn "printer.cfg not found - skipping scan"
         return 0
     fi
 
     local tmp
     tmp=$(mktemp /tmp/aio_macros.XXXXXX) || return 0
 
-    # Skip backup files/dirs Klipper does not load. Happy Hare and the AIO
-    # leave timestamped printer-*.cfg / gcode_macro-*.cfg snapshots directly
-    # in CONFIG_DIR, and scanning them creates false duplicate warnings.
-    find "$CONFIG_DIR" -maxdepth 4 -type f -name '*.cfg' \
-        -not -path '*/backup_*/*' \
-        -not -path '*/mmu-2*/*' \
-        -not -path '*/_FIRST_STOCK/*' \
-        -not -name 'printer-*.cfg' \
-        -not -name 'gcode_macro-*.cfg' \
-        -not -name '*.bak' \
-        -not -name '*.bak.*' \
-        -print0 2>/dev/null | \
+    list_active_klipper_configs | \
     xargs -0 grep -Hn -E '^\[gcode_macro [^]]+\]' 2>/dev/null > "$tmp" || true
 
     if [ ! -s "$tmp" ]; then
@@ -2376,7 +2464,7 @@ find_duplicate_macros() {
         return 0
     fi
 
-    warn "Duplicate gcode_macro declarations detected — Klipper will refuse to load:"
+    warn "Duplicate active gcode_macro declarations detected — Klipper will refuse to load:"
     while IFS= read -r name; do
         warn "  [gcode_macro ${name}]:"
         grep -F "[gcode_macro ${name}]" "$tmp" | while IFS=: read -r path line _; do

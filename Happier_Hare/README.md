@@ -17,8 +17,9 @@ backend so the native environment indicator and dryer controls can appear.
 
 - exposes Happy Hare as an environment-capable backend for the AMS panel
 - marks Happy Hare dryer support available for the Qidi/BunnyBox path
-- subscribes to Happy Hare/Qidi Box `temperature_sensor box<N>_env` sensors
-  and stock-path `aht20_f heater_box<N>` sensors with humidity fields
+- subscribes to Happy Hare/Qidi Box `temperature_sensor box<N>_env` sensors,
+  BunnyBox `aht10 box<N>_env` humidity sensors, and stock-path
+  `aht20_f heater_box<N>` sensors with humidity fields
 - maps `heater_generic box<N>_heater` temperature/target state into the dryer
   status model
 - maps Qidi Box heater/environment temperature and humidity into Happy Hare's
@@ -59,7 +60,7 @@ binary, because Moonraker subscription fields, environment indicator visibility,
 and dryer-overlay behavior are compiled C++ logic. That artifact can be supplied
 through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. The AIO also probes the
 stable release asset
-`happier-hare-rc2.0/helixscreen-pi.zip` and installs it automatically once that
+`happier-hare-rc2.15/helixscreen-pi.zip` and installs it automatically once that
 asset exists.
 
 ## Local Docker Build
@@ -75,7 +76,7 @@ Hare patch, builds the Pi DRM/fbdev binaries in Docker, and writes:
 
 ```text
 Happier_Hare/dist/helixscreen-pi.zip
-Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.11.zip
+Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.15.zip
 ```
 
 Copy the plain zip to the Q2 and point AIO at that local file:
@@ -83,9 +84,9 @@ Copy the plain zip to the Q2 and point AIO at that local file:
 ```bash
 scp Happier_Hare/dist/helixscreen-pi.zip mks@<printer-ip>:/home/mks/helixscreen-pi-happier-hare.zip
 
-curl -fsSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/claude/happier-hare-patched-zip-rc20/All_in_One_Installer/aio_menu.sh |
+curl -fsSL https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/main/All_in_One_Installer/aio_menu.sh |
 HAPPIER_HARE_ZIP_URL=/home/mks/helixscreen-pi-happier-hare.zip \
-AIO_REPO_REF=claude/happier-hare-patched-zip-rc20 \
+AIO_REPO_REF=main \
 bash
 ```
 
