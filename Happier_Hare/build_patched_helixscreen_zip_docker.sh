@@ -4,23 +4,24 @@
 #
 # Output:
 #   Happier_Hare/dist/helixscreen-pi.zip
-#   Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.15.zip
+#   Happier_Hare/dist/helixscreen-pi-happier-hare-<RC>.zip
 # =====================================================================
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.15'
-HELIXSCREEN_PIN="${HELIXSCREEN_PIN:-v0.99.70}"
+HAPPIER_HARE_VERSION='RC2.17'
+HELIXSCREEN_PIN="${HELIXSCREEN_PIN:-v0.99.71}"
 HELIXSCREEN_REPO="${HELIXSCREEN_REPO:-https://github.com/prestonbrown/helixscreen.git}"
-HELIXSCREEN_BUILD_JOBS="${HELIXSCREEN_BUILD_JOBS:-1}"
+HELIXSCREEN_BUILD_JOBS="${HELIXSCREEN_BUILD_JOBS:-4}"
 HELIXSCREEN_TOOLCHAIN_IMAGE="${HELIXSCREEN_TOOLCHAIN_IMAGE:-helixscreen/toolchain-pi-happier-hare}"
+HELIXSCREEN_REBUILD_TOOLCHAIN="${HELIXSCREEN_REBUILD_TOOLCHAIN:-0}"
 WORK_ROOT="${HAPPIER_HARE_BUILD_ROOT:-/private/tmp/happier-hare-helixscreen-build}"
 SOURCE_DIR="${WORK_ROOT}/helixscreen-${HELIXSCREEN_PIN}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AIO_TEST_REF="${AIO_TEST_REF:-$(git -C "${SCRIPT_DIR}/.." branch --show-current 2>/dev/null || printf 'main')}"
 [ -n "$AIO_TEST_REF" ] || AIO_TEST_REF='main'
-PATCH_FILE="${SCRIPT_DIR}/patches/helixscreen-v0.99.70-happier-hare.patch"
+PATCH_FILE="${SCRIPT_DIR}/patches/helixscreen-happier-hare.patch"
 OUT_DIR="${SCRIPT_DIR}/dist"
 OUT_ZIP="${OUT_DIR}/helixscreen-pi-happier-hare-${HAPPIER_HARE_VERSION}.zip"
 PLAIN_ZIP="${OUT_DIR}/helixscreen-pi.zip"
@@ -56,6 +57,12 @@ docker_build() {
 build_toolchain_image() {
     local dockerfile="${WORK_ROOT}/Dockerfile.toolchain-pi-happier-hare"
 
+    if [ "$HELIXSCREEN_REBUILD_TOOLCHAIN" != '1' ] &&
+       docker image inspect "$HELIXSCREEN_TOOLCHAIN_IMAGE" >/dev/null 2>&1; then
+        ok "Reusing cached toolchain image: ${HELIXSCREEN_TOOLCHAIN_IMAGE}"
+        return 0
+    fi
+
     banner "Building HelixScreen Pi toolchain image"
     docker_build \
         -t helixscreen/toolchain-pi \
@@ -75,6 +82,15 @@ EOF
         "$WORK_ROOT"
 }
 
+run_pi_build() {
+    local jobs="$1"
+    docker run --rm \
+        -v "${SOURCE_DIR}:/src" \
+        -w /src \
+        "$HELIXSCREEN_TOOLCHAIN_IMAGE" \
+        make _PARALLEL_CHECKED=1 PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j"$jobs"
+}
+
 prepare_source() {
     require_cmd git
     require_cmd patch
@@ -82,10 +98,8 @@ prepare_source() {
     banner "Preparing HelixScreen source"
     mkdir -p "$WORK_ROOT"
     if [ -d "${SOURCE_DIR}/.git" ]; then
-        info "Updating existing source tree: ${SOURCE_DIR}"
-        git -C "$SOURCE_DIR" fetch --tags origin
-        git -C "$SOURCE_DIR" checkout "$HELIXSCREEN_PIN"
-        git -C "$SOURCE_DIR" reset --hard "$HELIXSCREEN_PIN"
+        info "Resetting cached source tree: ${SOURCE_DIR}"
+        git -C "$SOURCE_DIR" reset --hard HEAD
         git -C "$SOURCE_DIR" submodule update --init --recursive
     else
         info "Cloning ${HELIXSCREEN_REPO} (${HELIXSCREEN_PIN})"
@@ -118,11 +132,13 @@ build_zip() {
 
     banner "Building patched Pi binaries"
     info "Using ${HELIXSCREEN_BUILD_JOBS} compile job(s)"
-    docker run --rm \
-        -v "${SOURCE_DIR}:/src" \
-        -w /src \
-        "$HELIXSCREEN_TOOLCHAIN_IMAGE" \
-        make _PARALLEL_CHECKED=1 PLATFORM_TARGET=pi-both SKIP_OPTIONAL_DEPS=1 -j"${HELIXSCREEN_BUILD_JOBS}"
+    if ! run_pi_build "$HELIXSCREEN_BUILD_JOBS"; then
+        if [ "$HELIXSCREEN_BUILD_JOBS" -eq 1 ]; then
+            return 1
+        fi
+        warn "Parallel build failed; retrying with one job to reduce linker memory pressure"
+        run_pi_build 1
+    fi
 
     banner "Packaging patched Pi archive"
     docker run --rm \

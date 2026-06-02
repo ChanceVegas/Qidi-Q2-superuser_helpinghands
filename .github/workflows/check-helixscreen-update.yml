@@ -1,0 +1,61 @@
+name: Check HelixScreen Update
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-release:
+    name: Check official release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout AIO repo
+        uses: actions/checkout@v4
+
+      - name: Check latest HelixScreen release
+        id: check
+        run: |
+          set +e
+          ./Happier_Hare/check_helixscreen_update.sh > /tmp/helixscreen-check.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/helixscreen-check.txt
+          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
+          sed -n 's/^LATEST_TAG=/latest_tag=/p' /tmp/helixscreen-check.txt >> "$GITHUB_OUTPUT"
+          sed -n 's/^PINNED_TAG=/pinned_tag=/p' /tmp/helixscreen-check.txt >> "$GITHUB_OUTPUT"
+          sed -n 's/^PATCH_STATUS=/patch_status=/p' /tmp/helixscreen-check.txt >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ] && [ "$status" -ne 10 ] && [ "$status" -ne 20 ]; then
+            exit "$status"
+          fi
+
+      - name: Open or refresh update issue
+        if: steps.check.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_TAG: ${{ steps.check.outputs.latest_tag }}
+          PINNED_TAG: ${{ steps.check.outputs.pinned_tag }}
+          PATCH_STATUS: ${{ steps.check.outputs.patch_status }}
+        run: |
+          set -euo pipefail
+          title="HelixScreen update available: ${LATEST_TAG}"
+          {
+            printf 'The official HelixScreen release `%s` is newer than the pinned `%s`.\n\n' "$LATEST_TAG" "$PINNED_TAG"
+            printf 'Patch compatibility: `%s`\n\n' "$PATCH_STATUS"
+            printf 'Run:\n\n```bash\n'
+            printf './Happier_Hare/prepare_helixscreen_update.sh %s <next-rc>\n' "$LATEST_TAG"
+            printf '```\n'
+          } > /tmp/helixscreen-update-issue.md
+
+          issue_number="$(gh issue list --state open --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --body-file /tmp/helixscreen-update-issue.md
+          else
+            gh issue create --title "$title" --body-file /tmp/helixscreen-update-issue.md
+          fi
