@@ -5,11 +5,11 @@ on:
     inputs:
       helix_tag:
         description: HelixScreen tag to patch
-        default: v0.99.70
+        default: v0.99.71
         required: true
       release_version:
         description: Artifact version label
-        default: happier-hare-rc2.15
+        default: happier-hare-rc2.17
         required: true
 
 permissions:
@@ -38,7 +38,7 @@ jobs:
       - name: Apply Happier Hare patch
         run: |
           set -euxo pipefail
-          patch -d helixscreen -p1 < aio/Happier_Hare/patches/helixscreen-v0.99.70-happier-hare.patch
+          patch -d helixscreen -p1 < aio/Happier_Hare/patches/helixscreen-happier-hare.patch
           git -C helixscreen diff --stat
 
       - name: Set up Docker Buildx

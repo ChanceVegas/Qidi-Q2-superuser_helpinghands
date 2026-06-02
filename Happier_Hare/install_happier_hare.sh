@@ -9,12 +9,12 @@
 
 set -euo pipefail
 
-HAPPIER_HARE_VERSION='RC2.11'
-HELIXSCREEN_PIN='v0.99.70'
+HAPPIER_HARE_VERSION='RC2.17'
+HELIXSCREEN_PIN='v0.99.71'
 HELIXSCREEN_INSTALLER="https://raw.githubusercontent.com/prestonbrown/helixscreen/${HELIXSCREEN_PIN}/scripts/install.sh"
 HELIXSCREEN_REPO='https://github.com/prestonbrown/helixscreen.git'
 HAPPIER_HARE_REPO_REF="${HAPPIER_HARE_REPO_REF:-main}"
-PATCH_URL="${HAPPIER_HARE_PATCH_URL:-https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${HAPPIER_HARE_REPO_REF}/Happier_Hare/patches/helixscreen-v0.99.70-happier-hare.patch}"
+PATCH_URL="${HAPPIER_HARE_PATCH_URL:-https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/refs/heads/${HAPPIER_HARE_REPO_REF}/Happier_Hare/patches/helixscreen-happier-hare.patch}"
 PATCHED_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
 WORK_ROOT="${HAPPIER_HARE_WORK_ROOT:-/home/mks/happier-hare}"
 SOURCE_DIR="${WORK_ROOT}/helixscreen-${HELIXSCREEN_PIN}"

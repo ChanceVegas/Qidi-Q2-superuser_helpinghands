@@ -7,13 +7,13 @@ on macro buttons.
 ## Goal
 
 On BunnyBox installs, Happy Hare owns the Qidi Box hardware. HelixScreen
-v0.99.70 already contains an AMS environment/dryer overlay, but its Happy Hare
+v0.99.71 already contains an AMS environment/dryer overlay, but its Happy Hare
 backend does not expose that overlay on the Q2 path. Happier Hare patches that
 backend so the native environment indicator and dryer controls can appear.
 
 ## Patch Set
 
-`patches/helixscreen-v0.99.70-happier-hare.patch` changes HelixScreen v0.99.70:
+`patches/helixscreen-happier-hare.patch` changes the pinned HelixScreen release:
 
 - exposes Happy Hare as an environment-capable backend for the AMS panel
 - marks Happy Hare dryer support available for the Qidi/BunnyBox path
@@ -42,7 +42,7 @@ backend so the native environment indicator and dryer controls can appear.
 # Patch command strings in the HelixScreen binary already installed on the Q2
 ./install_happier_hare.sh --patch-installed-binary
 
-# Clone HelixScreen v0.99.70 and apply the source patch
+# Clone the pinned HelixScreen release and apply the source patch
 ./install_happier_hare.sh --patch-source
 
 # Patch, build, and install locally when a Pi DRM toolchain is available
@@ -59,9 +59,8 @@ The full native UI and Box humidity patch still requires a rebuilt HelixScreen
 binary, because Moonraker subscription fields, environment indicator visibility,
 and dryer-overlay behavior are compiled C++ logic. That artifact can be supplied
 through `HAPPIER_HARE_ZIP_URL` or `--install-zip`. The AIO also probes the
-stable release asset
-`happier-hare-rc2.15/helixscreen-pi.zip` and installs it automatically once that
-asset exists.
+stable release asset `happier-hare-<rc>/helixscreen-pi.zip` and installs it
+automatically once that asset exists.
 
 ## Local Docker Build
 
@@ -71,13 +70,20 @@ To avoid waiting on GitHub Actions, build the patched Pi archive locally:
 ./Happier_Hare/build_patched_helixscreen_zip_docker.sh
 ```
 
-The script clones HelixScreen v0.99.70 into `/private/tmp`, applies the Happier
+The script clones the pinned HelixScreen release into `/private/tmp`, applies the Happier
 Hare patch, builds the Pi DRM/fbdev binaries in Docker, and writes:
 
 ```text
 Happier_Hare/dist/helixscreen-pi.zip
-Happier_Hare/dist/helixscreen-pi-happier-hare-RC2.15.zip
+Happier_Hare/dist/helixscreen-pi-happier-hare-<RC>.zip
 ```
+
+After the first build, the script reuses its cached Docker cross-toolchain image.
+Set `HELIXSCREEN_REBUILD_TOOLCHAIN=1` only when the upstream toolchain itself
+needs to be refreshed. The local compile uses four jobs by default; override it
+with `HELIXSCREEN_BUILD_JOBS=<n>` when a workstation needs a different limit.
+If a parallel link exceeds Docker's memory limit, the script automatically
+retries with one job while preserving the compiled object cache.
 
 Copy the plain zip to the Q2 and point AIO at that local file:
 
@@ -92,6 +98,23 @@ bash
 
 Local source builds target the Pi DRM binary used on the Qidi Q2
 (`/dev/dri/card0`) and require the `aarch64-linux-gnu-g++` toolchain.
+
+## HelixScreen Upgrade Lane
+
+The AIO deliberately pins a validated HelixScreen release. A daily GitHub
+Actions check opens an issue when upstream publishes a newer release and reports
+whether the existing patch still applies cleanly. It never publishes an archive
+or changes the AIO pin automatically.
+
+For a compatible upstream release, prepare the next candidate locally:
+
+```bash
+./Happier_Hare/prepare_helixscreen_update.sh v0.99.72 RC2.18
+```
+
+That command dry-runs the patch, updates the pin and release labels, validates
+the shell scripts, and builds the patched Pi zip with Docker. Review the diff and
+printer-test the archive before committing, publishing, or merging it.
 
 ## RC2.0 Scope
 

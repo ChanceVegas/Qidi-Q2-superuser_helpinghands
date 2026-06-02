@@ -136,11 +136,16 @@ Merged to `main` via PR #1 (2026-05-20):
 - `install_qidi_box_write()` — systemd drop-in for `HELIX_QIDI_BOX_WRITE=1`; `BoxWrite:` status line
 - `helixscreen_settings.json`: `"ams": { "spool_style": "3d" }` for Qidi Box AMS view
 
-## RC2 — Candidate Features (not yet implemented)
+## HelixScreen Upgrade Lane
 
-- HelixScreen version pinning to a tagged release instead of `main`
-- `update_qidi_box_dropin` migration helper
-- `/release` slash command for version bump + changelog + tag + push
+- HelixScreen is pinned to a validated tagged release. Do not point Option 1 at
+  upstream `main`.
+- `.github/workflows/check-helixscreen-update.yml` checks the official release
+  feed daily and opens an issue when upstream publishes a newer tag.
+- Run `./Happier_Hare/prepare_helixscreen_update.sh <tag> <next-rc>` to dry-run
+  the patch, update pins, validate shell scripts, and build the patched Pi zip.
+- Review and printer-test the archive before publishing or merging it. The
+  monitor intentionally never publishes or changes the pin automatically.
 
 ## RC11 — What's In It
 

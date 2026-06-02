@@ -110,6 +110,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.17 | Updates the validated HelixScreen pin to `v0.99.71` and adds a guarded upstream-release monitor plus local prepare script for future HelixScreen upgrades |
 | RC2.16 | Makes option 8's duplicate-macro verifier follow the active `printer.cfg` include graph, so stock `KAMP/` files preserved for Revert to Backup are not mistaken for active duplicate macros |
 | RC2.15 | Adds BunnyBox's live `aht10 box1_env` humidity path to the Happier Hare HelixScreen patch, points Option 1 at the updated patched archive, and reports live Qidi Box temperature, humidity, heater target, and heater power in option 8 |
 | RC2.14 | Preserves stock `/home/mks/printer_data/config/KAMP` during Revert to Backup: Option 1 backs it up with the config snapshot, cleanup no longer blindly deletes it after restore, and Revert verifies it returned when present in the selected backup |
