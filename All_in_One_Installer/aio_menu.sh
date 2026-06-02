@@ -18,7 +18,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.17'
+AIO_VERSION='RC2.18'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -3013,27 +3013,20 @@ point for every supported install / uninstall path.
 
 ${C_BOLD}What it can install:${C_RESET}
 
-  ${C_GREEN}BunnyBox & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
-    - Happy Hare MMU firmware/macros for multi-material printing
-    - HelixScreen replacement touchscreen UI (pinned >= ${HELIXSCREEN_PIN})
-    - Happier Hare hook: installs a rebuilt HelixScreen archive from
-      HAPPIER_HARE_ZIP_URL, or from ${HAPPIER_HARE_LOCAL_ZIP} when that
-      file is present, for native Box humidity/dryer UI and Happy
-      Hare-compatible dryer commands
-    - Unified printer.cfg + gcode_macro.cfg
-    - box_drying.cfg: spool rotation during filament drying using
-      Happy Hare's Environment Manager, with humidity-based early
-      termination via the AHT2X sensor
-    - KAMP adaptive bed meshing
-    - ${C_CYAN}Strips the HELIX_QIDI_BOX_WRITE drop-in${C_RESET} if present.
-      That env var lets HelixScreen drive the Qidi Box natively
-      (load_filament, unload_filament, change_tool, set_tool_mapping).
-      With BunnyBox + Happy Hare driving the Box via MMU macros, having
-      HelixScreen also drive it natively causes contention.
-    - helixscreen_settings.json: AMS spool style set to '3d' for
-      Qidi Box slot visualization in the HelixScreen AMS panel
-    - Post-install verification: checks box.cfg, [box_stepper] sections,
-      officiall_filas_list.cfg, and HelixScreen version compatibility
+  ${C_GREEN}BunnyBox, Happy Hare & HelixScreen${C_RESET}  (Q2 ${C_BOLD}with${C_RESET} the Qidi Box)
+    - Happy Hare MMU firmware/macros for four-slot multi-material printing
+    - HelixScreen replacement touchscreen UI (pinned ${HELIXSCREEN_PIN})
+    - Happier Hare patched HelixScreen build for native Qidi Box
+      temperature, humidity, and dryer controls. Archive selection uses:
+        1. HAPPIER_HARE_ZIP_URL override
+        2. ${HAPPIER_HARE_LOCAL_ZIP}
+        3. hosted ${HAPPIER_HARE_RELEASE_TAG} release asset
+    - Unified printer.cfg + gcode_macro.cfg and KAMP adaptive meshing
+    - box_drying.cfg fallback macros with automatic spool rotation
+      through Happy Hare's Environment Manager and the Box AHT10 sensor
+    - ${C_CYAN}Strips the HELIX_QIDI_BOX_WRITE drop-in${C_RESET} if present so
+      Happy Hare alone owns Qidi Box write commands and avoids contention
+    - AMS spool style set to '3d' for Qidi Box slot visualization
 
   ${C_GREEN}Just Faster Printer${C_RESET}    (Q2 ${C_BOLD}without${C_RESET} the Box, stock screen)
     - Faster, cleaner PRINT_START / PRINT_END macros
@@ -3043,6 +3036,16 @@ ${C_BOLD}What it can install:${C_RESET}
   ${C_YELLOW}KlipperScreen Happy Hare Edition${C_RESET}
     - Installer body is preserved, but menu option 2 is disabled while
       the Q2 display backend issue is investigated
+
+${C_BOLD}Optional addons:${C_RESET}
+  - Idle Fan Shutdown: temperature-gated fan/heater shutdown after 10m idle
+  - Mainsail: web UI on port ${MAINSAIL_PORT}, including camera proxy setup
+
+${C_BOLD}Health Check / Run Verifiers:${C_RESET}
+  - Reports Klipper, Moonraker, Happy Hare/MMU, HelixScreen, Qidi Box
+    sensor/heater, Mainsail, and camera runtime health when applicable.
+  - Scans active Klipper includes for duplicate macros, orphan includes,
+    invalid options, and leftover MMU artifacts; prompts before repairs.
 
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
@@ -3054,19 +3057,21 @@ ${C_BOLD}What it can uninstall:${C_RESET}
     If the stock display stack does not verify, ${BACKUP_ROOT}/ is kept
     for recovery instead of being deleted.
   - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
-    oldest timestamped backup.
+    oldest timestamped backup, including the stock KAMP/ directory.
 
 ${C_BOLD}Safety:${C_RESET}
-  Every install and uninstall first writes a timestamped backup of
-  ${CONFIG_DIR}/ to ${BACKUP_ROOT}/<timestamp>/.
+  Install and repair paths write timestamped backups of ${CONFIG_DIR}/
+  to ${BACKUP_ROOT}/<timestamp>/ before editing configs.
+  Option 1 preserves the first clean config tree as ${BACKUP_ROOT}/_FIRST_STOCK.
   Health-check repairs also create a backup before editing configs.
+  Run FIRMWARE_RESTART, then sudo reboot, after an install or revert.
   Refuses to run as root.
 
 ${C_BOLD}Known limitations:${C_RESET}
-  - Native HelixScreen Qidi Box humidity/dryer UI currently requires the
-    Happier Hare patched HelixScreen zip via HAPPIER_HARE_ZIP_URL or
-    ${HAPPIER_HARE_LOCAL_ZIP}.
-    Macro buttons remain the fallback when using the stock HelixScreen zip.
+  - Native HelixScreen Qidi Box humidity/dryer UI requires the Happier
+    Hare patched HelixScreen zip. Option 1 installs the hosted
+    ${HAPPIER_HARE_RELEASE_TAG} asset automatically when available.
+    Macro buttons remain the fallback when the patched zip is unavailable.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
   - BunnyBox currently requires HelixScreen for MMU workflows; the
     stock Qidi screen does not yet expose the MMU UI.
