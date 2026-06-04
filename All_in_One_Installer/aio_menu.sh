@@ -11,14 +11,14 @@
 #   * Revert to Backup                 (uninstall both + restore stock)
 #   * About
 #
-# Target: Qidi Q2, ARM Linux, user 'mks', running Klipper. Do NOT run
-# as root - this script will refuse to.
+# Target: Qidi Q2, ARM Linux, legacy mks firmware layout, running Klipper.
+# Do NOT run as root - this script will refuse to.
 # =====================================================================
 
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.19'
+AIO_VERSION='RC2.20'
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -117,6 +117,55 @@ moonraker_get() {
     local path="$1"
     curl --fail --silent --show-error --max-time 3 \
         "http://127.0.0.1:${MOONRAKER_PORT}${path}" 2>/dev/null
+}
+
+q2_firmware_layout() {
+    local mks_target
+    mks_target=$(readlink -f /home/mks 2>/dev/null || true)
+
+    if [ "$mks_target" = "/home/qidi" ] || \
+       [ -d /home/qidi/QIDI_Client ] || \
+       systemctl cat qidi-client.service >/dev/null 2>&1; then
+        printf '%s\n' "q2_112"
+        return 0
+    fi
+
+    if [ -d /home/mks/QD_Q2 ] && [ -d "$CONFIG_DIR" ]; then
+        printf '%s\n' "legacy_mks"
+        return 0
+    fi
+
+    printf '%s\n' "unknown"
+}
+
+q2_firmware_layout_label() {
+    case "$(q2_firmware_layout)" in
+        q2_112) printf '%s\n' "1.1.2/qidi layout (unsupported)" ;;
+        legacy_mks) printf '%s\n' "legacy mks layout" ;;
+        *) printf '%s\n' "unknown layout" ;;
+    esac
+}
+
+unsupported_q2_112_layout() {
+    [ "$(q2_firmware_layout)" = "q2_112" ]
+}
+
+require_supported_firmware_layout() {
+    local action="${1:-this action}"
+
+    if unsupported_q2_112_layout; then
+        banner "Qidi Q2 firmware 1.1.2 detected"
+        err "AIO ${AIO_VERSION} is paused for the June 1.1.2 firmware layout."
+        warn "Blocked action: ${action}"
+        warn "Detected /home/mks -> /home/qidi, qidi-client.service, or /home/qidi/QIDI_Client."
+        warn "The current installer still assumes the legacy mks layout, makerbase-client"
+        warn "stock UI, and root-level Qidi macro files."
+        warn "Do not run install, revert, addon, or repair paths until the 1.1.2"
+        warn "compatibility lane is implemented."
+        return 1
+    fi
+
+    return 0
 }
 
 helixscreen_binary_candidates() {
@@ -1559,6 +1608,8 @@ verify_klipperscreen() {
 
 preflight() {
     banner "Pre-flight checks"
+
+    require_supported_firmware_layout "pre-flight install/addon checks" || return 1
 
     if ! curl --fail --silent --head --max-time 10 \
          'https://raw.githubusercontent.com' >/dev/null 2>&1; then
@@ -3072,6 +3123,8 @@ ${C_BOLD}Safety:${C_RESET}
   to ${BACKUP_ROOT}/<timestamp>/ before editing configs.
   Option 1 preserves the first clean config tree as ${BACKUP_ROOT}/_FIRST_STOCK.
   Health-check repairs also create a backup before editing configs.
+  Firmware layout detector blocks install/revert/addon/repair paths on
+  Q2 firmware 1.1.2 until the dedicated compatibility lane is ready.
   Run FIRMWARE_RESTART, then sudo reboot, after an install or revert.
   Refuses to run as root.
 
@@ -3081,6 +3134,9 @@ ${C_BOLD}Known limitations:${C_RESET}
     ${HAPPIER_HARE_RELEASE_TAG} asset automatically when available.
     Macro buttons remain the fallback when the patched zip is unavailable.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
+  - Qidi Q2 firmware 1.1.2 / V01.01.02.01 uses a new /home/qidi
+    layout and qidi-client stock UI. AIO currently detects and blocks
+    mutating actions on that layout.
   - BunnyBox currently requires HelixScreen for MMU workflows; the
     stock Qidi screen does not yet expose the MMU UI.
 
@@ -3092,7 +3148,12 @@ EOF
 
 # ---------- main menu ------------------------------------------------
 show_status_line() {
-    local bb_status display_status idle_status box_write_status mainsail_status camera_status
+    local bb_status display_status idle_status box_write_status mainsail_status camera_status firmware_status
+    if unsupported_q2_112_layout; then
+        firmware_status="${C_RED}1.1.2 unsupported${C_RESET}"
+    else
+        firmware_status="${C_GREEN}$(q2_firmware_layout_label)${C_RESET}"
+    fi
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
     else
@@ -3140,6 +3201,7 @@ show_status_line() {
            "$bb_status" "$display_status" "$idle_status" "$box_write_status"
     printf '  Mainsail: %b | Camera: %b\n' \
            "$mainsail_status" "$camera_status"
+    printf '  Firmware: %b\n' "$firmware_status"
 }
 
 draw_menu() {
@@ -3211,6 +3273,10 @@ main_loop() {
             2) warn "KlipperScreen install is temporarily disabled — display issue under investigation." ; press_enter ;;
             3) install_just_faster ;;
             4)
+                if ! require_supported_firmware_layout "Revert to Backup"; then
+                    press_enter
+                    continue
+                fi
                 warn "Revert to Backup will uninstall AIO display/MMU changes,"
                 warn "restore configs from ${BACKUP_ROOT}/, and re-enable stock lightdm + makerbase-client."
                 if confirm "Proceed with full revert?"; then
@@ -3218,10 +3284,28 @@ main_loop() {
                     press_enter
                 fi
                 ;;
-            5) menu_idle_fan_shutdown ;;
-            6) menu_mainsail ;;
+            5)
+                if require_supported_firmware_layout "Idle Fan Shutdown addon"; then
+                    menu_idle_fan_shutdown
+                else
+                    press_enter
+                fi
+                ;;
+            6)
+                if require_supported_firmware_layout "Mainsail addon"; then
+                    menu_mainsail
+                else
+                    press_enter
+                fi
+                ;;
             7) show_about ;;
-            8) run_all_verifiers ;;
+            8)
+                if require_supported_firmware_layout "Health Check / Run Verifiers repairs"; then
+                    run_all_verifiers
+                else
+                    press_enter
+                fi
+                ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac

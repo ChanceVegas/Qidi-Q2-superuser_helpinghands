@@ -6,10 +6,11 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC2.19)
+   Qidi Q2 Superuser - AIO Setup Menu (RC2.20)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
+  Firmware: legacy mks layout
 --------------------------------------------
   INSTALL
    1) Install BunnyBox & HelixScreen    (Q2 with Qidi Box)
@@ -33,6 +34,12 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 - SSH access as user `mks` (the default Qidi user)
 - Internet access from the printer
 - **Do not run as root** — the script will refuse to start
+
+## Firmware compatibility
+
+AIO currently supports the legacy Q2 firmware layout used by 1.1.0 and 1.1.1, where the active home/config path is `/home/mks`.
+
+Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.20 detects that layout and blocks install, revert, addon, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
 
 ## Install
 
@@ -116,6 +123,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.20 | Adds a Q2 firmware 1.1.2 / `V01.01.02.01` layout detector and blocks install/revert/addon/repair paths on the new `/home/qidi` + `qidi-client` firmware line until a dedicated compatibility lane is implemented |
 | RC2.19 | Adds a dedicated Happier Hare explanation to the in-app About screen and README, clarifying how the Qidi Q2 HelixScreen compatibility layer relates to upstream Happy Hare |
 | RC2.18 | Refreshes the in-app About screen and README to describe hosted Happier Hare archive installs, native Qidi Box sensor/dryer support, optional addons, option 8 runtime health checks, full restore behavior, and the currently disabled KlipperScreen path |
 | RC2.17 | Updates the validated HelixScreen pin to `v0.99.71` and adds a guarded upstream-release monitor plus local prepare script for future HelixScreen upgrades |
@@ -151,6 +159,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 ## Known limitations
 
 - **Native Qidi Box humidity/dryer UI requires the Happier Hare patched HelixScreen zip.** Option 1 automatically uses the hosted Happier Hare release asset when available. `HAPPIER_HARE_ZIP_URL` and `/home/mks/helixscreen-pi-happier-hare.zip` remain available as overrides. Without the patched zip, use the macro buttons or Klipper console.
+- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for mutating actions.** Do not run legacy install/revert paths on the new `/home/qidi` layout until the compatibility lane lands.
 - **MMU gear calibration is required after a fresh install.**
 - **Camera streaming (Mainsail)** requires a USB camera connected to the printer.
 
