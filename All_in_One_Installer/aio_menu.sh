@@ -11,14 +11,75 @@
 #   * Revert to Backup                 (uninstall both + restore stock)
 #   * About
 #
-# Target: Qidi Q2, ARM Linux, legacy mks firmware layout, running Klipper.
-# Do NOT run as root - this script will refuse to.
+# Target: Qidi Q2, ARM Linux, running Klipper. Legacy mks firmware is
+# supported for mutating actions; 1.1.2/qidi firmware is detected and
+# blocked until the compatibility lane is complete. Do NOT run as root.
 # =====================================================================
 
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.20'
+AIO_VERSION='RC2.21'
+
+# ---------- firmware layout ------------------------------------------
+detect_q2_firmware_layout() {
+    local mks_target
+    mks_target=$(readlink -f /home/mks 2>/dev/null || true)
+
+    if [ "$mks_target" = "/home/qidi" ] || \
+       [ -d /home/qidi/QIDI_Client ] || \
+       systemctl cat qidi-client.service >/dev/null 2>&1; then
+        printf '%s\n' "q2_112"
+        return 0
+    fi
+
+    if [ -d /home/mks/printer_data/config ]; then
+        printf '%s\n' "legacy_mks"
+        return 0
+    fi
+
+    printf '%s\n' "unknown"
+}
+
+AIO_LAYOUT="${AIO_LAYOUT_OVERRIDE:-$(detect_q2_firmware_layout)}"
+case "$AIO_LAYOUT" in
+    q2_112)
+        AIO_USER='qidi'
+        AIO_HOME='/home/qidi'
+        AIO_LAYOUT_NAME='Q2 firmware 1.1.2 / qidi layout'
+        AIO_LAYOUT_SUPPORTS_MUTATION=false
+        STOCK_UI_SERVICE='qidi-client'
+        STOCK_UI_LABEL='QIDIClient stock UI'
+        STOCK_DISPLAY_SERVICE=''
+        STOCK_DISPLAY_LABEL='none'
+        MACRO_LAYOUT='klipper-macros-qd'
+        CAMERA_STACK='crowsnest'
+        ;;
+    legacy_mks)
+        AIO_USER='mks'
+        AIO_HOME='/home/mks'
+        AIO_LAYOUT_NAME='legacy mks layout'
+        AIO_LAYOUT_SUPPORTS_MUTATION=true
+        STOCK_UI_SERVICE='makerbase-client'
+        STOCK_UI_LABEL='Makerbase stock UI'
+        STOCK_DISPLAY_SERVICE='lightdm'
+        STOCK_DISPLAY_LABEL='LightDM'
+        MACRO_LAYOUT='root'
+        CAMERA_STACK='ustreamer'
+        ;;
+    *)
+        AIO_USER="${USER:-mks}"
+        AIO_HOME="${HOME:-/home/mks}"
+        AIO_LAYOUT_NAME='unknown layout'
+        AIO_LAYOUT_SUPPORTS_MUTATION=false
+        STOCK_UI_SERVICE='makerbase-client'
+        STOCK_UI_LABEL='Makerbase stock UI'
+        STOCK_DISPLAY_SERVICE='lightdm'
+        STOCK_DISPLAY_LABEL='LightDM'
+        MACRO_LAYOUT='unknown'
+        CAMERA_STACK='unknown'
+        ;;
+esac
 
 # ---------- repo / installer URLs ------------------------------------
 REPO_REF="${AIO_REPO_REF:-main}"
@@ -36,28 +97,30 @@ HAPPIER_HARE_INSTALLER="https://raw.githubusercontent.com/ChanceVegas/Qidi-Q2-su
 HAPPIER_HARE_RELEASE_TAG="${HAPPIER_HARE_RELEASE_TAG:-happier-hare-rc2.17}"
 HAPPIER_HARE_RELEASE_ZIP="https://github.com/ChanceVegas/Qidi-Q2-superuser_helpinghands/releases/download/${HAPPIER_HARE_RELEASE_TAG}/helixscreen-pi.zip"
 HAPPIER_HARE_ZIP_URL="${HAPPIER_HARE_ZIP_URL:-}"
-HAPPIER_HARE_LOCAL_ZIP="${HAPPIER_HARE_LOCAL_ZIP:-/home/mks/helixscreen-pi-happier-hare.zip}"
+HAPPIER_HARE_LOCAL_ZIP="${HAPPIER_HARE_LOCAL_ZIP:-${AIO_HOME}/helixscreen-pi-happier-hare.zip}"
 HELIX_UNINSTALLER='https://releases.helixscreen.org/install.sh'
 # KAMP sub-files. KAMP_Settings.cfg is fetched from REPO_BASE (our custom settings);
 # the actual macro files come from upstream KAMP and are installed alongside it.
 KAMP_BASE='https://raw.githubusercontent.com/kyleisah/Klipper-Adaptive-Meshing-Purging/refs/heads/main/Configuration'
 # Mainsail is delegated to Camden-Winder's standalone installer, which
-# installs to /home/mks/mainsail on port 100 (Qidi's stock lighttpd owns
+# installs to ${AIO_HOME}/mainsail on port 100 (Qidi's stock lighttpd owns
 # port 80) and patches moonraker.conf for CORS.
 MAINSAIL_INSTALLER='https://raw.githubusercontent.com/Camden-Winder/Qidi-Q2-superuser/refs/heads/main/Install-Script/install-mainsail.sh'
 
 # ---------- paths ----------------------------------------------------
-CONFIG_DIR='/home/mks/printer_data/config'
-BACKUP_ROOT='/home/mks/mudstockbackups'
-HELIX_DIR='/home/mks/helixscreen'
-HELIX_PRINT_DIR='/home/mks/helix_print'
+CONFIG_DIR="${AIO_HOME}/printer_data/config"
+BACKUP_ROOT="${AIO_HOME}/mudstockbackups"
+HELIX_DIR="${AIO_HOME}/helixscreen"
+HELIX_PRINT_DIR="${AIO_HOME}/helix_print"
 HELIX_CONFIG_DIR="${HELIX_DIR}/config"
-HAPPY_HARE_DIR='/home/mks/Happy-Hare'
-KIAUH_DIR='/home/mks/kiauh'
-KIAUH_BACKUPS_DIR='/home/mks/kiauh-backups'
-KIAUH_UPPER_DIR='/home/mks/KIAUH'
-KIAUH_UPPER_BACKUPS_DIR='/home/mks/KIAUH-backups'
-MAINSAIL_DIR='/home/mks/mainsail'
+HAPPY_HARE_DIR="${AIO_HOME}/Happy-Hare"
+KIAUH_DIR="${AIO_HOME}/kiauh"
+KIAUH_BACKUPS_DIR="${AIO_HOME}/kiauh-backups"
+KIAUH_UPPER_DIR="${AIO_HOME}/KIAUH"
+KIAUH_UPPER_BACKUPS_DIR="${AIO_HOME}/KIAUH-backups"
+MAINSAIL_DIR="${AIO_HOME}/mainsail"
+KLIPPER_DIR="${AIO_HOME}/klipper"
+MOONRAKER_DIR="${AIO_HOME}/moonraker"
 MAINSAIL_NGINX_SITE_AVAIL='/etc/nginx/sites-available/mainsail'
 MAINSAIL_NGINX_SITE_ENABLED='/etc/nginx/sites-enabled/mainsail'
 MAINSAIL_PORT=100
@@ -72,8 +135,8 @@ CAMERA_MARKER="${BACKUP_ROOT}/.aio_camera_installed"
 USTREAMER_PACKAGE_MARKER="${BACKUP_ROOT}/.aio_ustreamer_installed"
 MOONRAKER_PORT=7125
 KLIPPERSCREEN_REPO_URL='https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edition.git'
-KLIPPERSCREEN_DIR='/home/mks/KlipperScreen'
-KLIPPERSCREEN_VENV='/home/mks/.KlipperScreen-env'
+KLIPPERSCREEN_DIR="${AIO_HOME}/KlipperScreen"
+KLIPPERSCREEN_VENV="${AIO_HOME}/.KlipperScreen-env"
 KLIPPERSCREEN_SERVICE='KlipperScreen'
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
@@ -120,52 +183,76 @@ moonraker_get() {
 }
 
 q2_firmware_layout() {
-    local mks_target
-    mks_target=$(readlink -f /home/mks 2>/dev/null || true)
-
-    if [ "$mks_target" = "/home/qidi" ] || \
-       [ -d /home/qidi/QIDI_Client ] || \
-       systemctl cat qidi-client.service >/dev/null 2>&1; then
-        printf '%s\n' "q2_112"
-        return 0
-    fi
-
-    if [ -d /home/mks/QD_Q2 ] && [ -d "$CONFIG_DIR" ]; then
-        printf '%s\n' "legacy_mks"
-        return 0
-    fi
-
-    printf '%s\n' "unknown"
+    printf '%s\n' "$AIO_LAYOUT"
 }
 
 q2_firmware_layout_label() {
-    case "$(q2_firmware_layout)" in
-        q2_112) printf '%s\n' "1.1.2/qidi layout (unsupported)" ;;
-        legacy_mks) printf '%s\n' "legacy mks layout" ;;
-        *) printf '%s\n' "unknown layout" ;;
+    case "$AIO_LAYOUT" in
+        q2_112) printf '%s\n' "${AIO_LAYOUT_NAME} (unsupported)" ;;
+        legacy_mks) printf '%s\n' "$AIO_LAYOUT_NAME" ;;
+        *) printf '%s\n' "${AIO_LAYOUT_NAME} (unsupported)" ;;
     esac
 }
 
-unsupported_q2_112_layout() {
-    [ "$(q2_firmware_layout)" = "q2_112" ]
+layout_supports_mutation() {
+    [ "$AIO_LAYOUT_SUPPORTS_MUTATION" = true ]
+}
+
+unsupported_mutation_layout() {
+    ! layout_supports_mutation
+}
+
+stock_display_stack_label() {
+    if [ -n "$STOCK_DISPLAY_SERVICE" ] && [ -n "$STOCK_UI_SERVICE" ]; then
+        printf '%s + %s\n' "$STOCK_DISPLAY_LABEL" "$STOCK_UI_LABEL"
+    elif [ -n "$STOCK_UI_SERVICE" ]; then
+        printf '%s\n' "$STOCK_UI_LABEL"
+    elif [ -n "$STOCK_DISPLAY_SERVICE" ]; then
+        printf '%s\n' "$STOCK_DISPLAY_LABEL"
+    else
+        printf '%s\n' "no separate stock display service"
+    fi
 }
 
 require_supported_firmware_layout() {
     local action="${1:-this action}"
 
-    if unsupported_q2_112_layout; then
-        banner "Qidi Q2 firmware 1.1.2 detected"
-        err "AIO ${AIO_VERSION} is paused for the June 1.1.2 firmware layout."
+    if unsupported_mutation_layout; then
+        banner "Unsupported Qidi Q2 firmware layout"
+        err "AIO ${AIO_VERSION} is paused for the detected firmware layout."
         warn "Blocked action: ${action}"
-        warn "Detected /home/mks -> /home/qidi, qidi-client.service, or /home/qidi/QIDI_Client."
-        warn "The current installer still assumes the legacy mks layout, makerbase-client"
-        warn "stock UI, and root-level Qidi macro files."
+        warn "Detected layout: ${AIO_LAYOUT_NAME}"
+        if [ "$AIO_LAYOUT" = "q2_112" ]; then
+            warn "Detected /home/mks -> /home/qidi, qidi-client.service, or /home/qidi/QIDI_Client."
+        fi
+        warn "AIO paths are now layout-aware, but install/revert/addon mutations"
+        warn "still need a dedicated compatibility pass for ${STOCK_UI_SERVICE} and ${MACRO_LAYOUT}."
         warn "Do not run install, revert, addon, or repair paths until the 1.1.2"
         warn "compatibility lane is implemented."
         return 1
     fi
 
     return 0
+}
+
+show_layout_report() {
+    local mks_target
+    banner "Detected firmware layout"
+    info "Layout: ${AIO_LAYOUT_NAME} (${AIO_LAYOUT})"
+    info "Mutation support: ${AIO_LAYOUT_SUPPORTS_MUTATION}"
+    info "AIO user/home: ${AIO_USER} / ${AIO_HOME}"
+    info "Config dir: ${CONFIG_DIR}"
+    info "Backup root: ${BACKUP_ROOT}"
+    info "Klipper dir: ${KLIPPER_DIR}"
+    info "Moonraker dir: ${MOONRAKER_DIR}"
+    info "Stock UI service: ${STOCK_UI_SERVICE:-none}"
+    info "Stock display service: ${STOCK_DISPLAY_SERVICE:-none}"
+    info "Macro layout: ${MACRO_LAYOUT}"
+    info "Camera stack: ${CAMERA_STACK}"
+    if [ -L /home/mks ]; then
+        mks_target=$(readlink -f /home/mks 2>/dev/null || printf 'unknown')
+        info "/home/mks target: ${mks_target}"
+    fi
 }
 
 helixscreen_binary_candidates() {
@@ -296,14 +383,24 @@ verify_helixscreen_runtime_health() {
 verify_stock_display_runtime_health() {
     banner "Qidi stock display runtime health"
 
-    verify_systemd_service_health lightdm "LightDM" true
-    verify_systemd_service_health makerbase-client "Makerbase stock UI" true
-
-    if ! systemctl is-active --quiet lightdm 2>/dev/null; then
-        show_systemd_journal_tail lightdm "LightDM"
+    if [ -n "$STOCK_DISPLAY_SERVICE" ]; then
+        verify_systemd_service_health "$STOCK_DISPLAY_SERVICE" "$STOCK_DISPLAY_LABEL" true
+    else
+        info "Stock display manager: none for ${AIO_LAYOUT_NAME}"
     fi
-    if ! systemctl is-active --quiet makerbase-client 2>/dev/null; then
-        show_systemd_journal_tail makerbase-client "Makerbase stock UI"
+    if [ -n "$STOCK_UI_SERVICE" ]; then
+        verify_systemd_service_health "$STOCK_UI_SERVICE" "$STOCK_UI_LABEL" true
+    else
+        info "Stock UI service: none"
+    fi
+
+    if [ -n "$STOCK_DISPLAY_SERVICE" ] && \
+       ! systemctl is-active --quiet "$STOCK_DISPLAY_SERVICE" 2>/dev/null; then
+        show_systemd_journal_tail "$STOCK_DISPLAY_SERVICE" "$STOCK_DISPLAY_LABEL"
+    fi
+    if [ -n "$STOCK_UI_SERVICE" ] && \
+       ! systemctl is-active --quiet "$STOCK_UI_SERVICE" 2>/dev/null; then
+        show_systemd_journal_tail "$STOCK_UI_SERVICE" "$STOCK_UI_LABEL"
     fi
 }
 
@@ -317,16 +414,16 @@ verify_happy_hare_runtime_health() {
         return 0
     fi
 
-    if [ -d "${HOME}/klipper/klippy/extras/mmu" ]; then
+    if [ -d "${KLIPPER_DIR}/klippy/extras/mmu" ]; then
         ok "Happy Hare Klipper extras package linked"
     else
-        warn "Happy Hare Klipper extras package missing: ${HOME}/klipper/klippy/extras/mmu"
+        warn "Happy Hare Klipper extras package missing: ${KLIPPER_DIR}/klippy/extras/mmu"
     fi
 
-    if [ -f "${HOME}/moonraker/moonraker/components/mmu_server.py" ]; then
+    if [ -f "${MOONRAKER_DIR}/moonraker/components/mmu_server.py" ]; then
         ok "Happy Hare Moonraker component linked"
     else
-        warn "Happy Hare Moonraker component missing: ${HOME}/moonraker/moonraker/components/mmu_server.py"
+        warn "Happy Hare Moonraker component missing: ${MOONRAKER_DIR}/moonraker/components/mmu_server.py"
     fi
 
     if grep -q '^\[mmu_server\]' "${CONFIG_DIR}/moonraker.conf" 2>/dev/null; then
@@ -1540,10 +1637,10 @@ detect_bunnybox_artifacts() {
         "${CONFIG_DIR}/mmu"
         "${CONFIG_DIR}/bunnybox_macros.cfg"
         "${CONFIG_DIR}/box_drying.cfg"
-        "${HOME}/klipper/klippy/extras/mmu.py"
-        "${HOME}/klipper/klippy/extras/mmu_machine.py"
-        "${HOME}/klipper/klippy/extras/mmu_leds.py"
-        "${HOME}/moonraker/moonraker/components/mmu_server.py"
+        "${KLIPPER_DIR}/klippy/extras/mmu.py"
+        "${KLIPPER_DIR}/klippy/extras/mmu_machine.py"
+        "${KLIPPER_DIR}/klippy/extras/mmu_leds.py"
+        "${MOONRAKER_DIR}/moonraker/components/mmu_server.py"
     )
     for p in "${paths[@]}"; do
         if [ -e "$p" ]; then
@@ -1566,18 +1663,25 @@ klipperscreen_installed() {
     [ -d /etc/systemd/system/KlipperScreen.service.d ]
 }
 
-# Mask the stock Qidi display services so KlipperScreen can own the screen.
+# Mask the stock Qidi display service so KlipperScreen can own the screen.
 # The upstream KlipperScreen-install.sh handles X server setup (xinit),
 # service creation, and display configuration — we just clear the way.
 prepare_display_for_klipperscreen() {
     banner "Preparing display for KlipperScreen"
-    sudo systemctl stop    makerbase-client       2>/dev/null || true
-    sudo systemctl disable makerbase-client       2>/dev/null || true
-    sudo systemctl mask    makerbase-client       2>/dev/null || true
+    if [ -n "$STOCK_UI_SERVICE" ]; then
+        sudo systemctl stop    "$STOCK_UI_SERVICE" 2>/dev/null || true
+        sudo systemctl disable "$STOCK_UI_SERVICE" 2>/dev/null || true
+        sudo systemctl mask    "$STOCK_UI_SERVICE" 2>/dev/null || true
+    fi
+    if [ -n "$STOCK_DISPLAY_SERVICE" ]; then
+        sudo systemctl stop    "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+        sudo systemctl disable "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+        sudo systemctl mask    "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+    fi
     sudo systemctl stop    helixscreen            2>/dev/null || true
     sudo systemctl disable helixscreen            2>/dev/null || true
     sudo systemctl mask    helixscreen            2>/dev/null || true
-    ok "Stock display services masked — KlipperScreen owns the screen"
+    ok "$(stock_display_stack_label) masked — KlipperScreen owns the screen"
 }
 
 uninstall_klipperscreen() {
@@ -1868,40 +1972,58 @@ cleanup_aio_install_artifacts() {
 }
 
 restore_stock_display_services() {
-    info "Re-enabling Qidi stock display services..."
+    info "Re-enabling Qidi stock display services: $(stock_display_stack_label)"
 
     # HelixScreen owns the framebuffer directly, so installs mask the stock
     # display stack. Revert must undo both service masking and the boot target.
     sudo systemctl daemon-reload                     2>/dev/null || true
     sudo systemctl set-default graphical.target      2>/dev/null || true
-    sudo systemctl reset-failed lightdm makerbase-client display-manager.service \
-                                                   2>/dev/null || true
-
-    sudo systemctl unmask  lightdm                   2>/dev/null || true
-    sudo systemctl unmask  display-manager.service   2>/dev/null || true
-    sudo systemctl unmask  makerbase-client          2>/dev/null || true
-    sudo systemctl enable  lightdm                   2>/dev/null || true
-    sudo systemctl enable  makerbase-client          2>/dev/null || true
+    if [ -n "$STOCK_DISPLAY_SERVICE" ]; then
+        sudo systemctl reset-failed "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+        sudo systemctl unmask       "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+        sudo systemctl enable       "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+    fi
+    if [ -n "$STOCK_UI_SERVICE" ]; then
+        sudo systemctl reset-failed "$STOCK_UI_SERVICE"      2>/dev/null || true
+        sudo systemctl unmask       "$STOCK_UI_SERVICE"      2>/dev/null || true
+        sudo systemctl enable       "$STOCK_UI_SERVICE"      2>/dev/null || true
+    fi
+    sudo systemctl reset-failed display-manager.service      2>/dev/null || true
+    sudo systemctl unmask  display-manager.service           2>/dev/null || true
 
     sudo systemctl stop helixscreen KlipperScreen    2>/dev/null || true
-    sudo systemctl start lightdm                     2>/dev/null || true
-    if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+    if [ -n "$STOCK_DISPLAY_SERVICE" ]; then
+        sudo systemctl start "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+    fi
+    if [ -n "$STOCK_DISPLAY_SERVICE" ] && \
+       ! systemctl is-active --quiet "$STOCK_DISPLAY_SERVICE" 2>/dev/null; then
         sudo systemctl start display-manager.service 2>/dev/null || true
     fi
     sleep 2
-    sudo systemctl start makerbase-client            2>/dev/null || true
+    if [ -n "$STOCK_UI_SERVICE" ]; then
+        sudo systemctl start "$STOCK_UI_SERVICE" 2>/dev/null || true
+    fi
 
-    if systemctl is-active --quiet lightdm 2>/dev/null && \
-       systemctl is-active --quiet makerbase-client 2>/dev/null; then
+    local display_ok=true ui_ok=true
+    if [ -n "$STOCK_DISPLAY_SERVICE" ] && \
+       ! systemctl is-active --quiet "$STOCK_DISPLAY_SERVICE" 2>/dev/null; then
+        display_ok=false
+    fi
+    if [ -n "$STOCK_UI_SERVICE" ] && \
+       ! systemctl is-active --quiet "$STOCK_UI_SERVICE" 2>/dev/null; then
+        ui_ok=false
+    fi
+
+    if [ "$display_ok" = true ] && [ "$ui_ok" = true ]; then
         ok "Qidi stock display services are active"
     else
         warn "Qidi stock display services were requested but one is not active"
-        warn "Run Option 8 or check: systemctl status lightdm makerbase-client"
-        if ! systemctl is-active --quiet lightdm 2>/dev/null; then
-            show_systemd_journal_tail lightdm "LightDM"
+        warn "Run Option 8 or check: systemctl status ${STOCK_DISPLAY_SERVICE:-display-manager.service} ${STOCK_UI_SERVICE:-}"
+        if [ "$display_ok" != true ]; then
+            show_systemd_journal_tail "$STOCK_DISPLAY_SERVICE" "$STOCK_DISPLAY_LABEL"
         fi
-        if ! systemctl is-active --quiet makerbase-client 2>/dev/null; then
-            show_systemd_journal_tail makerbase-client "Makerbase stock UI"
+        if [ "$ui_ok" != true ]; then
+            show_systemd_journal_tail "$STOCK_UI_SERVICE" "$STOCK_UI_LABEL"
         fi
         return 1
     fi
@@ -1928,13 +2050,12 @@ remove_backup_root_after_revert() {
     ok "Removed ${BACKUP_ROOT}/ after successful stock restore"
 }
 
-# Switch the Q2's active display from the stock Qidi services
-# (lightdm + makerbase-client) to HelixScreen. Inverse of the
-# unmask/enable/restart block in uninstall_helixscreen().
+# Switch the Q2's active display from the stock Qidi services to HelixScreen.
+# Inverse of the unmask/enable/restart block in uninstall_helixscreen().
 #
 # Why this exists: HelixScreen's upstream installer was written for the
 # Artillery M1 Pro and doesn't know about Qidi-specific display services.
-# Without this swap, lightdm + makerbase-client keep the stock UI on the
+# Without this swap, the stock UI service keeps the vendor UI on the
 # physical screen and HelixScreen never appears, even though the package
 # was installed correctly.
 switch_display_to_helixscreen() {
@@ -1944,12 +2065,16 @@ switch_display_to_helixscreen() {
         warn "HelixScreen package may not have installed correctly. Check output above."
         return 1
     fi
-    sudo systemctl stop    makerbase-client  2>/dev/null || true
-    sudo systemctl disable makerbase-client  2>/dev/null || true
-    sudo systemctl mask    makerbase-client  2>/dev/null || true
-    sudo systemctl stop    lightdm           2>/dev/null || true
-    sudo systemctl disable lightdm           2>/dev/null || true
-    sudo systemctl mask    lightdm           2>/dev/null || true
+    if [ -n "$STOCK_UI_SERVICE" ]; then
+        sudo systemctl stop    "$STOCK_UI_SERVICE" 2>/dev/null || true
+        sudo systemctl disable "$STOCK_UI_SERVICE" 2>/dev/null || true
+        sudo systemctl mask    "$STOCK_UI_SERVICE" 2>/dev/null || true
+    fi
+    if [ -n "$STOCK_DISPLAY_SERVICE" ]; then
+        sudo systemctl stop    "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+        sudo systemctl disable "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+        sudo systemctl mask    "$STOCK_DISPLAY_SERVICE" 2>/dev/null || true
+    fi
     sudo systemctl daemon-reload             2>/dev/null || true
     sudo systemctl unmask  helixscreen       2>/dev/null || true
     sudo systemctl enable  helixscreen       2>/dev/null || true
@@ -2001,8 +2126,8 @@ uninstall_helixscreen() {
     fi
 }
 
-# Full upstream-style revert: re-enables lightdm + makerbase-client and
-# restores from /home/mks/mudstockbackups via rsync (mirrors Camden-Winder
+# Full upstream-style revert: re-enables the stock display stack and
+# restores from the selected AIO backup via rsync (mirrors Camden-Winder
 # uninstall.sh).
 revert_to_backup() {
     banner "Revert to Backup (full stock restore)"
@@ -2151,13 +2276,13 @@ revert_to_backup() {
             remove_backup_root_after_revert || true
         else
             warn "Keeping ${BACKUP_ROOT}/ because stock display services did not verify"
-            warn "Fix LightDM/makerbase-client, then rerun Revert to Backup to remove AIO backups."
+            warn "Fix $(stock_display_stack_label), then rerun Revert to Backup to remove AIO backups."
         fi
     fi
 
     banner "Revert complete"
     info "Run FIRMWARE_RESTART from Klipper/Moonraker, then sudo reboot."
-    info "After reboot, confirm stock display startup with systemctl status lightdm makerbase-client."
+    info "After reboot, confirm stock display startup with systemctl status ${STOCK_DISPLAY_SERVICE:-display-manager.service} ${STOCK_UI_SERVICE:-}"
 }
 
 # ---------- post-install verification --------------------------------
@@ -3057,6 +3182,11 @@ show_about() {
     cat <<EOF
 ${C_CYAN}Qidi Q2 Superuser - All-in-One Installer${C_RESET}
 ${C_BOLD}Version:${C_RESET} ${AIO_VERSION}
+${C_BOLD}Detected layout:${C_RESET} ${AIO_LAYOUT_NAME} (${AIO_LAYOUT})
+${C_BOLD}Mutation support:${C_RESET} ${AIO_LAYOUT_SUPPORTS_MUTATION}
+${C_BOLD}AIO home/config:${C_RESET} ${AIO_HOME} / ${CONFIG_DIR}
+${C_BOLD}Stock display stack:${C_RESET} $(stock_display_stack_label)
+${C_BOLD}Macro/camera layout:${C_RESET} ${MACRO_LAYOUT} / ${CAMERA_STACK}
 
 A community-built toolkit to unlock advanced features on the Qidi Q2
 3D printer beyond stock Qidi firmware. This menu is the single entry
@@ -3111,7 +3241,8 @@ ${C_BOLD}What it can uninstall:${C_RESET}
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
     optional addons, display-service overrides, AIO-created KIAUH dirs,
     helix_print, and ${BACKUP_ROOT}/ after a successful restore.
-  - Revert re-enables lightdm + makerbase-client, sets graphical.target,
+  - On the supported legacy layout, Revert re-enables
+    $(stock_display_stack_label), sets graphical.target,
     and prints recent service logs if the stock display stack fails.
     If the stock display stack does not verify, ${BACKUP_ROOT}/ is kept
     for recovery instead of being deleted.
@@ -3123,8 +3254,9 @@ ${C_BOLD}Safety:${C_RESET}
   to ${BACKUP_ROOT}/<timestamp>/ before editing configs.
   Option 1 preserves the first clean config tree as ${BACKUP_ROOT}/_FIRST_STOCK.
   Health-check repairs also create a backup before editing configs.
-  Firmware layout detector blocks install/revert/addon/repair paths on
-  Q2 firmware 1.1.2 until the dedicated compatibility lane is ready.
+  Firmware layout detection resolves active home/config/service names.
+  Mutating paths remain blocked on unsupported layouts such as Q2
+  firmware 1.1.2 until the dedicated compatibility lane is ready.
   Run FIRMWARE_RESTART, then sudo reboot, after an install or revert.
   Refuses to run as root.
 
@@ -3135,8 +3267,8 @@ ${C_BOLD}Known limitations:${C_RESET}
     Macro buttons remain the fallback when the patched zip is unavailable.
   - ${C_YELLOW}MMU_CALIBRATE_GEAR${C_RESET} is required after clean installs.
   - Qidi Q2 firmware 1.1.2 / V01.01.02.01 uses a new /home/qidi
-    layout and qidi-client stock UI. AIO currently detects and blocks
-    mutating actions on that layout.
+    layout and qidi-client stock UI. AIO currently detects the new
+    paths/services and blocks mutating actions on that layout.
   - BunnyBox currently requires HelixScreen for MMU workflows; the
     stock Qidi screen does not yet expose the MMU UI.
 
@@ -3149,10 +3281,10 @@ EOF
 # ---------- main menu ------------------------------------------------
 show_status_line() {
     local bb_status display_status idle_status box_write_status mainsail_status camera_status firmware_status
-    if unsupported_q2_112_layout; then
-        firmware_status="${C_RED}1.1.2 unsupported${C_RESET}"
-    else
+    if layout_supports_mutation; then
         firmware_status="${C_GREEN}$(q2_firmware_layout_label)${C_RESET}"
+    else
+        firmware_status="${C_RED}$(q2_firmware_layout_label)${C_RESET}"
     fi
     if bunnybox_installed; then
         bb_status="${C_GREEN}installed${C_RESET}"
@@ -3278,7 +3410,7 @@ main_loop() {
                     continue
                 fi
                 warn "Revert to Backup will uninstall AIO display/MMU changes,"
-                warn "restore configs from ${BACKUP_ROOT}/, and re-enable stock lightdm + makerbase-client."
+                warn "restore configs from ${BACKUP_ROOT}/, and re-enable stock $(stock_display_stack_label)."
                 if confirm "Proceed with full revert?"; then
                     revert_to_backup
                     press_enter
