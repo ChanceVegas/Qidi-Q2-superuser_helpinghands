@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.21'
+AIO_VERSION='RC2.22'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -476,7 +476,7 @@ verify_qidi_box_runtime_sensors() {
     banner "Qidi Box live sensor health"
 
     local response summary level message
-    if ! response=$(moonraker_get "/printer/objects/query?aht10%20box1_env=temperature,humidity&temperature_sensor%20box1_env=temperature,humidity&heater_generic%20box1_heater=temperature,target,power"); then
+    if ! response=$(moonraker_get "/printer/objects/query?aht10%20box1_env=temperature,humidity&temperature_sensor%20box1_env=temperature,humidity&heater_generic%20box1_heater=temperature,target,power&aht20_f%20heater_box1=temperature,humidity&heater_generic%20heater_box1=temperature,target,power&temperature_sensor%20heater_temp_a_box1=temperature&temperature_sensor%20heater_temp_b_box1=temperature"); then
         warn "Could not query Qidi Box sensor objects through Moonraker"
         return 0
     fi
@@ -489,6 +489,10 @@ status = json.load(sys.stdin).get("result", {}).get("status", {})
 aht = status.get("aht10 box1_env", {})
 env = status.get("temperature_sensor box1_env", {})
 heater = status.get("heater_generic box1_heater", {})
+stock_aht = status.get("aht20_f heater_box1", {})
+stock_heater = status.get("heater_generic heater_box1", {})
+stock_temp_a = status.get("temperature_sensor heater_temp_a_box1", {})
+stock_temp_b = status.get("temperature_sensor heater_temp_b_box1", {})
 
 def emit(level, label, value, suffix=""):
     if isinstance(value, (int, float)):
@@ -496,13 +500,28 @@ def emit(level, label, value, suffix=""):
     else:
         print(f"WARN|{label}: not published")
 
-emit("OK", "Box environment temperature", aht.get("temperature"), " C")
-emit("OK", "Box environment humidity", aht.get("humidity"), " %")
-emit("OK", "Box heater temperature", heater.get("temperature"), " C")
-emit("OK", "Box heater target", heater.get("target"), " C")
-emit("OK", "Box heater power", heater.get("power"), "")
+if isinstance(aht.get("temperature"), (int, float)) or isinstance(aht.get("humidity"), (int, float)):
+    print("INFO|BunnyBox/AIO sensor namespace detected")
+    emit("OK", "Box environment temperature", aht.get("temperature"), " C")
+    emit("OK", "Box environment humidity", aht.get("humidity"), " %")
+    emit("OK", "Box heater temperature", heater.get("temperature"), " C")
+    emit("OK", "Box heater target", heater.get("target"), " C")
+    emit("OK", "Box heater power", heater.get("power"), "")
 
-if not isinstance(env.get("humidity"), (int, float)):
+if isinstance(stock_aht.get("temperature"), (int, float)) or isinstance(stock_aht.get("humidity"), (int, float)):
+    print("INFO|Stock Qidi Box sensor namespace detected")
+    emit("OK", "Stock Box environment temperature", stock_aht.get("temperature"), " C")
+    emit("OK", "Stock Box environment humidity", stock_aht.get("humidity"), " %")
+    emit("OK", "Stock Box heater temperature", stock_heater.get("temperature"), " C")
+    emit("OK", "Stock Box heater target", stock_heater.get("target"), " C")
+    emit("OK", "Stock Box heater power", stock_heater.get("power"), "")
+    emit("OK", "Stock Box heater temp A", stock_temp_a.get("temperature"), " C")
+    emit("OK", "Stock Box heater temp B", stock_temp_b.get("temperature"), " C")
+
+if not any(isinstance(obj.get(key), (int, float)) for obj in (aht, heater, stock_aht, stock_heater) for key in ("temperature", "humidity", "target", "power")):
+    print("WARN|No live Qidi Box temperature/heater values are currently published")
+
+if isinstance(aht.get("temperature"), (int, float)) and not isinstance(env.get("humidity"), (int, float)):
     print("INFO|temperature_sensor box1_env wrapper does not publish humidity; HelixScreen must read aht10 box1_env")
 ' 2>/dev/null || true)
 
@@ -2566,6 +2585,273 @@ run_all_verifiers() {
     press_enter
 }
 
+report_firmware_layout_files() {
+    banner "Firmware layout files"
+
+    if [ -d "$AIO_HOME" ]; then
+        ok "AIO home exists: ${AIO_HOME}"
+    else
+        warn "AIO home missing: ${AIO_HOME}"
+    fi
+    if [ -d "$CONFIG_DIR" ]; then
+        ok "Config dir exists: ${CONFIG_DIR}"
+    else
+        warn "Config dir missing: ${CONFIG_DIR}"
+    fi
+    if [ -d "${CONFIG_DIR}/klipper-macros-qd" ]; then
+        ok "Stock Qidi macro directory present: ${CONFIG_DIR}/klipper-macros-qd"
+    else
+        info "Stock Qidi macro directory not present: ${CONFIG_DIR}/klipper-macros-qd"
+    fi
+    if [ -d "${AIO_HOME}/QIDI_Client" ]; then
+        ok "QIDI_Client directory present: ${AIO_HOME}/QIDI_Client"
+    else
+        info "QIDI_Client directory not present: ${AIO_HOME}/QIDI_Client"
+    fi
+    if [ -f "${CONFIG_DIR}/crowsnest.conf" ]; then
+        ok "crowsnest.conf present"
+    else
+        info "crowsnest.conf not present"
+    fi
+    if [ -f "${CONFIG_DIR}/timelapse.cfg" ]; then
+        ok "timelapse.cfg present"
+    else
+        info "timelapse.cfg not present"
+    fi
+}
+
+report_stock_macro_layout() {
+    banner "Stock macro layout"
+
+    local macro_dir="${CONFIG_DIR}/klipper-macros-qd"
+    if [ ! -d "$macro_dir" ]; then
+        info "No klipper-macros-qd/ directory on this layout"
+        return 0
+    fi
+
+    local count=0
+    while IFS= read -r file; do
+        [ -n "$file" ] || continue
+        count=$((count + 1))
+        if [ "$count" -le 20 ]; then
+            info "  ${file#${CONFIG_DIR}/}"
+        fi
+    done < <(find "$macro_dir" -maxdepth 2 -type f -name '*.cfg' 2>/dev/null | sort)
+
+    if [ "$count" -eq 0 ]; then
+        warn "klipper-macros-qd/ exists but no .cfg files were found"
+    elif [ "$count" -gt 20 ]; then
+        info "  ... $((count - 20)) more .cfg files"
+    fi
+    info "Stock macro cfg count: ${count}"
+}
+
+report_qidi_box_object_inventory() {
+    banner "Qidi Box Moonraker object inventory"
+
+    local response summary level message
+    if ! response=$(moonraker_get "/printer/objects/list"); then
+        warn "Could not query Moonraker object list"
+        return 0
+    fi
+
+    summary=$(printf '%s' "$response" | python3 -c '
+import json
+import sys
+
+objects = json.load(sys.stdin).get("result", {}).get("objects", [])
+needles = ("box", "heater_box", "heater_temp", "heater_fan", "slot")
+matches = [name for name in objects if any(needle in name.lower() for needle in needles)]
+if not matches:
+    print("WARN|No Qidi Box-looking objects found in Moonraker")
+else:
+    for name in sorted(matches):
+        print(f"INFO|  {name}")
+
+expected_stock = [
+    "mcu mcu_box1",
+    "box_extras",
+    "box_stepper slot0",
+    "box_stepper slot1",
+    "box_stepper slot2",
+    "box_stepper slot3",
+    "aht20_f heater_box1",
+    "heater_generic heater_box1",
+]
+missing = [name for name in expected_stock if name not in objects]
+if missing:
+    print("WARN|Missing expected stock 1.1.2 objects: " + ", ".join(missing))
+else:
+    print("OK|Expected stock 1.1.2 Qidi Box objects are present")
+' 2>/dev/null || true)
+
+    if [ -z "$summary" ]; then
+        warn "Moonraker object list returned, but status could not be parsed"
+        return 0
+    fi
+
+    while IFS='|' read -r level message; do
+        case "$level" in
+            OK) ok "$message" ;;
+            INFO) info "$message" ;;
+            *) warn "$message" ;;
+        esac
+    done <<< "$summary"
+}
+
+report_active_config_graph() {
+    banner "Active Klipper include graph"
+
+    if [ ! -f "${CONFIG_DIR}/printer.cfg" ]; then
+        warn "printer.cfg not found at ${CONFIG_DIR}/printer.cfg"
+        return 0
+    fi
+
+    local count=0
+    while IFS= read -r -d '' file; do
+        count=$((count + 1))
+        if [ "$count" -le 40 ]; then
+            info "  ${file#${CONFIG_DIR}/}"
+        fi
+    done < <(list_active_klipper_configs)
+
+    if [ "$count" -eq 0 ]; then
+        warn "No active config files found from printer.cfg"
+    elif [ "$count" -gt 40 ]; then
+        info "  ... $((count - 40)) more active config files"
+    fi
+    info "Active config file count: ${count}"
+}
+
+find_duplicate_macros_readonly() {
+    banner "Scanning duplicate gcode_macro declarations (read-only)"
+
+    if [ ! -f "${CONFIG_DIR}/printer.cfg" ]; then
+        warn "printer.cfg not found - skipping scan"
+        return 0
+    fi
+
+    local summary level message
+    summary=$(list_active_klipper_configs | python3 -c '
+import collections
+import re
+import sys
+
+macro_re = re.compile(r"^\[gcode_macro\s+([^\]]+)\]")
+paths = [p.decode("utf-8", "replace") for p in sys.stdin.buffer.read().split(b"\0") if p]
+seen = collections.defaultdict(list)
+for path in paths:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as config_file:
+            for line_no, line in enumerate(config_file, 1):
+                match = macro_re.match(line.strip())
+                if match:
+                    seen[match.group(1)].append((path, line_no))
+    except OSError:
+        continue
+
+dups = {name: hits for name, hits in seen.items() if len(hits) > 1}
+if not seen:
+    print("INFO|No gcode_macro declarations found in the active include graph")
+elif not dups:
+    print("OK|No duplicate active gcode_macro declarations")
+else:
+    print("WARN|Duplicate active gcode_macro declarations detected")
+    for name in sorted(dups):
+        print(f"WARN|  [gcode_macro {name}]:")
+        for path, line_no in dups[name]:
+            print(f"WARN|    {path}:{line_no}")
+' 2>/dev/null || true)
+
+    if [ -z "$summary" ]; then
+        warn "Duplicate macro scan returned no parseable output"
+        return 0
+    fi
+
+    while IFS='|' read -r level message; do
+        case "$level" in
+            OK) ok "$message" ;;
+            INFO) info "$message" ;;
+            *) warn "$message" ;;
+        esac
+    done <<< "$summary"
+}
+
+check_invalid_klipper_options_readonly() {
+    banner "Checking invalid Klipper config options (read-only)"
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    if [ ! -f "$pcfg" ]; then
+        info "printer.cfg not found - skipping"
+        return 0
+    fi
+
+    if awk '/^\[bed_mesh\]/{flag=1; next} /^\[/{flag=0} flag && /^[[:space:]]*timeout[[:space:]]*:/{found=1} END{exit !found}' "$pcfg"; then
+        warn "Found 'timeout:' inside [bed_mesh] in printer.cfg"
+    else
+        ok "[bed_mesh] check 1/2: no invalid 'timeout:' found"
+    fi
+    if awk '/^\[bed_mesh\]/{flag=1; next} /^\[/{flag=0} flag && /^[[:space:]]*gcode[[:space:]]*:/{found=1} END{exit !found}' "$pcfg"; then
+        warn "Found 'gcode:' inside [bed_mesh] in printer.cfg"
+    else
+        ok "[bed_mesh] check 2/2: no invalid 'gcode:' found"
+    fi
+}
+
+check_orphan_includes_readonly() {
+    banner "Checking orphan [include] lines (read-only)"
+    local pcfg="${CONFIG_DIR}/printer.cfg"
+    if [ ! -f "$pcfg" ]; then
+        info "printer.cfg not found - skipping"
+        return 0
+    fi
+
+    local found=0
+    while IFS= read -r line; do
+        local target resolved
+        target=$(printf '%s' "$line" | sed -n 's/^\[include[[:space:]]\+\([^]]*\)\].*/\1/p' | tr -d ' ')
+        [ -z "$target" ] && continue
+        resolved="${CONFIG_DIR}/${target#./}"
+        if [[ "$resolved" == *[\*\?\[]* ]]; then
+            if ! compgen -G "$resolved" >/dev/null; then
+                warn "  ${line}   (missing: ${target})"
+                found=1
+            fi
+        elif [ ! -f "$resolved" ]; then
+            warn "  ${line}   (missing: ${target})"
+            found=1
+        fi
+    done < <(grep -E '^\[include ' "$pcfg" 2>/dev/null || true)
+
+    if [ "$found" -eq 0 ]; then
+        ok "All [include] targets exist"
+    fi
+}
+
+run_readonly_diagnostics() {
+    banner "Health Check / Read-only Diagnostics"
+    warn "This firmware layout is not enabled for AIO mutations."
+    warn "Running diagnostics only: no backups, repairs, service changes, or file edits."
+
+    show_layout_report
+    verify_klipper_runtime_health
+    verify_stock_display_runtime_health
+    if [ "$CAMERA_STACK" = "crowsnest" ]; then
+        verify_systemd_service_health crowsnest "Crowsnest camera stack" false
+    fi
+    report_firmware_layout_files
+    report_stock_macro_layout
+    report_qidi_box_object_inventory
+    verify_qidi_box_runtime_sensors
+    report_active_config_graph
+    find_duplicate_macros_readonly
+    check_invalid_klipper_options_readonly
+    check_orphan_includes_readonly
+
+    banner "Read-only diagnostics complete"
+    info "Install, revert, addon, and repair paths remain blocked on this layout."
+    press_enter
+}
+
 # Print the active Klipper config graph as NUL-delimited paths. This mirrors
 # Klipper's include handling: includes resolve relative to the file containing
 # them, globs are supported, and commented-out include lines are ignored.
@@ -3235,6 +3521,9 @@ ${C_BOLD}Health Check / Run Verifiers:${C_RESET}
     sensor/heater, Mainsail, and camera runtime health when applicable.
   - Scans active Klipper includes for duplicate macros, orphan includes,
     invalid options, and leftover MMU artifacts; prompts before repairs.
+  - On unsupported layouts such as Q2 firmware 1.1.2, option 8 runs in
+    read-only diagnostics mode: layout, services, Qidi Box objects,
+    stock macro layout, active include graph, and config scans only.
 
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
@@ -3257,6 +3546,7 @@ ${C_BOLD}Safety:${C_RESET}
   Firmware layout detection resolves active home/config/service names.
   Mutating paths remain blocked on unsupported layouts such as Q2
   firmware 1.1.2 until the dedicated compatibility lane is ready.
+  Option 8 read-only diagnostics is allowed on unsupported layouts.
   Run FIRMWARE_RESTART, then sudo reboot, after an install or revert.
   Refuses to run as root.
 
@@ -3432,10 +3722,10 @@ main_loop() {
                 ;;
             7) show_about ;;
             8)
-                if require_supported_firmware_layout "Health Check / Run Verifiers repairs"; then
+                if layout_supports_mutation; then
                     run_all_verifiers
                 else
-                    press_enter
+                    run_readonly_diagnostics
                 fi
                 ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;

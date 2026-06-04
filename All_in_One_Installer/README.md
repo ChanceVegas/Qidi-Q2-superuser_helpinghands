@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC2.21)
+   Qidi Q2 Superuser - AIO Setup Menu (RC2.22)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -39,7 +39,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 AIO currently supports mutating install/revert/addon actions on the legacy Q2 firmware layout used by 1.1.0 and 1.1.1, where the active home/config path is `/home/mks`.
 
-Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.21 detects that layout, resolves the active home/config/service names internally, and still blocks install, revert, addon, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
+Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.22 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, and still blocks install, revert, addon, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
 
 ## Install
 
@@ -69,7 +69,7 @@ chmod +x aio_menu.sh
 | 5 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
 | 6 | **Mainsail** | Addon toggle. Installs the Mainsail web interface, accessible at `http://<printer-ip>:100`. Qidi's stock UI on port 80 is unaffected. Includes a camera proxy so the webcam stream works in Mainsail. |
 | 7 | **About** | Shows the current AIO version, install paths, addons, restore behavior, safety notes, and known limitations. |
-| 8 | **Health Check / Run Verifiers** | Reports Klipper, Moonraker, Happy Hare/MMU, HelixScreen, Qidi Box sensor/heater, Mainsail, and camera runtime health when applicable. Scans active Klipper includes for common problems and prompts before repairs. Safe to run any time. |
+| 8 | **Health Check / Run Verifiers** | Reports Klipper, Moonraker, Happy Hare/MMU, HelixScreen, Qidi Box sensor/heater, Mainsail, and camera runtime health when applicable. On supported layouts, scans active Klipper includes for common problems and prompts before repairs. On unsupported layouts such as Q2 firmware 1.1.2, runs read-only diagnostics only: no backups, repairs, service changes, or file edits. |
 
 ## Backup and revert behavior
 
@@ -123,6 +123,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.22 | Allows option 8 to run on unsupported firmware layouts in read-only diagnostics mode, reporting layout, services, Qidi Box Moonraker objects/sensors, stock macro layout, active include graph, and read-only config scan results without creating backups or editing files |
 | RC2.21 | Refactors AIO's firmware layout detection into shared home/config/service variables, updates About/status/docs to report the detected layout, and keeps 1.1.2 mutating actions blocked while the compatibility lane is built |
 | RC2.20 | Adds a Q2 firmware 1.1.2 / `V01.01.02.01` layout detector and blocks install/revert/addon/repair paths on the new `/home/qidi` + `qidi-client` firmware line until a dedicated compatibility lane is implemented |
 | RC2.19 | Adds a dedicated Happier Hare explanation to the in-app About screen and README, clarifying how the Qidi Q2 HelixScreen compatibility layer relates to upstream Happy Hare |
@@ -160,7 +161,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 ## Known limitations
 
 - **Native Qidi Box humidity/dryer UI requires the Happier Hare patched HelixScreen zip.** Option 1 automatically uses the hosted Happier Hare release asset when available. `HAPPIER_HARE_ZIP_URL` and the layout-aware `~/helixscreen-pi-happier-hare.zip` remain available as overrides. Without the patched zip, use the macro buttons or Klipper console.
-- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for mutating actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout but still blocks legacy install/revert paths until the compatibility lane lands.
+- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for mutating actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout and option 8 can run read-only diagnostics, but install/revert/addon/repair paths remain blocked until the compatibility lane lands.
 - **MMU gear calibration is required after a fresh install.**
 - **Camera streaming (Mainsail)** requires a USB camera connected to the printer.
 
