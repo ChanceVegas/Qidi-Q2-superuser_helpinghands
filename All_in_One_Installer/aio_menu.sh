@@ -2144,6 +2144,38 @@ report_revert_backup_dry_run() {
     dry_run_path_state "Backup klipper-macros-qd directory" "${selected_path}/klipper-macros-qd"
     dry_run_path_state "Backup crowsnest.conf" "${selected_path}/crowsnest.conf"
     dry_run_path_state "Backup timelapse.cfg" "${selected_path}/timelapse.cfg"
+
+    banner "Dry-run backup safety validation"
+    local missing_critical=false
+    local rel active_path backup_path
+    for rel in \
+        klipper-macros-qd \
+        crowsnest.conf \
+        timelapse.cfg \
+        printer.cfg \
+        box.cfg \
+        MCU_ID.cfg; do
+        active_path="${CONFIG_DIR}/${rel}"
+        backup_path="${selected_path}/${rel}"
+        if [ -e "$active_path" ] || [ -L "$active_path" ]; then
+            if [ -e "$backup_path" ] || [ -L "$backup_path" ]; then
+                ok "Backup contains active stock item: ${rel}"
+            else
+                err "Backup is missing active stock item: ${rel}"
+                missing_critical=true
+            fi
+        else
+            info "Active stock item absent, not required in backup: ${rel}"
+        fi
+    done
+
+    if [ "$missing_critical" = true ]; then
+        err "Real 1.1.2 revert is NOT safe with this backup source."
+        warn "A real rsync --delete restore would remove stock files that exist now."
+        warn "Do not enable real 1.1.2 Revert until backup capture/repair preserves these items."
+    else
+        ok "Selected backup contains the active stock essentials checked for this layout"
+    fi
 }
 
 report_stock_preservation_dry_run() {

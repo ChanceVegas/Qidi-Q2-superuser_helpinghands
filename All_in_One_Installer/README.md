@@ -125,7 +125,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
-| RC2.23 | Allows option 4 to run on unsupported firmware layouts as a dry-run Revert report, showing backup selection, stock preservation checks, AIO artifact removal plan, Qidi Box objects/sensors, and active include graph without restoring, deleting, editing, or changing services |
+| RC2.23 | Allows option 4 to run on unsupported firmware layouts as a dry-run Revert report, showing backup selection, critical backup safety validation, stock preservation checks, AIO artifact removal plan, Qidi Box objects/sensors, and active include graph without restoring, deleting, editing, or changing services |
 | RC2.22 | Allows option 8 to run on unsupported firmware layouts in read-only diagnostics mode, reporting layout, services, Qidi Box Moonraker objects/sensors, stock macro layout, active include graph, and read-only config scan results without creating backups or editing files |
 | RC2.21 | Refactors AIO's firmware layout detection into shared home/config/service variables, updates About/status/docs to report the detected layout, and keeps 1.1.2 mutating actions blocked while the compatibility lane is built |
 | RC2.20 | Adds a Q2 firmware 1.1.2 / `V01.01.02.01` layout detector and blocks install/revert/addon/repair paths on the new `/home/qidi` + `qidi-client` firmware line until a dedicated compatibility lane is implemented |
