@@ -2302,11 +2302,11 @@ capture_q2_112_stock_baseline() {
         return 1
     fi
 
-    mkdir -p "$BACKUP_ROOT"
+    sudo mkdir -p "$BACKUP_ROOT"
     if [ -e "${BACKUP_ROOT}/_FIRST_STOCK" ] || [ -L "${BACKUP_ROOT}/_FIRST_STOCK" ]; then
         local quarantine
         quarantine="${BACKUP_ROOT}/_FIRST_STOCK.unsafe-q2-112.$(date +%Y%m%d_%H%M%S)"
-        if mv "${BACKUP_ROOT}/_FIRST_STOCK" "$quarantine"; then
+        if sudo mv "${BACKUP_ROOT}/_FIRST_STOCK" "$quarantine"; then
             ok "Quarantined old _FIRST_STOCK to ${quarantine}"
         else
             err "Could not quarantine existing _FIRST_STOCK"
@@ -2314,8 +2314,8 @@ capture_q2_112_stock_baseline() {
         fi
     fi
 
-    mkdir -p "${BACKUP_ROOT}/_FIRST_STOCK"
-    if rsync -a "${CONFIG_DIR}/" "${BACKUP_ROOT}/_FIRST_STOCK/"; then
+    sudo mkdir -p "${BACKUP_ROOT}/_FIRST_STOCK"
+    if sudo rsync -a "${CONFIG_DIR}/" "${BACKUP_ROOT}/_FIRST_STOCK/"; then
         ok "Captured fresh 1.1.2 stock baseline: ${BACKUP_ROOT}/_FIRST_STOCK"
     else
         err "Could not capture fresh _FIRST_STOCK baseline"
@@ -2420,7 +2420,8 @@ report_aio_removal_dry_run() {
             -print0 2>/dev/null
     )
 
-    info "Would keep ${BACKUP_ROOT}/ during dry-run. Real 1.1.2 removal of backup root remains disabled."
+    info "Installer-managed backup root: ${BACKUP_ROOT}/"
+    info "This is not stock firmware content; dry-run does not remove installer-managed backups."
 }
 
 revert_to_backup_dry_run() {
