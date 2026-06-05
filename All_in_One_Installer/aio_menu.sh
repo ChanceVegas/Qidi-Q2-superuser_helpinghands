@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.22'
+AIO_VERSION='RC2.23'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -2069,6 +2069,189 @@ remove_backup_root_after_revert() {
     ok "Removed ${BACKUP_ROOT}/ after successful stock restore"
 }
 
+dry_run_path_state() {
+    local label="$1"
+    local path="$2"
+
+    if [ -L "$path" ]; then
+        ok "${label}: present symlink (${path} -> $(readlink "$path" 2>/dev/null || printf 'unknown'))"
+    elif [ -e "$path" ]; then
+        if [ -d "$path" ]; then
+            ok "${label}: present directory (${path})"
+        else
+            ok "${label}: present file (${path})"
+        fi
+    else
+        info "${label}: absent (${path})"
+    fi
+}
+
+dry_run_removal_state() {
+    local path="$1"
+
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        info "Absent: ${path}"
+    elif path_was_preexisting "$path"; then
+        info "Would keep pre-existing path: ${path}"
+    else
+        warn "Would remove AIO-created path: ${path}"
+    fi
+}
+
+select_revert_backup_source() {
+    if [ ! -d "$BACKUP_ROOT" ]; then
+        return 1
+    fi
+
+    if [ -d "${BACKUP_ROOT}/_FIRST_STOCK" ] && \
+       [ -n "$(ls -A "${BACKUP_ROOT}/_FIRST_STOCK" 2>/dev/null)" ]; then
+        printf '%s|%s|%s\n' "first-run stock snapshot" "${BACKUP_ROOT}/_FIRST_STOCK" "true"
+        return 0
+    fi
+
+    local oldest
+    oldest=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d \
+             -not -name '_FIRST_STOCK' 2>/dev/null | sort | head -n 1)
+    if [ -n "$oldest" ]; then
+        printf '%s|%s|%s\n' "oldest timestamped backup" "$oldest" "true"
+        return 0
+    fi
+
+    printf '%s|%s|%s\n' "flat backup root" "$BACKUP_ROOT" "false"
+    return 0
+}
+
+report_revert_backup_dry_run() {
+    banner "Dry-run backup selection"
+
+    local selected selected_label selected_path selected_delete
+    if ! selected=$(select_revert_backup_source); then
+        warn "No ${BACKUP_ROOT}/ folder found - real revert would have nothing to restore"
+        return 0
+    fi
+
+    IFS='|' read -r selected_label selected_path selected_delete <<< "$selected"
+    ok "Would restore from ${selected_label}: ${selected_path}"
+    info "Would restore into: ${CONFIG_DIR}"
+    if [ "$selected_delete" = true ]; then
+        info "Would use rsync -a --no-owner --no-group --delete"
+    else
+        warn "Would use rsync without --delete because no precise snapshot was found"
+    fi
+
+    dry_run_path_state "Selected backup source" "$selected_path"
+    dry_run_path_state "Backup KAMP directory" "${selected_path}/KAMP"
+    dry_run_path_state "Backup klipper-macros-qd directory" "${selected_path}/klipper-macros-qd"
+    dry_run_path_state "Backup crowsnest.conf" "${selected_path}/crowsnest.conf"
+    dry_run_path_state "Backup timelapse.cfg" "${selected_path}/timelapse.cfg"
+}
+
+report_stock_preservation_dry_run() {
+    banner "Dry-run stock preservation checks"
+
+    dry_run_path_state "Active config dir" "$CONFIG_DIR"
+    dry_run_path_state "Stock macro directory" "${CONFIG_DIR}/klipper-macros-qd"
+    dry_run_path_state "Stock crowsnest.conf" "${CONFIG_DIR}/crowsnest.conf"
+    dry_run_path_state "Stock timelapse.cfg" "${CONFIG_DIR}/timelapse.cfg"
+    dry_run_path_state "Stock QIDI_Client directory" "${AIO_HOME}/QIDI_Client"
+
+    verify_systemd_service_health "$STOCK_UI_SERVICE" "$STOCK_UI_LABEL" true
+    if [ "$CAMERA_STACK" = "crowsnest" ]; then
+        verify_systemd_service_health crowsnest "Crowsnest camera stack" false
+    fi
+    verify_systemd_service_health qidi-tuning "Qidi tuning service" false
+}
+
+report_aio_removal_dry_run() {
+    banner "Dry-run AIO artifact removal plan"
+
+    for d in \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$HELIX_PRINT_DIR" \
+        "$KLIPPERSCREEN_DIR" \
+        "$KLIPPERSCREEN_VENV" \
+        "$KIAUH_DIR" \
+        "$KIAUH_BACKUPS_DIR" \
+        "$KIAUH_UPPER_DIR" \
+        "$KIAUH_UPPER_BACKUPS_DIR" \
+        "$MAINSAIL_DIR" \
+        /opt/helixscreen \
+        /var/lib/helixscreen \
+        /var/log/helixscreen \
+        "${HOME}/.helixscreen" \
+        /root/.helixscreen; do
+        dry_run_removal_state "$d"
+    done
+
+    for f in \
+        "${CONFIG_DIR}/bunnybox_macros.cfg" \
+        "${CONFIG_DIR}/box_drying.cfg" \
+        "${CONFIG_DIR}/idle_fan_shutdown.cfg" \
+        "${CONFIG_DIR}/KlipperScreen.conf" \
+        "${CONFIG_DIR}/KAMP_Settings.cfg" \
+        "${CONFIG_DIR}/KAMP_settings.cfg" \
+        "${CONFIG_DIR}/Adaptive_Meshing.cfg" \
+        "${CONFIG_DIR}/Adaptive_Mesh.cfg" \
+        "${CONFIG_DIR}/Line_Purge.cfg" \
+        "${CONFIG_DIR}/Smart_Park.cfg" \
+        "${CONFIG_DIR}/mmu_cut_tip.cfg" \
+        "${CONFIG_DIR}/mmu_form_tip.cfg" \
+        "${CONFIG_DIR}/mmu_heater_vent.cfg" \
+        "${CONFIG_DIR}/mmu_leds.cfg" \
+        "${CONFIG_DIR}/mmu_purge.cfg" \
+        "${CONFIG_DIR}/mmu_sequence.cfg" \
+        "${CONFIG_DIR}/mmu_software.cfg" \
+        "${CONFIG_DIR}/mmu_state.cfg" \
+        "${CONFIG_DIR}/mmu_parameters.cfg" \
+        "${CONFIG_DIR}/mmu_macro_vars.cfg" \
+        "${CONFIG_DIR}/mmu_hardware.cfg" \
+        "${CONFIG_DIR}/mmu_vars.cfg" \
+        "${CONFIG_DIR}/mmu.cfg" \
+        "${CONFIG_DIR}/moonraker.conf.aio-bak" \
+        /etc/systemd/system/KlipperScreen.service \
+        /etc/systemd/system/helixscreen.service \
+        /etc/systemd/system/helixscreen-update.path \
+        /etc/systemd/system/helixscreen-update.service \
+        /etc/udev/rules.d/99-helixscreen-backlight.rules \
+        /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla \
+        /etc/polkit-1/rules.d/49-helixscreen-network.rules \
+        /etc/polkit-1/rules.d/50-helixscreen-network.rules; do
+        dry_run_removal_state "$f"
+    done
+
+    while IFS= read -r -d '' path; do
+        dry_run_removal_state "$path"
+    done < <(
+        find "$CONFIG_DIR" -maxdepth 1 \
+            \( -name 'mmu' -o -name 'mmu-*' -o -name 'mmu_*' -o -name 'mmu[0-9]*' \
+               -o -name 'backup_hh_*' -o -name 'backup_revert_*' -o -name 'backup_mmu_*' \
+               -o -name 'backup_bunnybox_*' -o -name 'mmu_klipperscreen.*' \
+               -o -name 'moonraker.conf.bak.helixscreen*' \) \
+            -print0 2>/dev/null
+    )
+
+    info "Would keep ${BACKUP_ROOT}/ during dry-run. Real 1.1.2 removal of backup root remains disabled."
+}
+
+revert_to_backup_dry_run() {
+    banner "Revert to Backup dry-run (no changes)"
+    warn "This is a report only: no backups, rsync, rm, sed, or systemctl mutations will run."
+    warn "Real Revert to Backup remains blocked on ${AIO_LAYOUT_NAME} until this plan is validated."
+
+    show_layout_report
+    report_revert_backup_dry_run
+    report_stock_preservation_dry_run
+    report_aio_removal_dry_run
+    report_qidi_box_object_inventory
+    verify_qidi_box_runtime_sensors
+    report_active_config_graph
+
+    banner "Dry-run complete"
+    info "Review this output for anything stock that would be removed or missing from backup."
+    info "If the plan looks correct, the next step is a guarded real 1.1.2 revert implementation."
+}
+
 # Switch the Q2's active display from the stock Qidi services to HelixScreen.
 # Inverse of the unmask/enable/restart block in uninstall_helixscreen().
 #
@@ -3537,6 +3720,10 @@ ${C_BOLD}What it can uninstall:${C_RESET}
     for recovery instead of being deleted.
   - Config restore prefers ${BACKUP_ROOT}/_FIRST_STOCK, then the
     oldest timestamped backup, including the stock KAMP/ directory.
+  - On unsupported layouts such as Q2 firmware 1.1.2, option 4 runs a
+    dry-run only report: backup source, preserve checks, removal plan,
+    Box objects/sensors, and active include graph. It does not restore
+    configs, remove files, or change services.
 
 ${C_BOLD}Safety:${C_RESET}
   Install and repair paths write timestamped backups of ${CONFIG_DIR}/
@@ -3547,6 +3734,7 @@ ${C_BOLD}Safety:${C_RESET}
   Mutating paths remain blocked on unsupported layouts such as Q2
   firmware 1.1.2 until the dedicated compatibility lane is ready.
   Option 8 read-only diagnostics is allowed on unsupported layouts.
+  Option 4 dry-run reporting is allowed on unsupported layouts.
   Run FIRMWARE_RESTART, then sudo reboot, after an install or revert.
   Refuses to run as root.
 
@@ -3695,7 +3883,8 @@ main_loop() {
             2) warn "KlipperScreen install is temporarily disabled — display issue under investigation." ; press_enter ;;
             3) install_just_faster ;;
             4)
-                if ! require_supported_firmware_layout "Revert to Backup"; then
+                if ! layout_supports_mutation; then
+                    revert_to_backup_dry_run
                     press_enter
                     continue
                 fi
