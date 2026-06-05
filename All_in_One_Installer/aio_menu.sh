@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.23'
+AIO_VERSION='RC2.24'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -2121,6 +2121,30 @@ select_revert_backup_source() {
     return 0
 }
 
+backup_missing_active_stock_essentials() {
+    local selected_path="$1"
+    local missing=false
+    local rel active_path backup_path
+
+    for rel in \
+        klipper-macros-qd \
+        crowsnest.conf \
+        timelapse.cfg \
+        printer.cfg \
+        box.cfg \
+        MCU_ID.cfg; do
+        active_path="${CONFIG_DIR}/${rel}"
+        backup_path="${selected_path}/${rel}"
+        if [ -e "$active_path" ] || [ -L "$active_path" ]; then
+            if [ ! -e "$backup_path" ] && [ ! -L "$backup_path" ]; then
+                missing=true
+            fi
+        fi
+    done
+
+    [ "$missing" = true ]
+}
+
 report_revert_backup_dry_run() {
     banner "Dry-run backup selection"
 
@@ -2176,6 +2200,139 @@ report_revert_backup_dry_run() {
     else
         ok "Selected backup contains the active stock essentials checked for this layout"
     fi
+}
+
+q2_112_stock_essentials_present() {
+    banner "Checking 1.1.2 stock essentials"
+
+    local missing=false
+    local rel
+    for rel in \
+        printer.cfg \
+        box.cfg \
+        MCU_ID.cfg \
+        crowsnest.conf \
+        timelapse.cfg \
+        klipper-macros-qd; do
+        if [ -e "${CONFIG_DIR}/${rel}" ] || [ -L "${CONFIG_DIR}/${rel}" ]; then
+            ok "Stock essential present: ${rel}"
+        else
+            err "Stock essential missing: ${rel}"
+            missing=true
+        fi
+    done
+
+    if [ "$missing" = true ]; then
+        err "Cannot capture 1.1.2 baseline because stock essentials are missing."
+        return 1
+    fi
+    return 0
+}
+
+q2_112_aio_artifacts_absent() {
+    banner "Checking AIO artifact slate"
+
+    local found=false
+    local path
+
+    for path in \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$HELIX_PRINT_DIR" \
+        "$KLIPPERSCREEN_DIR" \
+        "$KLIPPERSCREEN_VENV" \
+        "$KIAUH_DIR" \
+        "$KIAUH_BACKUPS_DIR" \
+        "$KIAUH_UPPER_DIR" \
+        "$KIAUH_UPPER_BACKUPS_DIR" \
+        "$MAINSAIL_DIR" \
+        "${CONFIG_DIR}/bunnybox_macros.cfg" \
+        "${CONFIG_DIR}/box_drying.cfg" \
+        "${CONFIG_DIR}/idle_fan_shutdown.cfg" \
+        "${CONFIG_DIR}/KlipperScreen.conf" \
+        "${CONFIG_DIR}/KAMP_Settings.cfg" \
+        "${CONFIG_DIR}/KAMP_settings.cfg" \
+        "${CONFIG_DIR}/Adaptive_Meshing.cfg" \
+        "${CONFIG_DIR}/Adaptive_Mesh.cfg" \
+        "${CONFIG_DIR}/Line_Purge.cfg" \
+        "${CONFIG_DIR}/Smart_Park.cfg" \
+        "${CONFIG_DIR}/moonraker.conf.aio-bak"; do
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            warn "AIO artifact present: ${path}"
+            found=true
+        fi
+    done
+
+    while IFS= read -r -d '' path; do
+        warn "AIO/MMU residue present: ${path}"
+        found=true
+    done < <(
+        find "$CONFIG_DIR" -maxdepth 1 \
+            \( -name 'mmu' -o -name 'mmu-*' -o -name 'mmu_*' -o -name 'mmu[0-9]*' \
+               -o -name 'backup_hh_*' -o -name 'backup_revert_*' -o -name 'backup_mmu_*' \
+               -o -name 'backup_bunnybox_*' -o -name 'mmu_klipperscreen.*' \
+               -o -name 'moonraker.conf.aio-bak' -o -name 'moonraker.conf.bak.helixscreen*' \) \
+            -print0 2>/dev/null
+    )
+
+    if [ "$found" = true ]; then
+        err "Cannot capture 1.1.2 baseline while AIO artifacts are present."
+        return 1
+    fi
+
+    ok "No AIO install artifacts detected in the guarded capture checks"
+    return 0
+}
+
+capture_q2_112_stock_baseline() {
+    banner "Capture 1.1.2 stock baseline"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "This capture flow is only for Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    q2_112_stock_essentials_present || return 1
+    q2_112_aio_artifacts_absent || return 1
+
+    warn "This will quarantine the current ${BACKUP_ROOT}/_FIRST_STOCK"
+    warn "and capture a fresh baseline from ${CONFIG_DIR}."
+    warn "It does not modify active printer configs or services."
+    if ! confirm "Capture a fresh 1.1.2 stock baseline now?"; then
+        info "Baseline capture cancelled."
+        return 1
+    fi
+
+    mkdir -p "$BACKUP_ROOT"
+    if [ -e "${BACKUP_ROOT}/_FIRST_STOCK" ] || [ -L "${BACKUP_ROOT}/_FIRST_STOCK" ]; then
+        local quarantine
+        quarantine="${BACKUP_ROOT}/_FIRST_STOCK.unsafe-q2-112.$(date +%Y%m%d_%H%M%S)"
+        if mv "${BACKUP_ROOT}/_FIRST_STOCK" "$quarantine"; then
+            ok "Quarantined old _FIRST_STOCK to ${quarantine}"
+        else
+            err "Could not quarantine existing _FIRST_STOCK"
+            return 1
+        fi
+    fi
+
+    mkdir -p "${BACKUP_ROOT}/_FIRST_STOCK"
+    if rsync -a "${CONFIG_DIR}/" "${BACKUP_ROOT}/_FIRST_STOCK/"; then
+        ok "Captured fresh 1.1.2 stock baseline: ${BACKUP_ROOT}/_FIRST_STOCK"
+    else
+        err "Could not capture fresh _FIRST_STOCK baseline"
+        return 1
+    fi
+
+    local selected selected_label selected_path selected_delete
+    if selected=$(select_revert_backup_source); then
+        IFS='|' read -r selected_label selected_path selected_delete <<< "$selected"
+        if backup_missing_active_stock_essentials "$selected_path"; then
+            err "Fresh baseline capture completed, but safety validation still fails."
+            return 1
+        fi
+        ok "Fresh baseline contains active stock essentials"
+        info "Selected backup source is now ${selected_label}: ${selected_path}"
+    fi
+    return 0
 }
 
 report_stock_preservation_dry_run() {
@@ -2282,6 +2439,29 @@ revert_to_backup_dry_run() {
     banner "Dry-run complete"
     info "Review this output for anything stock that would be removed or missing from backup."
     info "If the plan looks correct, the next step is a guarded real 1.1.2 revert implementation."
+}
+
+offer_q2_112_baseline_capture() {
+    local selected selected_label selected_path selected_delete
+
+    [ "$AIO_LAYOUT" = "q2_112" ] || return 0
+    if ! selected=$(select_revert_backup_source); then
+        warn "No backup source exists yet for this layout."
+        if capture_q2_112_stock_baseline; then
+            banner "Re-running Revert dry-run after baseline capture"
+            revert_to_backup_dry_run
+        fi
+        return 0
+    fi
+
+    IFS='|' read -r selected_label selected_path selected_delete <<< "$selected"
+    if backup_missing_active_stock_essentials "$selected_path"; then
+        warn "The selected baseline is missing active 1.1.2 stock essentials."
+        if capture_q2_112_stock_baseline; then
+            banner "Re-running Revert dry-run after baseline capture"
+            revert_to_backup_dry_run
+        fi
+    fi
 }
 
 # Switch the Q2's active display from the stock Qidi services to HelixScreen.
@@ -3756,6 +3936,9 @@ ${C_BOLD}What it can uninstall:${C_RESET}
     dry-run only report: backup source, preserve checks, removal plan,
     Box objects/sensors, and active include graph. It does not restore
     configs, remove files, or change services.
+  - If the 1.1.2 dry-run finds an unsafe _FIRST_STOCK baseline while
+    active stock essentials are present and AIO artifacts are absent,
+    option 4 can quarantine the unsafe baseline and capture a fresh one.
 
 ${C_BOLD}Safety:${C_RESET}
   Install and repair paths write timestamped backups of ${CONFIG_DIR}/
@@ -3767,6 +3950,7 @@ ${C_BOLD}Safety:${C_RESET}
   firmware 1.1.2 until the dedicated compatibility lane is ready.
   Option 8 read-only diagnostics is allowed on unsupported layouts.
   Option 4 dry-run reporting is allowed on unsupported layouts.
+  Option 4 guarded 1.1.2 baseline capture only writes under ${BACKUP_ROOT}/.
   Run FIRMWARE_RESTART, then sudo reboot, after an install or revert.
   Refuses to run as root.
 
@@ -3917,6 +4101,7 @@ main_loop() {
             4)
                 if ! layout_supports_mutation; then
                     revert_to_backup_dry_run
+                    offer_q2_112_baseline_capture
                     press_enter
                     continue
                 fi
