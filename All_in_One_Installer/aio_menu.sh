@@ -317,6 +317,35 @@ verify_systemd_service_health() {
     fi
 }
 
+verify_qidi_tuning_service_health() {
+    local active enabled restart_policy restarts
+
+    if ! systemctl cat qidi-tuning >/dev/null 2>&1; then
+        info "Qidi tuning service: systemd unit not installed"
+        return 0
+    fi
+
+    active=$(systemctl is-active qidi-tuning 2>/dev/null || true)
+    enabled=$(systemctl is-enabled qidi-tuning 2>/dev/null || true)
+    restart_policy=$(systemctl show qidi-tuning -p Restart --value 2>/dev/null || true)
+    restarts=$(systemctl show qidi-tuning -p NRestarts --value 2>/dev/null || true)
+
+    case "$active" in
+        active|activating)
+            ok "Qidi tuning service: ${active} (enabled=${enabled:-unknown})"
+            ;;
+        *)
+            warn "Qidi tuning service: ${active:-unknown} (enabled=${enabled:-unknown})"
+            ;;
+    esac
+
+    if [ "$restart_policy" = "always" ]; then
+        info "Qidi tuning service uses Restart=always; restart count=${restarts:-unknown} is expected stock behavior"
+    elif [ -n "$restarts" ] && [ "$restarts" != "0" ]; then
+        warn "Qidi tuning service: systemd restart count=${restarts}"
+    fi
+}
+
 show_systemd_journal_tail() {
     local service="$1"
     local label="$2"
@@ -2694,7 +2723,12 @@ report_q2_112_restore_contract() {
         current_active=$(systemctl is-active "$service" 2>/dev/null || true)
         current_enabled="${current_enabled:-not-found}"
         current_active="${current_active:-inactive}"
-        if [ "$captured_enabled" = "$current_enabled" ] && [ "$captured_active" = "$current_active" ]; then
+        if [ "$service" = "qidi-tuning" ] && \
+           { [ "$captured_active" = "active" ] || [ "$captured_active" = "activating" ]; } && \
+           { [ "$current_active" = "active" ] || [ "$current_active" = "activating" ]; } && \
+           [ "$captured_enabled" = "$current_enabled" ]; then
+            ok "${service}: captured/current healthy (enabled=${captured_enabled}, active=${captured_active}/${current_active})"
+        elif [ "$captured_enabled" = "$current_enabled" ] && [ "$captured_active" = "$current_active" ]; then
             ok "${service}: captured/current enabled=${captured_enabled}, active=${captured_active}"
         else
             warn "${service}: captured enabled=${captured_enabled}, active=${captured_active}; current enabled=${current_enabled}, active=${current_active}"
@@ -2745,7 +2779,7 @@ report_stock_preservation_dry_run() {
     if [ "$CAMERA_STACK" = "crowsnest" ]; then
         verify_systemd_service_health crowsnest "Crowsnest camera stack" false
     fi
-    verify_systemd_service_health qidi-tuning "Qidi tuning service" false
+    verify_qidi_tuning_service_health
 }
 
 report_aio_removal_dry_run() {
