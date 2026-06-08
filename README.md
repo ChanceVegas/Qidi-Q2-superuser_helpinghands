@@ -67,7 +67,7 @@ This becomes especially useful once Bunny Box is installed on the Qidi Box.
 
 The AIO is a single ANSI-colored bash menu that handles every supported install and uninstall path for the Q2 — no need to remember which `.sh` to run for which variant. It detects the active firmware layout, then captures a first-run stock backup before changing configs. On the currently supported legacy layout, that includes the stock `/home/mks/printer_data/config/KAMP` directory when present, so **Revert to Backup** can restore the printer to its pre-AIO config state.
 
-Firmware note: Qidi Q2 firmware 1.1.2 / `V01.01.02.01` uses a new `/home/qidi` + `qidi-client` layout. AIO RC2.24 resolves that layout internally, allows option 8 read-only diagnostics, allows option 4 dry-run Revert reporting, and can capture a guarded fresh stock baseline, while install/real-revert/addon/repair paths remain blocked until the dedicated compatibility lane is implemented.
+Firmware note: Qidi Q2 firmware 1.1.2 / `V01.01.02.01` uses a new `/home/qidi` + `qidi-client` layout. AIO RC2.25 resolves that layout internally, allows option 8 read-only diagnostics, option 4 dry-run Revert reporting and guarded baseline capture, plus option 9's controlled compatibility round-trip probe. Full install/real-revert/addon/repair paths remain blocked until the dedicated compatibility lane is implemented.
 
 SSH into the Q2 as `mks`, then run:
 

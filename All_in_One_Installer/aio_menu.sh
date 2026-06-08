@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.24'
+AIO_VERSION='RC2.25'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -138,6 +138,12 @@ KLIPPERSCREEN_REPO_URL='https://github.com/moggieuk/KlipperScreen-Happy-Hare-Edi
 KLIPPERSCREEN_DIR="${AIO_HOME}/KlipperScreen"
 KLIPPERSCREEN_VENV="${AIO_HOME}/.KlipperScreen-env"
 KLIPPERSCREEN_SERVICE='KlipperScreen'
+Q2_112_PROBE_STATE_DIR="${BACKUP_ROOT}/_Q2_112_PROBE_STATE"
+Q2_112_PROBE_ORIGINAL="${Q2_112_PROBE_STATE_DIR}/printer.cfg.original"
+Q2_112_PROBE_MODIFIED="${Q2_112_PROBE_STATE_DIR}/printer.cfg.probe"
+Q2_112_PROBE_MANIFEST="${Q2_112_PROBE_STATE_DIR}/manifest"
+Q2_112_PROBE_CFG="${CONFIG_DIR}/aio_q2_112_compat_probe.cfg"
+Q2_112_PROBE_INCLUDE='[include aio_q2_112_compat_probe.cfg]'
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -2246,6 +2252,7 @@ q2_112_aio_artifacts_absent() {
         "$KIAUH_UPPER_DIR" \
         "$KIAUH_UPPER_BACKUPS_DIR" \
         "$MAINSAIL_DIR" \
+        "$Q2_112_PROBE_STATE_DIR" \
         "${CONFIG_DIR}/bunnybox_macros.cfg" \
         "${CONFIG_DIR}/box_drying.cfg" \
         "${CONFIG_DIR}/idle_fan_shutdown.cfg" \
@@ -2256,7 +2263,8 @@ q2_112_aio_artifacts_absent() {
         "${CONFIG_DIR}/Adaptive_Mesh.cfg" \
         "${CONFIG_DIR}/Line_Purge.cfg" \
         "${CONFIG_DIR}/Smart_Park.cfg" \
-        "${CONFIG_DIR}/moonraker.conf.aio-bak"; do
+        "${CONFIG_DIR}/moonraker.conf.aio-bak" \
+        "$Q2_112_PROBE_CFG"; do
         if [ -e "$path" ] || [ -L "$path" ]; then
             warn "AIO artifact present: ${path}"
             found=true
@@ -2365,6 +2373,7 @@ report_aio_removal_dry_run() {
         "$KIAUH_UPPER_DIR" \
         "$KIAUH_UPPER_BACKUPS_DIR" \
         "$MAINSAIL_DIR" \
+        "$Q2_112_PROBE_STATE_DIR" \
         /opt/helixscreen \
         /var/lib/helixscreen \
         /var/log/helixscreen \
@@ -2398,6 +2407,7 @@ report_aio_removal_dry_run() {
         "${CONFIG_DIR}/mmu_vars.cfg" \
         "${CONFIG_DIR}/mmu.cfg" \
         "${CONFIG_DIR}/moonraker.conf.aio-bak" \
+        "$Q2_112_PROBE_CFG" \
         /etc/systemd/system/KlipperScreen.service \
         /etc/systemd/system/helixscreen.service \
         /etc/systemd/system/helixscreen-update.path \
@@ -2463,6 +2473,244 @@ offer_q2_112_baseline_capture() {
             revert_to_backup_dry_run
         fi
     fi
+}
+
+q2_112_probe_installed() {
+    [ -d "$Q2_112_PROBE_STATE_DIR" ] || \
+    [ -e "$Q2_112_PROBE_CFG" ] || \
+    grep -Fqx "$Q2_112_PROBE_INCLUDE" "${CONFIG_DIR}/printer.cfg" 2>/dev/null
+}
+
+file_sha256() {
+    local path="$1"
+    sudo sha256sum "$path" 2>/dev/null | awk '{print $1}'
+}
+
+q2_112_probe_manifest_value() {
+    local key="$1"
+    [ -f "$Q2_112_PROBE_MANIFEST" ] || return 1
+    sed -n "s/^${key}=//p" "$Q2_112_PROBE_MANIFEST" 2>/dev/null | head -n 1
+}
+
+q2_112_baseline_safe() {
+    local selected selected_label selected_path selected_delete
+    if ! selected=$(select_revert_backup_source); then
+        err "No stock baseline exists. Run option 4 and capture the guarded baseline first."
+        return 1
+    fi
+    IFS='|' read -r selected_label selected_path selected_delete <<< "$selected"
+    if backup_missing_active_stock_essentials "$selected_path"; then
+        err "Selected stock baseline is missing active 1.1.2 stock essentials."
+        info "Run option 4 to inspect or repair the baseline before using the probe."
+        return 1
+    fi
+    ok "Guarded stock baseline is ready: ${selected_path}"
+    return 0
+}
+
+rollback_q2_112_probe_install() {
+    warn "Rolling back incomplete 1.1.2 compatibility probe install"
+    if [ -f "$Q2_112_PROBE_ORIGINAL" ]; then
+        sudo cp -a "$Q2_112_PROBE_ORIGINAL" "${CONFIG_DIR}/printer.cfg" 2>/dev/null || true
+    fi
+    sudo rm -f "$Q2_112_PROBE_CFG" 2>/dev/null || true
+    sudo rm -rf "$Q2_112_PROBE_STATE_DIR" 2>/dev/null || true
+}
+
+install_q2_112_roundtrip_probe() {
+    banner "Install 1.1.2 compatibility round-trip probe"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "The compatibility probe is only available on Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    if q2_112_probe_installed; then
+        warn "Compatibility probe artifacts are already present."
+        info "Run this option again and choose removal."
+        return 1
+    fi
+    q2_112_stock_essentials_present || return 1
+    q2_112_aio_artifacts_absent || return 1
+    q2_112_baseline_safe || return 1
+
+    warn "This controlled test will add exactly two active-config changes:"
+    warn "  ${Q2_112_PROBE_CFG}"
+    warn "  ${Q2_112_PROBE_INCLUDE} in ${CONFIG_DIR}/printer.cfg"
+    warn "It records exact before/after printer.cfg hashes for guarded removal."
+    if ! confirm "Install the reversible 1.1.2 compatibility probe?"; then
+        info "Compatibility probe install cancelled."
+        return 1
+    fi
+
+    local original_sha modified_sha
+    original_sha=$(file_sha256 "${CONFIG_DIR}/printer.cfg")
+    if [ -z "$original_sha" ]; then
+        err "Could not hash active printer.cfg"
+        return 1
+    fi
+
+    sudo mkdir -p "$Q2_112_PROBE_STATE_DIR" || return 1
+    if ! sudo cp -a "${CONFIG_DIR}/printer.cfg" "$Q2_112_PROBE_ORIGINAL"; then
+        err "Could not save exact pre-probe printer.cfg"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+    if ! sudo cp -a "$Q2_112_PROBE_ORIGINAL" "$Q2_112_PROBE_MODIFIED"; then
+        err "Could not stage compatibility probe printer.cfg"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+
+    if ! sudo tee -a "$Q2_112_PROBE_MODIFIED" >/dev/null <<EOF
+
+# AIO Q2 1.1.2 reversible compatibility probe
+${Q2_112_PROBE_INCLUDE}
+EOF
+    then
+        err "Could not stage compatibility probe include"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+
+    modified_sha=$(file_sha256 "$Q2_112_PROBE_MODIFIED")
+    if [ -z "$modified_sha" ] || [ "$modified_sha" = "$original_sha" ]; then
+        err "Could not verify the staged compatibility probe printer.cfg"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+
+    if ! sudo tee "$Q2_112_PROBE_MANIFEST" >/dev/null <<EOF
+AIO_VERSION=${AIO_VERSION}
+AIO_LAYOUT=${AIO_LAYOUT}
+CONFIG_DIR=${CONFIG_DIR}
+PROBE_CFG=${Q2_112_PROBE_CFG}
+PROBE_INCLUDE=${Q2_112_PROBE_INCLUDE}
+ORIGINAL_PRINTER_CFG_SHA256=${original_sha}
+MODIFIED_PRINTER_CFG_SHA256=${modified_sha}
+EOF
+    then
+        err "Could not write compatibility probe manifest"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+
+    if ! sudo tee "$Q2_112_PROBE_CFG" >/dev/null <<'EOF'
+# AIO Q2 firmware 1.1.2 reversible compatibility probe.
+[gcode_macro AIO_Q2_112_COMPAT_PROBE]
+description: AIO Q2 1.1.2 reversible compatibility probe
+gcode:
+    G4 P1
+EOF
+    then
+        err "Could not write compatibility probe config"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+    sudo chown --reference="${CONFIG_DIR}/printer.cfg" "$Q2_112_PROBE_CFG" 2>/dev/null || true
+    sudo chmod --reference="${CONFIG_DIR}/printer.cfg" "$Q2_112_PROBE_CFG" 2>/dev/null || true
+
+    if ! sudo cp -a "$Q2_112_PROBE_MODIFIED" "${CONFIG_DIR}/printer.cfg"; then
+        err "Could not activate staged compatibility probe printer.cfg"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+
+    if [ ! -f "$Q2_112_PROBE_CFG" ] || \
+       ! grep -Fqx "$Q2_112_PROBE_INCLUDE" "${CONFIG_DIR}/printer.cfg" 2>/dev/null || \
+       [ "$(file_sha256 "${CONFIG_DIR}/printer.cfg")" != "$modified_sha" ]; then
+        err "Compatibility probe verification failed"
+        rollback_q2_112_probe_install
+        return 1
+    fi
+
+    ok "Compatibility probe installed with exact before/after hashes"
+    info "Run FIRMWARE_RESTART, then option 8 to verify Klipper and the active include graph."
+    info "After verification, run option 9 again to perform the guarded round-trip removal."
+    return 0
+}
+
+remove_q2_112_roundtrip_probe() {
+    banner "Remove 1.1.2 compatibility round-trip probe"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "The compatibility probe is only available on Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    if [ ! -f "$Q2_112_PROBE_ORIGINAL" ] || [ ! -f "$Q2_112_PROBE_MANIFEST" ]; then
+        err "Probe state is incomplete; refusing to overwrite printer.cfg."
+        info "Inspect: ${Q2_112_PROBE_STATE_DIR}"
+        return 1
+    fi
+
+    local original_sha expected_modified_sha current_sha restored_sha
+    original_sha=$(q2_112_probe_manifest_value ORIGINAL_PRINTER_CFG_SHA256)
+    expected_modified_sha=$(q2_112_probe_manifest_value MODIFIED_PRINTER_CFG_SHA256)
+    current_sha=$(file_sha256 "${CONFIG_DIR}/printer.cfg")
+    if [ -z "$original_sha" ] || [ -z "$expected_modified_sha" ] || [ -z "$current_sha" ]; then
+        err "Probe hash metadata could not be read; refusing cleanup."
+        return 1
+    fi
+    if [ "$current_sha" = "$original_sha" ]; then
+        warn "Active printer.cfg already matches the pre-probe hash."
+        warn "Cleaning incomplete probe files/state without overwriting printer.cfg."
+        sudo rm -f "$Q2_112_PROBE_CFG"
+        sudo rm -rf "$Q2_112_PROBE_STATE_DIR"
+        ok "Incomplete compatibility probe state removed"
+        return 0
+    elif [ "$current_sha" != "$expected_modified_sha" ]; then
+        err "Active printer.cfg changed after the probe was installed."
+        warn "Expected modified hash: ${expected_modified_sha}"
+        warn "Current hash:           ${current_sha}"
+        warn "Refusing to overwrite unrelated changes. Probe state was kept for recovery."
+        return 1
+    fi
+
+    warn "This will restore the exact pre-probe printer.cfg and remove only:"
+    warn "  ${Q2_112_PROBE_CFG}"
+    if ! confirm "Remove the compatibility probe and verify the round trip?"; then
+        info "Compatibility probe removal cancelled."
+        return 1
+    fi
+
+    if ! sudo cp -a "$Q2_112_PROBE_ORIGINAL" "${CONFIG_DIR}/printer.cfg"; then
+        err "Could not restore exact pre-probe printer.cfg"
+        return 1
+    fi
+    sudo rm -f "$Q2_112_PROBE_CFG"
+
+    restored_sha=$(file_sha256 "${CONFIG_DIR}/printer.cfg")
+    if [ "$restored_sha" != "$original_sha" ]; then
+        err "Round-trip verification failed: restored printer.cfg hash does not match original."
+        warn "Probe state was kept: ${Q2_112_PROBE_STATE_DIR}"
+        return 1
+    fi
+    if [ -e "$Q2_112_PROBE_CFG" ] || \
+       grep -Fqx "$Q2_112_PROBE_INCLUDE" "${CONFIG_DIR}/printer.cfg" 2>/dev/null; then
+        err "Round-trip verification failed: probe artifacts remain."
+        warn "Probe state was kept: ${Q2_112_PROBE_STATE_DIR}"
+        return 1
+    fi
+
+    sudo rm -rf "$Q2_112_PROBE_STATE_DIR"
+    ok "Round-trip verified: printer.cfg exactly matches its pre-probe hash"
+    ok "Compatibility probe config and state removed"
+    info "Run FIRMWARE_RESTART, then sudo reboot."
+    return 0
+}
+
+menu_q2_112_roundtrip_probe() {
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        warn "The 1.1.2 compatibility probe is only available on the q2_112 layout."
+        press_enter
+        return 0
+    fi
+
+    if q2_112_probe_installed; then
+        remove_q2_112_roundtrip_probe
+    else
+        install_q2_112_roundtrip_probe
+    fi
+    press_enter
 }
 
 # Switch the Q2's active display from the stock Qidi services to HelixScreen.
@@ -3239,6 +3487,11 @@ run_readonly_diagnostics() {
     report_qidi_box_object_inventory
     verify_qidi_box_runtime_sensors
     report_active_config_graph
+    if q2_112_probe_installed; then
+        ok "1.1.2 compatibility probe artifacts detected"
+    else
+        info "1.1.2 compatibility probe not installed"
+    fi
     find_duplicate_macros_readonly
     check_invalid_klipper_options_readonly
     check_orphan_includes_readonly
@@ -3921,6 +4174,15 @@ ${C_BOLD}Health Check / Run Verifiers:${C_RESET}
     read-only diagnostics mode: layout, services, Qidi Box objects,
     stock macro layout, active include graph, and config scans only.
 
+${C_BOLD}1.1.2 compatibility round-trip probe:${C_RESET}
+  - Option 9 installs one harmless no-op macro config and one include
+    line after verifying the guarded stock baseline is safe.
+  - It records exact before/after printer.cfg hashes and an original copy.
+  - Running option 9 again restores the exact original printer.cfg,
+    removes the probe config, and verifies the original hash.
+  - Cleanup refuses to overwrite printer.cfg if unrelated changes were
+    made after the probe was installed.
+
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
@@ -4050,6 +4312,8 @@ draw_menu() {
     printf '  %sINFO%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
     printf '   %s7)%s About\n'                                                    "$C_CYAN" "$C_RESET"
     printf '   %s8)%s Health Check / Run Verifiers\n'                             "$C_CYAN" "$C_RESET"
+    printf '  %sTESTING%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
+    printf '   %s9)%s 1.1.2 Compatibility Probe          (reversible round trip)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -4135,6 +4399,7 @@ main_loop() {
                     run_readonly_diagnostics
                 fi
                 ;;
+            9) menu_q2_112_roundtrip_probe ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
