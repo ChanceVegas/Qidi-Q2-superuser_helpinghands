@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.25'
+AIO_VERSION='RC2.26'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -144,6 +144,9 @@ Q2_112_PROBE_MODIFIED="${Q2_112_PROBE_STATE_DIR}/printer.cfg.probe"
 Q2_112_PROBE_MANIFEST="${Q2_112_PROBE_STATE_DIR}/manifest"
 Q2_112_PROBE_CFG="${CONFIG_DIR}/aio_q2_112_compat_probe.cfg"
 Q2_112_PROBE_INCLUDE='[include aio_q2_112_compat_probe.cfg]'
+Q2_112_CONTRACT_DIR="${BACKUP_ROOT}/_Q2_112_RESTORE_CONTRACT"
+Q2_112_CONTRACT_PATH_STATES="${Q2_112_CONTRACT_DIR}/path_states"
+Q2_112_CONTRACT_SERVICES="${Q2_112_CONTRACT_DIR}/services"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -311,6 +314,35 @@ verify_systemd_service_health() {
     fi
     if [ "$restarts" -gt 0 ]; then
         warn "${label}: systemd restart count=${restarts}"
+    fi
+}
+
+verify_qidi_tuning_service_health() {
+    local active enabled restart_policy restarts
+
+    if ! systemctl cat qidi-tuning >/dev/null 2>&1; then
+        info "Qidi tuning service: systemd unit not installed"
+        return 0
+    fi
+
+    active=$(systemctl is-active qidi-tuning 2>/dev/null || true)
+    enabled=$(systemctl is-enabled qidi-tuning 2>/dev/null || true)
+    restart_policy=$(systemctl show qidi-tuning -p Restart --value 2>/dev/null || true)
+    restarts=$(systemctl show qidi-tuning -p NRestarts --value 2>/dev/null || true)
+
+    case "$active" in
+        active|activating)
+            ok "Qidi tuning service: ${active} (enabled=${enabled:-unknown})"
+            ;;
+        *)
+            warn "Qidi tuning service: ${active:-unknown} (enabled=${enabled:-unknown})"
+            ;;
+    esac
+
+    if [ "$restart_policy" = "always" ]; then
+        info "Qidi tuning service uses Restart=always; restart count=${restarts:-unknown} is expected stock behavior"
+    elif [ -n "$restarts" ] && [ "$restarts" != "0" ]; then
+        warn "Qidi tuning service: systemd restart count=${restarts}"
     fi
 }
 
@@ -2117,7 +2149,7 @@ select_revert_backup_source() {
 
     local oldest
     oldest=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d \
-             -not -name '_FIRST_STOCK' 2>/dev/null | sort | head -n 1)
+             -not -name '_*' 2>/dev/null | sort | head -n 1)
     if [ -n "$oldest" ]; then
         printf '%s|%s|%s\n' "oldest timestamped backup" "$oldest" "true"
         return 0
@@ -2343,6 +2375,397 @@ capture_q2_112_stock_baseline() {
     return 0
 }
 
+q2_112_restore_contract_paths() {
+    printf '%s\n' \
+        "${KLIPPER_DIR}/klippy/extras" \
+        "${MOONRAKER_DIR}/moonraker/components" \
+        "$HAPPY_HARE_DIR" \
+        "$HELIX_DIR" \
+        "$HELIX_PRINT_DIR" \
+        "${AIO_HOME}/.config/helixscreen" \
+        /opt/helixscreen \
+        /var/lib/helixscreen \
+        /var/log/helixscreen \
+        /root/.helixscreen \
+        /etc/systemd/system/default.target \
+        "/etc/systemd/system/${STOCK_UI_SERVICE}.service" \
+        "/etc/systemd/system/${STOCK_UI_SERVICE}.service.d" \
+        /etc/systemd/system/helixscreen.service \
+        /etc/systemd/system/helixscreen.service.d \
+        /etc/systemd/system/helixscreen-update.path \
+        /etc/systemd/system/helixscreen-update.service \
+        /etc/systemd/system/KlipperScreen.service \
+        /etc/systemd/system/KlipperScreen.service.d \
+        /etc/udev/rules.d/99-helixscreen-backlight.rules \
+        /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla \
+        /etc/polkit-1/rules.d/49-helixscreen-network.rules \
+        /etc/polkit-1/rules.d/50-helixscreen-network.rules
+}
+
+q2_112_restore_contract_services() {
+    printf '%s\n' \
+        "$STOCK_UI_SERVICE" \
+        crowsnest \
+        klipper \
+        moonraker \
+        qidi-tuning \
+        helixscreen \
+        KlipperScreen
+}
+
+q2_112_contract_path_state_line() {
+    local path="$1"
+    local kind mode uid gid target=""
+
+    if [ -L "$path" ]; then
+        kind="symlink"
+        target=$(sudo readlink "$path" 2>/dev/null || printf 'unknown')
+    elif [ -d "$path" ]; then
+        kind="directory"
+    elif [ -f "$path" ]; then
+        kind="file"
+    elif [ -e "$path" ]; then
+        kind="other"
+    else
+        printf 'absent|||||%s|\n' "$path"
+        return 0
+    fi
+
+    IFS='|' read -r mode uid gid < <(
+        sudo stat -c '%a|%u|%g' "$path" 2>/dev/null || printf 'unknown|unknown|unknown\n'
+    )
+    printf 'present|%s|%s|%s|%s|%s|%s\n' \
+        "$kind" "$mode" "$uid" "$gid" "$path" "$target"
+}
+
+q2_112_contract_service_state_line() {
+    local service="$1"
+    local exists="false" enabled active fragment
+
+    if systemctl cat "$service" >/dev/null 2>&1; then
+        exists="true"
+    fi
+    enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
+    active=$(systemctl is-active "$service" 2>/dev/null || true)
+    enabled="${enabled:-not-found}"
+    active="${active:-inactive}"
+    fragment=$(systemctl show "$service" -p FragmentPath --value 2>/dev/null || true)
+    printf '%s|%s|%s|%s|%s\n' "$service" "$exists" "$enabled" "$active" "$fragment"
+}
+
+write_q2_112_contract_tree_hashes() {
+    local tree="$1"
+    local output="$2"
+
+    sudo sh -c '
+        cd "$1" || exit 1
+        find . -type f -print0 | sort -z | xargs -0 -r sha256sum > "$2"
+    ' sh "$tree" "$output"
+}
+
+write_q2_112_contract_tree_inventory() {
+    local tree="$1"
+    local output="$2"
+
+    sudo sh -c '
+        cd "$1" || exit 1
+        find . -printf "%y|%m|%U|%G|%s|%T@|%p|%l\n" | LC_ALL=C sort > "$2"
+    ' sh "$tree" "$output"
+}
+
+verify_q2_112_contract_tree_inventory() {
+    local tree="$1"
+    local inventory="$2"
+
+    sudo sh -c '
+        cd "$1" || exit 1
+        find . -printf "%y|%m|%U|%G|%s|%T@|%p|%l\n" | LC_ALL=C sort | cmp -s - "$2"
+    ' sh "$tree" "$inventory"
+}
+
+validate_q2_112_restore_contract() {
+    local contract_dir="${1:-$Q2_112_CONTRACT_DIR}"
+    local manifest="${contract_dir}/manifest"
+    local path_states="${contract_dir}/path_states"
+    local services="${contract_dir}/services"
+    local config_hashes="${contract_dir}/config.sha256"
+    local external_hashes="${contract_dir}/external.sha256"
+    local config_inventory="${contract_dir}/config.inventory"
+    local external_inventory="${contract_dir}/external.inventory"
+    local packages="${contract_dir}/packages"
+    local contract_hashes="${contract_dir}/contract.sha256"
+    local complete="${contract_dir}/COMPLETE"
+    local config_tree="${contract_dir}/config"
+    local external_tree="${contract_dir}/external"
+
+    [ -f "$complete" ] || return 1
+    [ -f "$manifest" ] || return 1
+    [ -f "$path_states" ] || return 1
+    [ -f "$services" ] || return 1
+    [ -f "$config_hashes" ] || return 1
+    [ -f "$external_hashes" ] || return 1
+    [ -f "$config_inventory" ] || return 1
+    [ -f "$external_inventory" ] || return 1
+    [ -s "$packages" ] || return 1
+    [ -s "$contract_hashes" ] || return 1
+    [ -d "$config_tree" ] || return 1
+    [ -d "$external_tree" ] || return 1
+    grep -Fqx 'CONTRACT_SCHEMA=1' "$manifest" 2>/dev/null || return 1
+    grep -Fqx 'AIO_LAYOUT=q2_112' "$manifest" 2>/dev/null || return 1
+    grep -Fqx "CONFIG_DIR=${CONFIG_DIR}" "$manifest" 2>/dev/null || return 1
+    [ -s "$path_states" ] || return 1
+    [ -s "$services" ] || return 1
+    [ -s "$config_hashes" ] || return 1
+
+    sudo sh -c 'cd "$1" && sha256sum -c contract.sha256 >/dev/null' \
+        sh "$contract_dir" || return 1
+    sudo sh -c 'cd "$1" && sha256sum -c "$2" >/dev/null' \
+        sh "$config_tree" "$config_hashes" || return 1
+    if [ -s "$external_hashes" ]; then
+        sudo sh -c 'cd "$1" && sha256sum -c "$2" >/dev/null' \
+            sh "$external_tree" "$external_hashes" || return 1
+    fi
+    verify_q2_112_contract_tree_inventory "$config_tree" "$config_inventory" || return 1
+    verify_q2_112_contract_tree_inventory "$external_tree" "$external_inventory" || return 1
+
+    local rel
+    for rel in printer.cfg box.cfg MCU_ID.cfg crowsnest.conf timelapse.cfg klipper-macros-qd; do
+        if [ ! -e "${config_tree}/${rel}" ] && [ ! -L "${config_tree}/${rel}" ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+capture_q2_112_restore_contract() {
+    banner "Capture 1.1.2 restore contract"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "The restore contract is only available on Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    q2_112_stock_essentials_present || return 1
+    q2_112_aio_artifacts_absent || return 1
+    q2_112_baseline_safe || return 1
+
+    if validate_q2_112_restore_contract; then
+        ok "A complete, verified 1.1.2 restore contract already exists."
+        info "Contract: ${Q2_112_CONTRACT_DIR}"
+        return 0
+    fi
+
+    warn "This captures recovery material for every currently mapped Option 1 mutation surface:"
+    warn "  exact Klipper config tree; Klipper extras; Moonraker components;"
+    warn "  display/runtime paths; system integration paths; and service states."
+    warn "  It also records the installed Debian package inventory for later comparison."
+    warn "It records both present and absent paths so a future restore can remove only AIO additions."
+    warn "It does not modify active printer configs or service states."
+    if ! confirm "Capture the guarded 1.1.2 restore contract now?"; then
+        info "Restore contract capture cancelled."
+        return 1
+    fi
+
+    local staging="${Q2_112_CONTRACT_DIR}.staging.$$"
+    local quarantine path service default_target
+    sudo rm -rf "$staging"
+    sudo mkdir -p "${staging}/config" "${staging}/external" || {
+        err "Could not create restore contract staging directory."
+        return 1
+    }
+
+    if [ -e "$Q2_112_CONTRACT_DIR" ] || [ -L "$Q2_112_CONTRACT_DIR" ]; then
+        quarantine="${Q2_112_CONTRACT_DIR}.invalid.$(date +%Y%m%d_%H%M%S)"
+        if sudo mv "$Q2_112_CONTRACT_DIR" "$quarantine"; then
+            warn "Quarantined incomplete restore contract: ${quarantine}"
+        else
+            err "Could not quarantine incomplete restore contract."
+            sudo rm -rf "$staging"
+            return 1
+        fi
+    fi
+
+    if ! sudo rsync -aHAX --numeric-ids "${CONFIG_DIR}/" "${staging}/config/"; then
+        err "Could not capture exact stock config tree."
+        sudo rm -rf "$staging"
+        return 1
+    fi
+
+    sudo tee "${staging}/path_states" >/dev/null < /dev/null
+    while IFS= read -r path; do
+        q2_112_contract_path_state_line "$path" | sudo tee -a "${staging}/path_states" >/dev/null
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            if ! sudo rsync -aHAX --numeric-ids --relative "$path" "${staging}/external/"; then
+                err "Could not capture mapped path: ${path}"
+                sudo rm -rf "$staging"
+                return 1
+            fi
+        fi
+    done < <(q2_112_restore_contract_paths)
+
+    sudo tee "${staging}/services" >/dev/null < /dev/null
+    while IFS= read -r service; do
+        q2_112_contract_service_state_line "$service" | sudo tee -a "${staging}/services" >/dev/null
+    done < <(q2_112_restore_contract_services)
+
+    if ! dpkg-query -W -f='${binary:Package}|${Version}|${db:Status-Abbrev}\n' 2>/dev/null | \
+        LC_ALL=C sort | sudo tee "${staging}/packages" >/dev/null; then
+        err "Could not capture installed Debian package inventory."
+        sudo rm -rf "$staging"
+        return 1
+    fi
+
+    default_target=$(systemctl get-default 2>/dev/null || printf 'unknown')
+    if ! sudo tee "${staging}/manifest" >/dev/null <<EOF
+CONTRACT_SCHEMA=1
+AIO_VERSION=${AIO_VERSION}
+AIO_LAYOUT=${AIO_LAYOUT}
+AIO_HOME=${AIO_HOME}
+CONFIG_DIR=${CONFIG_DIR}
+STOCK_UI_SERVICE=${STOCK_UI_SERVICE}
+DEFAULT_TARGET=${default_target}
+CAPTURED_AT=$(date -Iseconds)
+EOF
+    then
+        err "Could not write restore contract manifest."
+        sudo rm -rf "$staging"
+        return 1
+    fi
+
+    write_q2_112_contract_tree_hashes "${staging}/config" "${staging}/config.sha256" || {
+        err "Could not hash captured stock config tree."
+        sudo rm -rf "$staging"
+        return 1
+    }
+    write_q2_112_contract_tree_hashes "${staging}/external" "${staging}/external.sha256" || {
+        err "Could not hash captured external recovery files."
+        sudo rm -rf "$staging"
+        return 1
+    }
+    write_q2_112_contract_tree_inventory "${staging}/config" "${staging}/config.inventory" || {
+        err "Could not inventory captured stock config metadata."
+        sudo rm -rf "$staging"
+        return 1
+    }
+    write_q2_112_contract_tree_inventory "${staging}/external" "${staging}/external.inventory" || {
+        err "Could not inventory captured external recovery metadata."
+        sudo rm -rf "$staging"
+        return 1
+    }
+    sudo tee "${staging}/COMPLETE" >/dev/null <<EOF
+Q2 1.1.2 restore contract capture complete
+EOF
+    if ! sudo sh -c '
+        cd "$1" || exit 1
+        sha256sum manifest path_states services packages config.sha256 external.sha256 \
+            config.inventory external.inventory COMPLETE > contract.sha256
+    ' sh "$staging"; then
+        err "Could not seal restore contract metadata."
+        sudo rm -rf "$staging"
+        return 1
+    fi
+
+    if ! validate_q2_112_restore_contract "$staging"; then
+        err "Restore contract integrity validation failed; staging data was kept for inspection."
+        warn "Inspect: ${staging}"
+        return 1
+    fi
+    if ! sudo mv "$staging" "$Q2_112_CONTRACT_DIR"; then
+        err "Could not activate verified restore contract."
+        return 1
+    fi
+
+    ok "Verified 1.1.2 restore contract captured atomically."
+    info "Contract: ${Q2_112_CONTRACT_DIR}"
+    info "Full install and real revert remain blocked until the contract restore path is implemented and tested."
+    return 0
+}
+
+report_q2_112_restore_contract() {
+    banner "1.1.2 restore contract"
+
+    if ! validate_q2_112_restore_contract; then
+        warn "No complete, verified 1.1.2 restore contract is available."
+        info "Option 4 can capture one after the guarded stock baseline passes."
+        return 1
+    fi
+
+    ok "Restore contract integrity verified: ${Q2_112_CONTRACT_DIR}"
+    info "Exact config restore source: ${Q2_112_CONTRACT_DIR}/config"
+    info "Config restore would use rsync -aHAX --numeric-ids --delete"
+    info "Captured Debian package count: $(wc -l < "${Q2_112_CONTRACT_DIR}/packages" | tr -d ' ')"
+    local package_diff
+    package_diff=$(comm -13 "${Q2_112_CONTRACT_DIR}/packages" <(
+        dpkg-query -W -f='${binary:Package}|${Version}|${db:Status-Abbrev}\n' 2>/dev/null | LC_ALL=C sort
+    ) || true)
+    if [ -n "$package_diff" ]; then
+        warn "Current package entries not present in the stock contract:"
+        local package_entry
+        while IFS= read -r package_entry; do
+            warn "  ${package_entry}"
+        done <<< "$package_diff"
+    else
+        ok "Current Debian package inventory matches the captured stock contract"
+    fi
+
+    local current_default captured_default
+    current_default=$(systemctl get-default 2>/dev/null || printf 'unknown')
+    captured_default=$(sed -n 's/^DEFAULT_TARGET=//p' "${Q2_112_CONTRACT_DIR}/manifest" | head -n 1)
+    if [ "$current_default" = "$captured_default" ]; then
+        ok "Default boot target matches capture: ${captured_default}"
+    else
+        warn "Would restore default boot target from ${current_default} to ${captured_default}"
+    fi
+
+    banner "Restore contract service-state preview"
+    local service exists captured_enabled captured_active fragment current_enabled current_active
+    while IFS='|' read -r service exists captured_enabled captured_active fragment; do
+        current_enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
+        current_active=$(systemctl is-active "$service" 2>/dev/null || true)
+        current_enabled="${current_enabled:-not-found}"
+        current_active="${current_active:-inactive}"
+        if [ "$service" = "qidi-tuning" ] && \
+           { [ "$captured_active" = "active" ] || [ "$captured_active" = "activating" ]; } && \
+           { [ "$current_active" = "active" ] || [ "$current_active" = "activating" ]; } && \
+           [ "$captured_enabled" = "$current_enabled" ]; then
+            ok "${service}: captured/current healthy (enabled=${captured_enabled}, active=${captured_active}/${current_active})"
+        elif [ "$captured_enabled" = "$current_enabled" ] && [ "$captured_active" = "$current_active" ]; then
+            ok "${service}: captured/current enabled=${captured_enabled}, active=${captured_active}"
+        else
+            warn "${service}: captured enabled=${captured_enabled}, active=${captured_active}; current enabled=${current_enabled}, active=${current_active}"
+        fi
+    done < "$Q2_112_CONTRACT_SERVICES"
+
+    banner "Restore contract path-state preview"
+    local captured kind mode uid gid target
+    while IFS='|' read -r captured kind mode uid gid path target; do
+        if [ "$captured" = "absent" ]; then
+            if [ -e "$path" ] || [ -L "$path" ]; then
+                warn "Would remove path absent at capture: ${path}"
+            else
+                ok "Still absent as captured: ${path}"
+            fi
+        elif [ -e "$path" ] || [ -L "$path" ]; then
+            info "Would restore captured ${kind}: ${path}"
+        else
+            warn "Would restore missing captured ${kind}: ${path}"
+        fi
+    done < "$Q2_112_CONTRACT_PATH_STATES"
+    return 0
+}
+
+offer_q2_112_restore_contract_capture() {
+    [ "$AIO_LAYOUT" = "q2_112" ] || return 0
+
+    if validate_q2_112_restore_contract; then
+        ok "Verified 1.1.2 restore contract is ready."
+        return 0
+    fi
+    if capture_q2_112_restore_contract; then
+        banner "Restore contract preview after capture"
+        report_q2_112_restore_contract || true
+    fi
+}
+
 report_stock_preservation_dry_run() {
     banner "Dry-run stock preservation checks"
 
@@ -2356,7 +2779,7 @@ report_stock_preservation_dry_run() {
     if [ "$CAMERA_STACK" = "crowsnest" ]; then
         verify_systemd_service_health crowsnest "Crowsnest camera stack" false
     fi
-    verify_systemd_service_health qidi-tuning "Qidi tuning service" false
+    verify_qidi_tuning_service_health
 }
 
 report_aio_removal_dry_run() {
@@ -2441,6 +2864,7 @@ revert_to_backup_dry_run() {
 
     show_layout_report
     report_revert_backup_dry_run
+    report_q2_112_restore_contract || true
     report_stock_preservation_dry_run
     report_aio_removal_dry_run
     report_qidi_box_object_inventory
@@ -2449,7 +2873,7 @@ revert_to_backup_dry_run() {
 
     banner "Dry-run complete"
     info "Review this output for anything stock that would be removed or missing from backup."
-    info "If the plan looks correct, the next step is a guarded real 1.1.2 revert implementation."
+    info "Full install and real revert remain blocked until the contract restore path is implemented and tested."
 }
 
 offer_q2_112_baseline_capture() {
@@ -2837,7 +3261,7 @@ revert_to_backup() {
         else
             local oldest
             oldest=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d \
-                     -not -name '_FIRST_STOCK' 2>/dev/null | sort | head -n 1)
+                     -not -name '_*' 2>/dev/null | sort | head -n 1)
             if [ -n "$oldest" ]; then
                 src="$oldest"
                 restore_can_delete=true
@@ -3491,6 +3915,11 @@ run_readonly_diagnostics() {
         ok "1.1.2 compatibility probe artifacts detected"
     else
         info "1.1.2 compatibility probe not installed"
+    fi
+    if validate_q2_112_restore_contract; then
+        ok "Verified 1.1.2 restore contract is ready"
+    else
+        warn "Verified 1.1.2 restore contract is not ready"
     fi
     find_duplicate_macros_readonly
     check_invalid_klipper_options_readonly
@@ -4183,6 +4612,18 @@ ${C_BOLD}1.1.2 compatibility round-trip probe:${C_RESET}
   - Cleanup refuses to overwrite printer.cfg if unrelated changes were
     made after the probe was installed.
 
+${C_BOLD}1.1.2 restore contract:${C_RESET}
+  - Option 4 can atomically capture a verified restore contract after
+    the guarded stock baseline passes.
+  - The contract preserves the exact config tree, Klipper extras,
+    Moonraker components, mapped display/runtime and system integration
+    paths, their present/absent state, file hashes, metadata, symlink
+    targets, service states, default boot target, and Debian package inventory.
+  - Option 4 previews the exact contract-backed restore plan. Option 8
+    verifies contract integrity without modifying active printer state.
+  - Full install and real revert remain blocked until contract-backed
+    restore is implemented and tested.
+
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
@@ -4202,6 +4643,8 @@ ${C_BOLD}What it can uninstall:${C_RESET}
   - If the 1.1.2 dry-run finds an unsafe _FIRST_STOCK baseline while
     active stock essentials are present and AIO artifacts are absent,
     option 4 can quarantine the unsafe baseline and capture a fresh one.
+  - After the 1.1.2 baseline passes, option 4 can capture and validate
+    the broader restore contract without changing active configs/services.
 
 ${C_BOLD}Safety:${C_RESET}
   Install and repair paths write timestamped backups of ${CONFIG_DIR}/
@@ -4214,6 +4657,7 @@ ${C_BOLD}Safety:${C_RESET}
   Option 8 read-only diagnostics is allowed on unsupported layouts.
   Option 4 dry-run reporting is allowed on unsupported layouts.
   Option 4 guarded 1.1.2 baseline capture only writes under ${BACKUP_ROOT}/.
+  Option 4 guarded 1.1.2 restore-contract capture only writes under ${BACKUP_ROOT}/.
   Run FIRMWARE_RESTART, then sudo reboot, after an install or revert.
   Refuses to run as root.
 
@@ -4367,6 +4811,7 @@ main_loop() {
                 if ! layout_supports_mutation; then
                     revert_to_backup_dry_run
                     offer_q2_112_baseline_capture
+                    offer_q2_112_restore_contract_capture
                     press_enter
                     continue
                 fi
