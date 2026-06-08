@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC2.25)
+   Qidi Q2 Superuser - AIO Setup Menu (RC2.26)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -41,7 +41,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 AIO currently supports mutating install/revert/addon actions on the legacy Q2 firmware layout used by 1.1.0 and 1.1.1, where the active home/config path is `/home/mks`.
 
-Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.25 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting and guarded baseline capture, plus option 9's controlled compatibility round-trip probe. It still blocks full install, real full revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
+Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.26 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting plus guarded baseline/restore-contract capture, and option 9's controlled compatibility round-trip probe. It still blocks full install, real full revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
 
 ## Install
 
@@ -67,11 +67,11 @@ chmod +x aio_menu.sh
 | 1 | **Install BunnyBox & HelixScreen** | For Q2 owners with a Qidi Box. Installs Happy Hare MMU firmware and the pinned HelixScreen touchscreen UI, applies optimised Klipper configs, and enables filament drying with automatic spool rotation. Option 1 automatically installs the hosted Happier Hare patched HelixScreen build when available. `HAPPIER_HARE_ZIP_URL` and the layout-aware `~/helixscreen-pi-happier-hare.zip` remain available as overrides. Macro buttons remain the fallback. |
 | 2 | **Install KlipperScreen** | Temporarily disabled while the Q2 display backend issue is investigated. The standalone KlipperScreen Happy Hare Edition installer is preserved in the script for future re-enablement. |
 | 3 | **Install Just Faster Printer** | For Q2 owners without a Box. Keeps the stock Qidi screen but adds cleaner macros, faster print start, and adaptive bed meshing. |
-| 4 | **Revert to Backup** | On supported layouts, fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. On unsupported layouts such as Q2 firmware 1.1.2, runs a dry-run report only and can capture a guarded fresh stock baseline when the existing `_FIRST_STOCK` is unsafe. Real restore, deletion, and service changes remain blocked. |
+| 4 | **Revert to Backup** | On supported layouts, fully uninstalls everything AIO has installed and restores your printer to the state it was in before the first AIO run. On Q2 firmware 1.1.2, runs a dry-run report, can capture a guarded fresh stock baseline, and can atomically capture/validate the broader restore contract. Real restore, deletion, and service changes remain blocked. |
 | 5 | **Idle Fan Shutdown** | Addon toggle. Shuts off fans and heaters after 10 minutes idle, but only once all temps have dropped to safe levels. |
 | 6 | **Mainsail** | Addon toggle. Installs the Mainsail web interface, accessible at `http://<printer-ip>:100`. Qidi's stock UI on port 80 is unaffected. Includes a camera proxy so the webcam stream works in Mainsail. |
 | 7 | **About** | Shows the current AIO version, install paths, addons, restore behavior, safety notes, and known limitations. |
-| 8 | **Health Check / Run Verifiers** | Reports Klipper, Moonraker, Happy Hare/MMU, HelixScreen, Qidi Box sensor/heater, Mainsail, and camera runtime health when applicable. On supported layouts, scans active Klipper includes for common problems and prompts before repairs. On unsupported layouts such as Q2 firmware 1.1.2, runs read-only diagnostics only: no backups, repairs, service changes, or file edits. |
+| 8 | **Health Check / Run Verifiers** | Reports Klipper, Moonraker, Happy Hare/MMU, HelixScreen, Qidi Box sensor/heater, Mainsail, and camera runtime health when applicable. On supported layouts, scans active Klipper includes for common problems and prompts before repairs. On unsupported layouts such as Q2 firmware 1.1.2, runs read-only diagnostics and verifies restore-contract integrity: no backups, repairs, service changes, or file edits. |
 | 9 | **1.1.2 Compatibility Probe** | Installs one harmless no-op macro config plus one include line after validating the guarded stock baseline. Records exact before/after `printer.cfg` hashes. Running option 9 again restores the exact pre-probe `printer.cfg`, removes the probe, and verifies the round trip. Cleanup refuses to overwrite unrelated changes. |
 
 ## Backup and revert behavior
@@ -80,7 +80,7 @@ Option 1 captures the current active Klipper config tree before it installs Bunn
 
 Option 4 (**Revert to Backup**) prefers that first stock snapshot, restores it over the active Klipper config directory, removes AIO-installed runtime directories and residue, and verifies stock display services. Root-level AIO KAMP files such as `KAMP_Settings.cfg`, `Adaptive_Meshing.cfg`, `Line_Purge.cfg`, and `Smart_Park.cfg` are treated as install artifacts; the stock `KAMP/` directory is preserved through backup/restore instead of being blindly removed.
 
-On unsupported layouts such as Q2 firmware 1.1.2, option 4 is dry-run only for revert. It reports the selected backup source, what would be restored, what AIO artifacts would be removed, which stock files/services must be preserved, Qidi Box objects/sensors, and the active include graph. It does not run a real restore, delete AIO artifacts, edit active configs, or change services. If the selected `_FIRST_STOCK` is missing active stock essentials, option 4 can quarantine that unsafe baseline and capture a fresh one from the current stock config tree after guarded checks pass. `mudstockbackups/` is installer-managed backup state, not stock firmware content.
+On unsupported layouts such as Q2 firmware 1.1.2, option 4 is dry-run only for revert. It reports the selected backup source, what would be restored, what AIO artifacts would be removed, which stock files/services must be preserved, Qidi Box objects/sensors, and the active include graph. It does not run a real restore, delete AIO artifacts, edit active configs, or change services. If the selected `_FIRST_STOCK` is missing active stock essentials, option 4 can quarantine that unsafe baseline and capture a fresh one from the current stock config tree after guarded checks pass. Once that baseline passes, option 4 can atomically capture `_Q2_112_RESTORE_CONTRACT`. The contract records the exact config tree, Klipper extras, Moonraker components, mapped display/runtime and system integration paths, present/absent states, file hashes, full tree metadata, symlink targets, service states, the default boot target, and installed Debian package inventory. Option 4 previews the contract-backed restore plan and option 8 validates its integrity. `mudstockbackups/` is installer-managed backup state, not stock firmware content.
 
 ## Q2 firmware 1.1.2 compatibility probe
 
@@ -132,6 +132,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.26 | Adds the guarded Q2 1.1.2 restore contract: atomically captures and validates exact config/external recovery trees, hashes, metadata, symlink and absent-path states, service states, default target, and package inventory; option 4 previews the contract-backed restore plan, option 8 reports integrity, and fallback backup selection excludes internal `_` state directories |
 | RC2.25 | Adds option 9's controlled 1.1.2 compatibility round-trip probe: installs one harmless macro/include, records exact before/after `printer.cfg` hashes, restores the exact original on removal, and refuses cleanup if unrelated config changes occurred |
 | RC2.24 | Adds guarded 1.1.2 stock baseline capture from option 4: verifies stock essentials, verifies AIO artifacts are absent, quarantines the unsafe `_FIRST_STOCK`, captures a fresh baseline, and reruns the dry-run report without enabling real revert |
 | RC2.23 | Allows option 4 to run on unsupported firmware layouts as a dry-run Revert report, showing backup selection, critical backup safety validation, stock preservation checks, AIO artifact removal plan, Qidi Box objects/sensors, and active include graph without restoring, deleting, editing, or changing services |
@@ -173,7 +174,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 ## Known limitations
 
 - **Native Qidi Box humidity/dryer UI requires the Happier Hare patched HelixScreen zip.** Option 1 automatically uses the hosted Happier Hare release asset when available. `HAPPIER_HARE_ZIP_URL` and the layout-aware `~/helixscreen-pi-happier-hare.zip` remain available as overrides. Without the patched zip, use the macro buttons or Klipper console.
-- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for mutating install/revert actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout, option 8 can run read-only diagnostics, option 4 can run a dry-run Revert report, and option 4 can capture a guarded fresh stock baseline. Install, real revert, addon, and repair paths remain blocked until the compatibility lane lands.
+- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for mutating install/revert actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout, option 8 can run read-only diagnostics and restore-contract integrity checks, and option 4 can run a dry-run Revert report plus guarded stock-baseline/restore-contract capture. Install, real revert, addon, and repair paths remain blocked until the compatibility lane lands.
 - **MMU gear calibration is required after a fresh install.**
 - **Camera streaming (Mainsail)** requires a USB camera connected to the printer.
 
