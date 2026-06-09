@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.27'
+AIO_VERSION='RC2.28'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -148,6 +148,10 @@ Q2_112_CONTRACT_DIR="${BACKUP_ROOT}/_Q2_112_RESTORE_CONTRACT"
 Q2_112_CONTRACT_PATH_STATES="${Q2_112_CONTRACT_DIR}/path_states"
 Q2_112_CONTRACT_SERVICES="${Q2_112_CONTRACT_DIR}/services"
 Q2_112_REHEARSAL_DIR="${BACKUP_ROOT}/_Q2_112_RESTORE_REHEARSAL"
+Q2_112_LIVE_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_LIVE_RESTORE_PROOF"
+Q2_112_LIVE_PROOF_CFG="${CONFIG_DIR}/aio_q2_112_live_restore_proof.cfg"
+Q2_112_LIVE_PROOF_EXTERNAL_DIR="${HELIX_PRINT_DIR}"
+Q2_112_LIVE_PROOF_EXTERNAL_MARKER="${Q2_112_LIVE_PROOF_EXTERNAL_DIR}/.aio_q2_112_live_restore_proof"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -1967,6 +1971,7 @@ cleanup_aio_config_residue() {
         box_drying.cfg \
         idle_fan_shutdown.cfg \
         KlipperScreen.conf \
+        aio_q2_112_live_restore_proof.cfg \
         KAMP_Settings.cfg \
         KAMP_settings.cfg \
         Adaptive_Meshing.cfg \
@@ -2297,6 +2302,7 @@ q2_112_aio_artifacts_absent() {
         "${CONFIG_DIR}/Line_Purge.cfg" \
         "${CONFIG_DIR}/Smart_Park.cfg" \
         "${CONFIG_DIR}/moonraker.conf.aio-bak" \
+        "$Q2_112_LIVE_PROOF_CFG" \
         "$Q2_112_PROBE_CFG"; do
         if [ -e "$path" ] || [ -L "$path" ]; then
             warn "AIO artifact present: ${path}"
@@ -2677,7 +2683,7 @@ EOF
 
     ok "Verified 1.1.2 restore contract captured atomically."
     info "Contract: ${Q2_112_CONTRACT_DIR}"
-    info "Full install and real revert remain blocked until the contract restore path is implemented and tested."
+    info "Full install and general real revert remain blocked while the 1.1.2 compatibility lane is tested."
     return 0
 }
 
@@ -2994,12 +3000,237 @@ CONTRACT_DIR=${Q2_112_CONTRACT_DIR}
 CONTRACT_SEAL_SHA256=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
 REHEARSED_AT=$(date -Iseconds)
 EOF
-    info "Full install and real revert remain blocked."
+    info "Full install and general real revert remain blocked."
     return 0
 }
 
 menu_q2_112_restore_rehearsal() {
     run_q2_112_restore_rehearsal
+    press_enter
+}
+
+verify_q2_112_active_config_matches_contract() {
+    sudo sh -c 'cd "$1" && sha256sum -c "$2" >/dev/null' \
+        sh "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config.sha256" || return 1
+    verify_q2_112_contract_tree_inventory \
+        "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config.inventory"
+}
+
+q2_112_contract_path_was_absent() {
+    local path="$1"
+    awk -F'|' -v wanted="$path" '$1 == "absent" && $6 == wanted { found=1 } END { exit !found }' \
+        "$Q2_112_CONTRACT_PATH_STATES"
+}
+
+remove_q2_112_live_proof_external_path() {
+    local expected_token="${1:-}"
+    local marker_token=""
+
+    q2_112_contract_path_was_absent "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" || return 1
+    [ ! -L "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ] || return 1
+    [ -d "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ] || return 0
+    if [ -f "$Q2_112_LIVE_PROOF_EXTERNAL_MARKER" ]; then
+        marker_token=$(sudo cat "$Q2_112_LIVE_PROOF_EXTERNAL_MARKER" 2>/dev/null || true)
+        [ -z "$expected_token" ] || [ "$marker_token" = "$expected_token" ] || return 1
+    elif [ -n "$expected_token" ]; then
+        sudo rmdir "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" 2>/dev/null
+        return $?
+    fi
+    if sudo find "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" -mindepth 1 \
+        ! -path "$Q2_112_LIVE_PROOF_EXTERNAL_MARKER" -print -quit | grep -q .; then
+        return 1
+    fi
+    sudo rm -rf "$Q2_112_LIVE_PROOF_EXTERNAL_DIR"
+}
+
+rollback_q2_112_live_restore_proof() {
+    local emergency_config="${Q2_112_LIVE_PROOF_DIR}/emergency/config"
+    local expected_token="${1:-}"
+
+    warn "Rolling back the controlled live restore proof"
+    if [ -d "$emergency_config" ]; then
+        sudo rsync -aHAX --numeric-ids --delete "${emergency_config}/" "${CONFIG_DIR}/" || \
+            err "Emergency config rollback failed; inspect ${emergency_config}"
+    fi
+    if [ -e "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ] || [ -L "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ]; then
+        remove_q2_112_live_proof_external_path "$expected_token" || \
+            warn "External proof path contains unexpected state; inspect ${Q2_112_LIVE_PROOF_EXTERNAL_DIR}"
+    fi
+}
+
+q2_112_live_restore_proof_passed() {
+    local pass_file="${Q2_112_LIVE_PROOF_DIR}/PASS"
+    local expected_seal current_seal
+
+    [ -f "$pass_file" ] || return 1
+    validate_q2_112_restore_contract || return 1
+    q2_112_restore_rehearsal_passed || return 1
+    expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
+    current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+    [ -n "$expected_seal" ] && [ "$expected_seal" = "$current_seal" ] || return 1
+    [ ! -e "$Q2_112_LIVE_PROOF_CFG" ] || return 1
+    [ ! -e "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ] || return 1
+    verify_q2_112_active_config_matches_contract || return 1
+    verify_q2_112_rehearsal_live_guard \
+        "${Q2_112_LIVE_PROOF_DIR}/checks/before" \
+        "${Q2_112_LIVE_PROOF_DIR}/checks/after"
+}
+
+run_q2_112_live_restore_proof() {
+    banner "Q2 1.1.2 controlled live restore proof"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "The controlled live restore proof is only available on Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    if ! validate_q2_112_restore_contract; then
+        err "No complete, verified restore contract is available."
+        return 1
+    fi
+    if ! q2_112_restore_rehearsal_passed; then
+        err "The isolated restore rehearsal has not passed for the current contract."
+        info "Run option 10 before attempting the controlled live restore proof."
+        return 1
+    fi
+    if ! verify_q2_112_active_config_matches_contract; then
+        err "Active config does not exactly match the sealed stock contract."
+        warn "Refusing the live proof to avoid overwriting unrelated config changes."
+        return 1
+    fi
+    if ! q2_112_contract_path_was_absent "$Q2_112_LIVE_PROOF_EXTERNAL_DIR"; then
+        err "External proof path was not captured absent: ${Q2_112_LIVE_PROOF_EXTERNAL_DIR}"
+        return 1
+    fi
+    if [ -e "$Q2_112_LIVE_PROOF_CFG" ] || [ -L "$Q2_112_LIVE_PROOF_CFG" ] || \
+       [ -e "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ] || [ -L "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ]; then
+        err "Controlled proof artifacts already exist; refusing to overwrite them."
+        return 1
+    fi
+
+    warn "This is the first controlled live contract-backed restore test."
+    warn "It will create exactly two harmless, non-active proof artifacts:"
+    warn "  ${Q2_112_LIVE_PROOF_CFG}"
+    warn "  ${Q2_112_LIVE_PROOF_EXTERNAL_MARKER}"
+    warn "It will then restore the exact sealed stock config tree with rsync --delete"
+    warn "and remove only the external proof directory that was captured absent."
+    warn "No includes, packages, service states, boot targets, or stock runtime files are changed."
+    if ! confirm "Run the controlled live restore proof now?"; then
+        info "Controlled live restore proof cancelled."
+        return 1
+    fi
+
+    local before_dir="${Q2_112_LIVE_PROOF_DIR}/checks/before"
+    local after_dir="${Q2_112_LIVE_PROOF_DIR}/checks/after"
+    local emergency_config="${Q2_112_LIVE_PROOF_DIR}/emergency/config"
+    local proof_token
+    proof_token="AIO_Q2_112_LIVE_RESTORE_PROOF_$(date +%Y%m%d_%H%M%S)"
+
+    sudo rm -rf "$Q2_112_LIVE_PROOF_DIR"
+    sudo mkdir -p "$before_dir" "$after_dir" "$emergency_config" || {
+        err "Could not create controlled live restore proof state."
+        return 1
+    }
+
+    banner "Capturing emergency rollback and live-state guard"
+    if ! sudo rsync -aHAX --numeric-ids "${CONFIG_DIR}/" "${emergency_config}/"; then
+        err "Could not capture emergency config rollback."
+        return 1
+    fi
+    write_q2_112_rehearsal_live_guard "$before_dir" || {
+        err "Could not capture pre-proof live-state guard."
+        return 1
+    }
+    ok "Emergency rollback and pre-proof live-state guard captured"
+
+    banner "Creating controlled proof artifacts"
+    if ! sudo tee "$Q2_112_LIVE_PROOF_CFG" >/dev/null <<EOF
+# ${proof_token}
+# Harmless, non-included marker for the Q2 1.1.2 contract-backed restore proof.
+EOF
+    then
+        err "Could not create controlled config proof artifact."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    if ! sudo mkdir -p "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" || \
+       ! printf '%s\n' "$proof_token" | sudo tee "$Q2_112_LIVE_PROOF_EXTERNAL_MARKER" >/dev/null; then
+        err "Could not create controlled external proof artifact."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    ok "Controlled proof artifacts created"
+
+    banner "Executing sealed contract-backed config restore"
+    if ! sudo rsync -aHAX --numeric-ids --delete \
+        "${Q2_112_CONTRACT_DIR}/config/" "${CONFIG_DIR}/"; then
+        err "Contract-backed config restore failed."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    if [ -e "$Q2_112_LIVE_PROOF_CFG" ] || [ -L "$Q2_112_LIVE_PROOF_CFG" ]; then
+        err "Config proof artifact survived contract-backed rsync --delete."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    ok "Contract-backed config restore removed the controlled config artifact"
+
+    banner "Applying controlled captured-absent path restore"
+    if [ ! -f "$Q2_112_LIVE_PROOF_EXTERNAL_MARKER" ] || \
+       [ "$(sudo cat "$Q2_112_LIVE_PROOF_EXTERNAL_MARKER" 2>/dev/null)" != "$proof_token" ]; then
+        err "External proof marker identity could not be verified; refusing removal."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    if ! remove_q2_112_live_proof_external_path "$proof_token"; then
+        err "Could not safely remove controlled external proof path."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    ok "Controlled external path restored to its captured absent state"
+
+    banner "Verifying exact restoration and unchanged system state"
+    if ! verify_q2_112_active_config_matches_contract; then
+        err "Restored active config does not exactly match the sealed stock contract."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    write_q2_112_rehearsal_live_guard "$after_dir" || {
+        err "Could not capture post-proof live-state guard."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    }
+    if ! verify_q2_112_rehearsal_live_guard "$before_dir" "$after_dir"; then
+        err "Live system state differs after the controlled restore proof."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+    if [ -e "$Q2_112_LIVE_PROOF_CFG" ] || [ -e "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ]; then
+        err "Controlled proof artifacts remain after restoration."
+        rollback_q2_112_live_restore_proof "$proof_token"
+        return 1
+    fi
+
+    if ! sudo tee "${Q2_112_LIVE_PROOF_DIR}/PASS" >/dev/null <<EOF
+AIO_VERSION=${AIO_VERSION}
+CONTRACT_DIR=${Q2_112_CONTRACT_DIR}
+CONTRACT_SEAL_SHA256=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+PROVED_AT=$(date -Iseconds)
+EOF
+    then
+        err "Restore succeeded, but the controlled proof PASS record could not be written."
+        return 1
+    fi
+    sudo rm -rf "${Q2_112_LIVE_PROOF_DIR}/emergency"
+    ok "Controlled live restore proof passed"
+    ok "Active config exactly matches stock contract; proof artifacts are absent"
+    ok "Service enablement, default target, and package inventory are unchanged"
+    info "Run option 8 to verify Klipper, Moonraker, QIDIClient, Crowsnest, and Qidi Box health."
+    info "Full install and general real revert remain blocked."
+    return 0
+}
+
+menu_q2_112_live_restore_proof() {
+    run_q2_112_live_restore_proof
     press_enter
 }
 
@@ -3080,6 +3311,7 @@ report_aio_removal_dry_run() {
         "${CONFIG_DIR}/mmu_vars.cfg" \
         "${CONFIG_DIR}/mmu.cfg" \
         "${CONFIG_DIR}/moonraker.conf.aio-bak" \
+        "$Q2_112_LIVE_PROOF_CFG" \
         "$Q2_112_PROBE_CFG" \
         /etc/systemd/system/KlipperScreen.service \
         /etc/systemd/system/helixscreen.service \
@@ -3123,7 +3355,7 @@ revert_to_backup_dry_run() {
 
     banner "Dry-run complete"
     info "Review this output for anything stock that would be removed or missing from backup."
-    info "Full install and real revert remain blocked until the contract restore path is implemented and tested."
+    info "Full install and general real revert remain blocked while the 1.1.2 compatibility lane is tested."
 }
 
 offer_q2_112_baseline_capture() {
@@ -4147,7 +4379,7 @@ check_orphan_includes_readonly() {
 
 run_readonly_diagnostics() {
     banner "Health Check / Read-only Diagnostics"
-    warn "This firmware layout is not enabled for AIO mutations."
+    warn "This firmware layout is not enabled for general AIO mutations."
     warn "Running diagnostics only: no backups, repairs, service changes, or file edits."
 
     show_layout_report
@@ -4175,6 +4407,11 @@ run_readonly_diagnostics() {
         ok "1.1.2 isolated restore rehearsal has passed"
     else
         info "1.1.2 isolated restore rehearsal has not passed yet"
+    fi
+    if q2_112_live_restore_proof_passed; then
+        ok "1.1.2 controlled live restore proof has passed"
+    else
+        info "1.1.2 controlled live restore proof has not passed yet"
     fi
     find_duplicate_macros_readonly
     check_invalid_klipper_options_readonly
@@ -4876,8 +5113,8 @@ ${C_BOLD}1.1.2 restore contract:${C_RESET}
     targets, service states, default boot target, and Debian package inventory.
   - Option 4 previews the exact contract-backed restore plan. Option 8
     verifies contract integrity without modifying active printer state.
-  - Full install and real revert remain blocked until contract-backed
-    restore is implemented and tested.
+  - Full install and general real revert remain blocked while the
+    1.1.2 compatibility lane is tested.
 
 ${C_BOLD}1.1.2 isolated restore rehearsal:${C_RESET}
   - Option 10 reconstructs the sealed config and external recovery trees
@@ -4888,7 +5125,19 @@ ${C_BOLD}1.1.2 isolated restore rehearsal:${C_RESET}
   - Before and after guards verify the active config tree, service
     enablement, default target, and package inventory were untouched.
   - It never writes to active /home/qidi runtime trees, /etc, packages,
-    or services. Full install and real revert remain blocked.
+    or services. Full install and general real revert remain blocked.
+
+${C_BOLD}1.1.2 controlled live restore proof:${C_RESET}
+  - Option 11 requires a verified stock restore contract, a passed
+    isolated rehearsal, and an active config tree exactly matching the
+    sealed contract.
+  - It creates one harmless non-included config marker and one marker
+    under a path captured absent, then performs a real contract-backed
+    config restore using rsync --delete.
+  - It removes only the identified external proof path, verifies the
+    exact stock config and guarded system state, and retains an emergency
+    config snapshot if any verification fails.
+  - Full install and general real revert remain blocked.
 
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
@@ -5025,6 +5274,7 @@ draw_menu() {
     printf '  %sTESTING%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
     printf '   %s9)%s 1.1.2 Compatibility Probe          (reversible round trip)\n' "$C_CYAN" "$C_RESET"
     printf '  %s10)%s 1.1.2 Restore Rehearsal             (isolated, no live changes)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s11)%s 1.1.2 Live Restore Proof            (controlled contract restore)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -5113,6 +5363,7 @@ main_loop() {
                 ;;
             9) menu_q2_112_roundtrip_probe ;;
             10) menu_q2_112_restore_rehearsal ;;
+            11) menu_q2_112_live_restore_proof ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
