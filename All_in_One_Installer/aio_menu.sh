@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.26'
+AIO_VERSION='RC2.27'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -147,6 +147,7 @@ Q2_112_PROBE_INCLUDE='[include aio_q2_112_compat_probe.cfg]'
 Q2_112_CONTRACT_DIR="${BACKUP_ROOT}/_Q2_112_RESTORE_CONTRACT"
 Q2_112_CONTRACT_PATH_STATES="${Q2_112_CONTRACT_DIR}/path_states"
 Q2_112_CONTRACT_SERVICES="${Q2_112_CONTRACT_DIR}/services"
+Q2_112_REHEARSAL_DIR="${BACKUP_ROOT}/_Q2_112_RESTORE_REHEARSAL"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -2753,6 +2754,255 @@ report_q2_112_restore_contract() {
     return 0
 }
 
+write_q2_112_service_restore_plan() {
+    local output="$1"
+    local service exists enabled active fragment
+
+    sudo tee "$output" >/dev/null < /dev/null
+    while IFS='|' read -r service exists enabled active fragment; do
+        if [ "$exists" = "false" ]; then
+            printf 'REMOVE_IF_AIO_CREATED|%s|captured unit absent\n' "$service"
+            continue
+        fi
+
+        case "$enabled" in
+            enabled|enabled-runtime|linked|linked-runtime)
+                printf 'ENABLE|%s|captured enabled=%s\n' "$service" "$enabled"
+                ;;
+            masked|masked-runtime)
+                printf 'MASK|%s|captured enabled=%s\n' "$service" "$enabled"
+                ;;
+            disabled)
+                printf 'DISABLE|%s|captured disabled\n' "$service"
+                ;;
+            static|indirect|generated|transient|alias)
+                printf 'PRESERVE_ENABLEMENT|%s|captured enabled=%s\n' "$service" "$enabled"
+                ;;
+            *)
+                printf 'REVIEW_ENABLEMENT|%s|captured enabled=%s\n' "$service" "$enabled"
+                ;;
+        esac
+
+        case "$active" in
+            active|activating|reloading)
+                printf 'START|%s|captured active=%s\n' "$service" "$active"
+                ;;
+            *)
+                printf 'STOP|%s|captured active=%s\n' "$service" "$active"
+                ;;
+        esac
+        printf 'FRAGMENT|%s|%s\n' "$service" "$fragment"
+    done < "$Q2_112_CONTRACT_SERVICES" | sudo tee -a "$output" >/dev/null
+}
+
+write_q2_112_path_restore_plan() {
+    local output="$1"
+    local captured kind mode uid gid path target source
+
+    printf 'RESTORE_CONFIG_TREE|%s|source=%s|rsync=-aHAX --numeric-ids --delete\n' \
+        "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config" | sudo tee "$output" >/dev/null
+    while IFS='|' read -r captured kind mode uid gid path target; do
+        if [ "$captured" = "absent" ]; then
+            printf 'REMOVE_IF_PRESENT|%s|captured absent\n' "$path"
+            continue
+        fi
+
+        source="${Q2_112_CONTRACT_DIR}/external${path}"
+        printf 'RESTORE|%s|%s|mode=%s|uid=%s|gid=%s|source=%s|target=%s\n' \
+            "$kind" "$path" "$mode" "$uid" "$gid" "$source" "$target"
+    done < "$Q2_112_CONTRACT_PATH_STATES" | sudo tee -a "$output" >/dev/null
+}
+
+write_q2_112_rehearsal_live_guard() {
+    local output_dir="$1"
+
+    write_q2_112_contract_tree_hashes "$CONFIG_DIR" "${output_dir}/active-config.sha256" || return 1
+    write_q2_112_contract_tree_inventory "$CONFIG_DIR" "${output_dir}/active-config.inventory" || return 1
+    q2_112_restore_contract_services | while IFS= read -r service; do
+        local enabled fragment
+        enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
+        enabled="${enabled:-not-found}"
+        fragment=$(systemctl show "$service" -p FragmentPath --value 2>/dev/null || true)
+        printf '%s|%s|%s\n' "$service" "$enabled" "$fragment"
+    done | sudo tee "${output_dir}/service-enablements" >/dev/null
+    systemctl get-default 2>/dev/null | sudo tee "${output_dir}/default-target" >/dev/null
+    dpkg-query -W -f='${binary:Package}|${Version}|${db:Status-Abbrev}\n' 2>/dev/null | \
+        LC_ALL=C sort | sudo tee "${output_dir}/packages" >/dev/null
+}
+
+q2_112_restore_rehearsal_passed() {
+    local pass_file="${Q2_112_REHEARSAL_DIR}/PASS"
+    local expected_seal current_seal
+    local rehearsal_config="${Q2_112_REHEARSAL_DIR}/reconstructed/config"
+    local rehearsal_external="${Q2_112_REHEARSAL_DIR}/reconstructed/external"
+    local rehearsal_plans="${Q2_112_REHEARSAL_DIR}/plans"
+    local before_dir="${Q2_112_REHEARSAL_DIR}/checks/before"
+    local after_dir="${Q2_112_REHEARSAL_DIR}/checks/after"
+
+    [ -f "$pass_file" ] || return 1
+    validate_q2_112_restore_contract || return 1
+    expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
+    current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+    [ -n "$expected_seal" ] && [ "$expected_seal" = "$current_seal" ] || return 1
+    [ -s "${rehearsal_plans}/services.plan" ] || return 1
+    [ -s "${rehearsal_plans}/paths.plan" ] || return 1
+    [ -s "${rehearsal_plans}/packages.stock" ] || return 1
+    [ -s "${rehearsal_plans}/plans.sha256" ] || return 1
+    sudo sh -c 'cd "$1" && sha256sum -c plans.sha256 >/dev/null' \
+        sh "$rehearsal_plans" || return 1
+    sudo sh -c 'cd "$1" && sha256sum -c "$2" >/dev/null' \
+        sh "$rehearsal_config" "${Q2_112_CONTRACT_DIR}/config.sha256" || return 1
+    if [ -s "${Q2_112_CONTRACT_DIR}/external.sha256" ]; then
+        sudo sh -c 'cd "$1" && sha256sum -c "$2" >/dev/null' \
+            sh "$rehearsal_external" "${Q2_112_CONTRACT_DIR}/external.sha256" || return 1
+    fi
+    verify_q2_112_contract_tree_inventory \
+        "$rehearsal_config" "${Q2_112_CONTRACT_DIR}/config.inventory" || return 1
+    verify_q2_112_contract_tree_inventory \
+        "$rehearsal_external" "${Q2_112_CONTRACT_DIR}/external.inventory" || return 1
+    verify_q2_112_rehearsal_live_guard "$before_dir" "$after_dir"
+}
+
+verify_q2_112_rehearsal_live_guard() {
+    local before_dir="$1"
+    local after_dir="$2"
+    local item
+
+    for item in active-config.sha256 active-config.inventory service-enablements default-target packages; do
+        if ! sudo cmp -s "${before_dir}/${item}" "${after_dir}/${item}"; then
+            err "Restore rehearsal live-state guard changed: ${item}"
+            return 1
+        fi
+    done
+    return 0
+}
+
+run_q2_112_restore_rehearsal() {
+    banner "Q2 1.1.2 contract-backed restore rehearsal"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "The restore rehearsal is only available on Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    if ! validate_q2_112_restore_contract; then
+        err "No complete, verified restore contract is available."
+        info "Run option 4 to capture and validate the restore contract first."
+        return 1
+    fi
+
+    warn "This reconstructs the sealed contract only under:"
+    warn "  ${Q2_112_REHEARSAL_DIR}"
+    warn "It will not write to active configs, /home/qidi runtime trees, /etc, packages, or services."
+    if ! confirm "Run the isolated restore rehearsal now?"; then
+        info "Restore rehearsal cancelled."
+        return 1
+    fi
+
+    local before_dir="${Q2_112_REHEARSAL_DIR}/checks/before"
+    local after_dir="${Q2_112_REHEARSAL_DIR}/checks/after"
+    local rehearsal_config="${Q2_112_REHEARSAL_DIR}/reconstructed/config"
+    local rehearsal_external="${Q2_112_REHEARSAL_DIR}/reconstructed/external"
+    local rehearsal_plans="${Q2_112_REHEARSAL_DIR}/plans"
+
+    sudo rm -rf "$Q2_112_REHEARSAL_DIR"
+    sudo mkdir -p "$before_dir" "$after_dir" "$rehearsal_plans" \
+        "${Q2_112_REHEARSAL_DIR}/reconstructed" || {
+        err "Could not create isolated restore rehearsal workspace."
+        return 1
+    }
+
+    banner "Sealing live-state guard"
+    write_q2_112_rehearsal_live_guard "$before_dir" || {
+        err "Could not capture the pre-rehearsal live-state guard."
+        return 1
+    }
+    ok "Pre-rehearsal active config, service enablement, target, and package state sealed"
+
+    banner "Reconstructing contract in isolation"
+    if ! sudo rsync -aHAX --numeric-ids "${Q2_112_CONTRACT_DIR}/config" \
+        "${Q2_112_REHEARSAL_DIR}/reconstructed/"; then
+        err "Could not reconstruct the config contract tree."
+        return 1
+    fi
+    if ! sudo rsync -aHAX --numeric-ids "${Q2_112_CONTRACT_DIR}/external" \
+        "${Q2_112_REHEARSAL_DIR}/reconstructed/"; then
+        err "Could not reconstruct the external contract tree."
+        return 1
+    fi
+    ok "Contract trees reconstructed under isolated rehearsal workspace"
+
+    banner "Verifying reconstructed contract"
+    sudo sh -c 'cd "$1" && sha256sum -c "$2" >/dev/null' \
+        sh "$rehearsal_config" "${Q2_112_CONTRACT_DIR}/config.sha256" || {
+        err "Reconstructed config file hashes do not match the sealed contract."
+        return 1
+    }
+    if [ -s "${Q2_112_CONTRACT_DIR}/external.sha256" ]; then
+        sudo sh -c 'cd "$1" && sha256sum -c "$2" >/dev/null' \
+            sh "$rehearsal_external" "${Q2_112_CONTRACT_DIR}/external.sha256" || {
+            err "Reconstructed external file hashes do not match the sealed contract."
+            return 1
+        }
+    fi
+    verify_q2_112_contract_tree_inventory \
+        "$rehearsal_config" "${Q2_112_CONTRACT_DIR}/config.inventory" || {
+        err "Reconstructed config metadata does not match the sealed contract."
+        return 1
+    }
+    verify_q2_112_contract_tree_inventory \
+        "$rehearsal_external" "${Q2_112_CONTRACT_DIR}/external.inventory" || {
+        err "Reconstructed external metadata does not match the sealed contract."
+        return 1
+    }
+    ok "Reconstructed file contents, ownership, permissions, timestamps, and symlinks match"
+
+    banner "Generating non-executing restore plans"
+    write_q2_112_service_restore_plan "${rehearsal_plans}/services.plan" || return 1
+    write_q2_112_path_restore_plan "${rehearsal_plans}/paths.plan" || return 1
+    sudo tee "${rehearsal_plans}/packages.stock" >/dev/null < "${Q2_112_CONTRACT_DIR}/packages" || return 1
+    if [ ! -s "${rehearsal_plans}/services.plan" ] || \
+       [ ! -s "${rehearsal_plans}/paths.plan" ] || \
+       [ ! -s "${rehearsal_plans}/packages.stock" ]; then
+        err "One or more generated restore plans are empty."
+        return 1
+    fi
+    if ! sudo sh -c '
+        cd "$1" || exit 1
+        sha256sum services.plan paths.plan packages.stock > plans.sha256
+    ' sh "$rehearsal_plans"; then
+        err "Could not seal generated restore plans."
+        return 1
+    fi
+    ok "Service, path, absent-path, and stock-package plans generated"
+    info "Plans: ${rehearsal_plans}"
+
+    banner "Verifying live printer was untouched"
+    write_q2_112_rehearsal_live_guard "$after_dir" || {
+        err "Could not capture the post-rehearsal live-state guard."
+        return 1
+    }
+    if ! verify_q2_112_rehearsal_live_guard "$before_dir" "$after_dir"; then
+        err "Restore rehearsal failed: live printer state changed during the rehearsal."
+        return 1
+    fi
+
+    ok "Restore rehearsal passed: reconstructed contract exactly matches the sealed source"
+    ok "Live active config, service enablement, default target, and package inventory are unchanged"
+    sudo tee "${Q2_112_REHEARSAL_DIR}/PASS" >/dev/null <<EOF
+AIO_VERSION=${AIO_VERSION}
+CONTRACT_DIR=${Q2_112_CONTRACT_DIR}
+CONTRACT_SEAL_SHA256=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+REHEARSED_AT=$(date -Iseconds)
+EOF
+    info "Full install and real revert remain blocked."
+    return 0
+}
+
+menu_q2_112_restore_rehearsal() {
+    run_q2_112_restore_rehearsal
+    press_enter
+}
+
 offer_q2_112_restore_contract_capture() {
     [ "$AIO_LAYOUT" = "q2_112" ] || return 0
 
@@ -3921,6 +4171,11 @@ run_readonly_diagnostics() {
     else
         warn "Verified 1.1.2 restore contract is not ready"
     fi
+    if q2_112_restore_rehearsal_passed; then
+        ok "1.1.2 isolated restore rehearsal has passed"
+    else
+        info "1.1.2 isolated restore rehearsal has not passed yet"
+    fi
     find_duplicate_macros_readonly
     check_invalid_klipper_options_readonly
     check_orphan_includes_readonly
@@ -4624,6 +4879,17 @@ ${C_BOLD}1.1.2 restore contract:${C_RESET}
   - Full install and real revert remain blocked until contract-backed
     restore is implemented and tested.
 
+${C_BOLD}1.1.2 isolated restore rehearsal:${C_RESET}
+  - Option 10 reconstructs the sealed config and external recovery trees
+    only under ${Q2_112_REHEARSAL_DIR}.
+  - It verifies file hashes, ownership, permissions, timestamps, and
+    symlink targets against the contract, then generates non-executing
+    config/path/service/package restore plans.
+  - Before and after guards verify the active config tree, service
+    enablement, default target, and package inventory were untouched.
+  - It never writes to active /home/qidi runtime trees, /etc, packages,
+    or services. Full install and real revert remain blocked.
+
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
@@ -4758,6 +5024,7 @@ draw_menu() {
     printf '   %s8)%s Health Check / Run Verifiers\n'                             "$C_CYAN" "$C_RESET"
     printf '  %sTESTING%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
     printf '   %s9)%s 1.1.2 Compatibility Probe          (reversible round trip)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s10)%s 1.1.2 Restore Rehearsal             (isolated, no live changes)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -4845,6 +5112,7 @@ main_loop() {
                 fi
                 ;;
             9) menu_q2_112_roundtrip_probe ;;
+            10) menu_q2_112_restore_rehearsal ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
