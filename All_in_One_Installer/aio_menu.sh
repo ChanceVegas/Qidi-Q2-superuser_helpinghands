@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.29'
+AIO_VERSION='RC2.30'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -152,6 +152,10 @@ Q2_112_LIVE_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_LIVE_RESTORE_PROOF"
 Q2_112_LIVE_PROOF_CFG="${CONFIG_DIR}/aio_q2_112_live_restore_proof.cfg"
 Q2_112_LIVE_PROOF_EXTERNAL_DIR="${HELIX_PRINT_DIR}"
 Q2_112_LIVE_PROOF_EXTERNAL_MARKER="${Q2_112_LIVE_PROOF_EXTERNAL_DIR}/.aio_q2_112_live_restore_proof"
+Q2_112_PRESENT_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_PRESENT_PATH_RESTORE_PROOF"
+Q2_112_PRESENT_PROOF_TARGET="/etc/systemd/system/${STOCK_UI_SERVICE}.service.d"
+Q2_112_PRESENT_PROOF_SOURCE="${Q2_112_CONTRACT_DIR}/external${Q2_112_PRESENT_PROOF_TARGET}"
+Q2_112_PRESENT_PROOF_MARKER="${Q2_112_PRESENT_PROOF_TARGET}/aio-q2-112-restore-proof.marker"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -2303,6 +2307,7 @@ q2_112_aio_artifacts_absent() {
         "${CONFIG_DIR}/Smart_Park.cfg" \
         "${CONFIG_DIR}/moonraker.conf.aio-bak" \
         "$Q2_112_LIVE_PROOF_CFG" \
+        "$Q2_112_PRESENT_PROOF_MARKER" \
         "$Q2_112_PROBE_CFG"; do
         if [ -e "$path" ] || [ -L "$path" ]; then
             warn "AIO artifact present: ${path}"
@@ -2804,6 +2809,12 @@ report_q2_112_external_restore_audit() {
 
         case "$kind" in
             directory)
+                if [ ! -d "$path" ] || [ -L "$path" ] || \
+                   [ ! -d "$source" ] || [ -L "$source" ]; then
+                    warn "Captured directory changed type or contract source is invalid: ${path}"
+                    errors=$((errors + 1))
+                    continue
+                fi
                 if ! changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
                     "${source}/" "${path}/" 2>&1); then
                     err "Could not audit captured directory: ${path}"
@@ -2811,11 +2822,31 @@ report_q2_112_external_restore_audit() {
                     continue
                 fi
                 ;;
-            file|symlink)
+            file)
+                if [ ! -f "$path" ] || [ -L "$path" ] || \
+                   [ ! -f "$source" ] || [ -L "$source" ]; then
+                    warn "Captured file changed type or contract source is invalid: ${path}"
+                    errors=$((errors + 1))
+                    continue
+                fi
                 destination=$(dirname "$path")
                 if ! changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
                     "$source" "${destination}/" 2>&1); then
-                    err "Could not audit captured ${kind}: ${path}"
+                    err "Could not audit captured file: ${path}"
+                    errors=$((errors + 1))
+                    continue
+                fi
+                ;;
+            symlink)
+                if [ ! -L "$path" ] || [ ! -L "$source" ]; then
+                    warn "Captured symlink changed type or contract source is invalid: ${path}"
+                    errors=$((errors + 1))
+                    continue
+                fi
+                destination=$(dirname "$path")
+                if ! changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                    "$source" "${destination}/" 2>&1); then
+                    err "Could not audit captured symlink: ${path}"
                     errors=$((errors + 1))
                     continue
                 fi
@@ -2867,6 +2898,47 @@ report_q2_112_external_restore_audit() {
 menu_q2_112_external_restore_audit() {
     report_q2_112_external_restore_audit
     press_enter
+}
+
+q2_112_external_paths_match_contract() {
+    local captured kind mode uid gid path target source destination changes
+
+    while IFS='|' read -r captured kind mode uid gid path target; do
+        source="${Q2_112_CONTRACT_DIR}/external${path}"
+        if [ "$captured" = "absent" ]; then
+            [ ! -e "$path" ] && [ ! -L "$path" ] || return 1
+            continue
+        fi
+        [ -e "$path" ] || [ -L "$path" ] || return 1
+        [ -e "$source" ] || [ -L "$source" ] || return 1
+
+        case "$kind" in
+            directory)
+                [ -d "$path" ] && [ ! -L "$path" ] || return 1
+                [ -d "$source" ] && [ ! -L "$source" ] || return 1
+                changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+                    "${source}/" "${path}/" 2>/dev/null) || return 1
+                ;;
+            file)
+                [ -f "$path" ] && [ ! -L "$path" ] || return 1
+                [ -f "$source" ] && [ ! -L "$source" ] || return 1
+                destination=$(dirname "$path")
+                changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                    "$source" "${destination}/" 2>/dev/null) || return 1
+                ;;
+            symlink)
+                [ -L "$path" ] && [ -L "$source" ] || return 1
+                destination=$(dirname "$path")
+                changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                    "$source" "${destination}/" 2>/dev/null) || return 1
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+        [ -z "$changes" ] || return 1
+    done < "$Q2_112_CONTRACT_PATH_STATES"
+    return 0
 }
 
 write_q2_112_service_restore_plan() {
@@ -3131,6 +3203,13 @@ q2_112_contract_path_was_absent() {
         "$Q2_112_CONTRACT_PATH_STATES"
 }
 
+q2_112_contract_path_was_present_directory() {
+    local path="$1"
+    awk -F'|' -v wanted="$path" \
+        '$1 == "present" && $2 == "directory" && $6 == wanted { found=1 } END { exit !found }' \
+        "$Q2_112_CONTRACT_PATH_STATES"
+}
+
 remove_q2_112_live_proof_external_path() {
     local expected_token="${1:-}"
     local marker_token=""
@@ -3342,6 +3421,233 @@ menu_q2_112_live_restore_proof() {
     press_enter
 }
 
+write_q2_112_present_proof_guard() {
+    local output_dir="$1"
+    local active
+
+    write_q2_112_rehearsal_live_guard "$output_dir" || return 1
+    active=$(systemctl is-active "$STOCK_UI_SERVICE" 2>/dev/null || true)
+    printf '%s\n' "${active:-inactive}" | sudo tee "${output_dir}/stock-ui-active" >/dev/null
+}
+
+verify_q2_112_present_proof_guard() {
+    local before_dir="$1"
+    local after_dir="$2"
+
+    verify_q2_112_rehearsal_live_guard "$before_dir" "$after_dir" || return 1
+    if ! sudo cmp -s "${before_dir}/stock-ui-active" "${after_dir}/stock-ui-active"; then
+        err "Present-path restore proof changed stock UI active state"
+        return 1
+    fi
+    return 0
+}
+
+rollback_q2_112_present_path_restore_proof() {
+    local emergency_target="${Q2_112_PRESENT_PROOF_DIR}/emergency/target"
+
+    warn "Rolling back the controlled captured-present path restore proof"
+    if [ -d "$emergency_target" ]; then
+        sudo rsync -aHAX --numeric-ids --delete \
+            "${emergency_target}/" "${Q2_112_PRESENT_PROOF_TARGET}/" || \
+            err "Emergency target rollback failed; inspect ${emergency_target}"
+    else
+        err "Emergency target rollback is unavailable; inspect ${Q2_112_PRESENT_PROOF_TARGET}"
+    fi
+}
+
+remove_q2_112_present_proof_marker() {
+    local expected_token="$1"
+    local marker_token
+
+    [ -f "$Q2_112_PRESENT_PROOF_MARKER" ] && [ ! -L "$Q2_112_PRESENT_PROOF_MARKER" ] || return 1
+    marker_token=$(sudo cat "$Q2_112_PRESENT_PROOF_MARKER" 2>/dev/null || true)
+    [ "$marker_token" = "$expected_token" ] || return 1
+    sudo rm -f "$Q2_112_PRESENT_PROOF_MARKER"
+}
+
+q2_112_present_path_restore_proof_passed() {
+    local pass_file="${Q2_112_PRESENT_PROOF_DIR}/PASS"
+    local expected_seal current_seal
+    local before_dir="${Q2_112_PRESENT_PROOF_DIR}/checks/before"
+    local after_dir="${Q2_112_PRESENT_PROOF_DIR}/checks/after"
+
+    [ -f "$pass_file" ] || return 1
+    validate_q2_112_restore_contract || return 1
+    q2_112_live_restore_proof_passed || return 1
+    expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
+    current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+    [ -n "$expected_seal" ] && [ "$expected_seal" = "$current_seal" ] || return 1
+    [ ! -e "$Q2_112_PRESENT_PROOF_MARKER" ] && [ ! -L "$Q2_112_PRESENT_PROOF_MARKER" ] || return 1
+    verify_q2_112_present_proof_guard "$before_dir" "$after_dir"
+}
+
+run_q2_112_present_path_restore_proof() {
+    banner "Q2 1.1.2 captured-present path restore proof"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ] || [ "$STOCK_UI_SERVICE" != "qidi-client" ]; then
+        err "This proof is only available on Q2 firmware 1.1.2 with qidi-client."
+        return 1
+    fi
+    if ! validate_q2_112_restore_contract; then
+        err "No complete, verified restore contract is available."
+        return 1
+    fi
+    if ! q2_112_restore_rehearsal_passed || ! q2_112_live_restore_proof_passed; then
+        err "The isolated rehearsal and controlled live restore proof must pass first."
+        return 1
+    fi
+    if ! q2_112_external_paths_match_contract; then
+        err "One or more external paths no longer exactly match the sealed contract."
+        info "Run option 12 and review every reported change before continuing."
+        return 1
+    fi
+    if ! q2_112_contract_path_was_present_directory "$Q2_112_PRESENT_PROOF_TARGET"; then
+        err "Target was not captured as a present directory: ${Q2_112_PRESENT_PROOF_TARGET}"
+        return 1
+    fi
+    if [ ! -d "$Q2_112_PRESENT_PROOF_TARGET" ] || [ -L "$Q2_112_PRESENT_PROOF_TARGET" ] || \
+       [ ! -d "$Q2_112_PRESENT_PROOF_SOURCE" ] || [ -L "$Q2_112_PRESENT_PROOF_SOURCE" ]; then
+        err "Live target or sealed contract source directory is missing."
+        return 1
+    fi
+    if [ -e "$Q2_112_PRESENT_PROOF_MARKER" ] || [ -L "$Q2_112_PRESENT_PROOF_MARKER" ]; then
+        err "Controlled proof marker already exists; refusing to overwrite it."
+        return 1
+    fi
+    if ! systemctl is-active --quiet "$STOCK_UI_SERVICE"; then
+        err "Stock QIDIClient UI is not active; refusing the controlled proof."
+        return 1
+    fi
+
+    warn "This tests restoration of one captured-present system directory:"
+    warn "  ${Q2_112_PRESENT_PROOF_TARGET}"
+    warn "It creates one uniquely identified marker without a .conf extension,"
+    warn "so systemd ignores it, then restores the directory from the sealed contract."
+    warn "It does not run daemon-reload, restart services, or touch Klipper code/configs."
+    if ! confirm "Run the controlled captured-present path restore proof now?"; then
+        info "Captured-present path restore proof cancelled."
+        return 1
+    fi
+
+    local before_dir="${Q2_112_PRESENT_PROOF_DIR}/checks/before"
+    local after_dir="${Q2_112_PRESENT_PROOF_DIR}/checks/after"
+    local emergency_target="${Q2_112_PRESENT_PROOF_DIR}/emergency/target"
+    local proof_token proof_marker_name changes
+    proof_token="AIO_Q2_112_PRESENT_PATH_PROOF_$(date +%Y%m%d_%H%M%S)"
+    proof_marker_name="${Q2_112_PRESENT_PROOF_MARKER##*/}"
+
+    sudo rm -rf "$Q2_112_PRESENT_PROOF_DIR"
+    sudo mkdir -p "$before_dir" "$after_dir" "$emergency_target" || {
+        err "Could not create captured-present proof state."
+        return 1
+    }
+
+    banner "Capturing emergency rollback and live-state guard"
+    if ! sudo rsync -aHAX --numeric-ids \
+        "${Q2_112_PRESENT_PROOF_TARGET}/" "${emergency_target}/"; then
+        err "Could not capture emergency target rollback."
+        return 1
+    fi
+    write_q2_112_present_proof_guard "$before_dir" || {
+        err "Could not capture pre-proof live-state guard."
+        return 1
+    }
+    ok "Emergency target rollback and pre-proof live-state guard captured"
+
+    banner "Creating ignored systemd proof marker"
+    if ! printf '%s\n' "$proof_token" | sudo tee "$Q2_112_PRESENT_PROOF_MARKER" >/dev/null; then
+        err "Could not create controlled proof marker."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    fi
+    if [ "$(sudo cat "$Q2_112_PRESENT_PROOF_MARKER" 2>/dev/null || true)" != "$proof_token" ]; then
+        err "Controlled proof marker identity could not be verified."
+        warn "The ignored marker was left for inspection: ${Q2_112_PRESENT_PROOF_MARKER}"
+        return 1
+    fi
+    changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+        --omit-dir-times --exclude="/${proof_marker_name}" \
+        "${Q2_112_PRESENT_PROOF_SOURCE}/" "${Q2_112_PRESENT_PROOF_TARGET}/" 2>/dev/null) || {
+        err "Could not verify target safety immediately before restore."
+        remove_q2_112_present_proof_marker "$proof_token" || \
+            warn "The ignored marker was left for inspection: ${Q2_112_PRESENT_PROOF_MARKER}"
+        return 1
+    }
+    if [ -n "$changes" ]; then
+        err "Target changed after the initial safety gate; refusing rsync --delete."
+        remove_q2_112_present_proof_marker "$proof_token" || \
+            warn "The ignored marker was left for inspection: ${Q2_112_PRESENT_PROOF_MARKER}"
+        return 1
+    fi
+    ok "Ignored proof marker created; no daemon-reload or service restart performed"
+
+    banner "Executing sealed captured-present directory restore"
+    if ! sudo rsync -aHAX --numeric-ids --delete \
+        "${Q2_112_PRESENT_PROOF_SOURCE}/" "${Q2_112_PRESENT_PROOF_TARGET}/"; then
+        err "Contract-backed captured-present directory restore failed."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    fi
+    if [ -e "$Q2_112_PRESENT_PROOF_MARKER" ] || [ -L "$Q2_112_PRESENT_PROOF_MARKER" ]; then
+        err "Proof marker survived contract-backed rsync --delete."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    fi
+    changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+        "${Q2_112_PRESENT_PROOF_SOURCE}/" "${Q2_112_PRESENT_PROOF_TARGET}/" 2>/dev/null) || {
+        err "Could not verify restored target against the sealed contract."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    }
+    if [ -n "$changes" ]; then
+        err "Restored target does not exactly match the sealed contract."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    fi
+    ok "Captured-present target exactly matches the sealed contract"
+
+    banner "Verifying unchanged printer state"
+    write_q2_112_present_proof_guard "$after_dir" || {
+        err "Could not capture post-proof live-state guard."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    }
+    if ! verify_q2_112_present_proof_guard "$before_dir" "$after_dir"; then
+        err "Guarded printer state differs after the captured-present proof."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    fi
+    if ! systemctl is-active --quiet "$STOCK_UI_SERVICE"; then
+        err "QIDIClient stock UI is not active after the captured-present proof."
+        rollback_q2_112_present_path_restore_proof
+        return 1
+    fi
+
+    if ! sudo tee "${Q2_112_PRESENT_PROOF_DIR}/PASS" >/dev/null <<EOF
+AIO_VERSION=${AIO_VERSION}
+CONTRACT_DIR=${Q2_112_CONTRACT_DIR}
+CONTRACT_SEAL_SHA256=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+TARGET=${Q2_112_PRESENT_PROOF_TARGET}
+PROVED_AT=$(date -Iseconds)
+EOF
+    then
+        err "Restore succeeded, but the captured-present proof PASS record could not be written."
+        return 1
+    fi
+    sudo rm -rf "${Q2_112_PRESENT_PROOF_DIR}/emergency"
+    ok "Controlled captured-present path restore proof passed"
+    ok "QIDIClient remained active; no service reload or restart was performed"
+    ok "Config, service enablement, default target, and package inventory are unchanged"
+    info "Run option 8 to verify full printer runtime health."
+    info "Full install and general real revert remain blocked."
+    return 0
+}
+
+menu_q2_112_present_path_restore_proof() {
+    run_q2_112_present_path_restore_proof
+    press_enter
+}
+
 offer_q2_112_restore_contract_capture() {
     [ "$AIO_LAYOUT" = "q2_112" ] || return 0
 
@@ -3423,6 +3729,7 @@ report_aio_removal_dry_run() {
         "$Q2_112_PROBE_CFG" \
         /etc/systemd/system/KlipperScreen.service \
         /etc/systemd/system/helixscreen.service \
+        "$Q2_112_PRESENT_PROOF_MARKER" \
         /etc/systemd/system/helixscreen-update.path \
         /etc/systemd/system/helixscreen-update.service \
         /etc/udev/rules.d/99-helixscreen-backlight.rules \
@@ -4521,6 +4828,11 @@ run_readonly_diagnostics() {
     else
         info "1.1.2 controlled live restore proof has not passed yet"
     fi
+    if q2_112_present_path_restore_proof_passed; then
+        ok "1.1.2 captured-present path restore proof has passed"
+    else
+        info "1.1.2 captured-present path restore proof has not passed yet"
+    fi
     find_duplicate_macros_readonly
     check_invalid_klipper_options_readonly
     check_orphan_includes_readonly
@@ -5257,6 +5569,15 @@ ${C_BOLD}1.1.2 external restore audit:${C_RESET}
     future restore would replace or remove.
   - It does not write files or change packages, services, or boot targets.
 
+${C_BOLD}1.1.2 captured-present path restore proof:${C_RESET}
+  - Option 13 requires every mapped external path to exactly match the
+    sealed stock contract.
+  - It creates one ignored marker without a .conf extension under
+    ${Q2_112_PRESENT_PROOF_TARGET}, then restores only that directory
+    from the sealed contract using rsync --delete.
+  - It does not run daemon-reload or restart services, and verifies
+    QIDIClient remains active plus all guarded printer state is unchanged.
+
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
@@ -5394,6 +5715,7 @@ draw_menu() {
     printf '  %s10)%s 1.1.2 Restore Rehearsal             (isolated, no live changes)\n' "$C_CYAN" "$C_RESET"
     printf '  %s11)%s 1.1.2 Live Restore Proof            (controlled contract restore)\n' "$C_CYAN" "$C_RESET"
     printf '  %s12)%s 1.1.2 External Restore Audit         (read-only drift report)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s13)%s 1.1.2 Present-Path Restore Proof     (controlled systemd path)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -5484,6 +5806,7 @@ main_loop() {
             10) menu_q2_112_restore_rehearsal ;;
             11) menu_q2_112_live_restore_proof ;;
             12) menu_q2_112_external_restore_audit ;;
+            13) menu_q2_112_present_path_restore_proof ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
