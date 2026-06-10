@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.30'
+AIO_VERSION='RC2.31'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -156,6 +156,12 @@ Q2_112_PRESENT_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_PRESENT_PATH_RESTORE_PROOF"
 Q2_112_PRESENT_PROOF_TARGET="/etc/systemd/system/${STOCK_UI_SERVICE}.service.d"
 Q2_112_PRESENT_PROOF_SOURCE="${Q2_112_CONTRACT_DIR}/external${Q2_112_PRESENT_PROOF_TARGET}"
 Q2_112_PRESENT_PROOF_MARKER="${Q2_112_PRESENT_PROOF_TARGET}/aio-q2-112-restore-proof.marker"
+Q2_112_KLIPPER_EXTRAS_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_KLIPPER_EXTRAS_RESTORE_PROOF"
+Q2_112_KLIPPER_EXTRAS_PROOF_TARGET="${KLIPPER_DIR}/klippy/extras"
+Q2_112_KLIPPER_EXTRAS_PROOF_MARKER="${Q2_112_KLIPPER_EXTRAS_PROOF_TARGET}/.aio-q2-112-restore-proof.marker"
+Q2_112_MOONRAKER_COMPONENTS_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_MOONRAKER_COMPONENTS_RESTORE_PROOF"
+Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET="${MOONRAKER_DIR}/moonraker/components"
+Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER="${Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET}/.aio-q2-112-restore-proof.marker"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -2308,6 +2314,8 @@ q2_112_aio_artifacts_absent() {
         "${CONFIG_DIR}/moonraker.conf.aio-bak" \
         "$Q2_112_LIVE_PROOF_CFG" \
         "$Q2_112_PRESENT_PROOF_MARKER" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_MARKER" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER" \
         "$Q2_112_PROBE_CFG"; do
         if [ -e "$path" ] || [ -L "$path" ]; then
             warn "AIO artifact present: ${path}"
@@ -2815,7 +2823,7 @@ report_q2_112_external_restore_audit() {
                     errors=$((errors + 1))
                     continue
                 fi
-                if ! changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+                if ! changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
                     "${source}/" "${path}/" 2>&1); then
                     err "Could not audit captured directory: ${path}"
                     errors=$((errors + 1))
@@ -2830,7 +2838,7 @@ report_q2_112_external_restore_audit() {
                     continue
                 fi
                 destination=$(dirname "$path")
-                if ! changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                if ! changes=$(sudo rsync -aHAX --numeric-ids --checksum --dry-run --itemize-changes \
                     "$source" "${destination}/" 2>&1); then
                     err "Could not audit captured file: ${path}"
                     errors=$((errors + 1))
@@ -2844,7 +2852,7 @@ report_q2_112_external_restore_audit() {
                     continue
                 fi
                 destination=$(dirname "$path")
-                if ! changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                if ! changes=$(sudo rsync -aHAX --numeric-ids --checksum --dry-run --itemize-changes \
                     "$source" "${destination}/" 2>&1); then
                     err "Could not audit captured symlink: ${path}"
                     errors=$((errors + 1))
@@ -2916,20 +2924,20 @@ q2_112_external_paths_match_contract() {
             directory)
                 [ -d "$path" ] && [ ! -L "$path" ] || return 1
                 [ -d "$source" ] && [ ! -L "$source" ] || return 1
-                changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+                changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
                     "${source}/" "${path}/" 2>/dev/null) || return 1
                 ;;
             file)
                 [ -f "$path" ] && [ ! -L "$path" ] || return 1
                 [ -f "$source" ] && [ ! -L "$source" ] || return 1
                 destination=$(dirname "$path")
-                changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                changes=$(sudo rsync -aHAX --numeric-ids --checksum --dry-run --itemize-changes \
                     "$source" "${destination}/" 2>/dev/null) || return 1
                 ;;
             symlink)
                 [ -L "$path" ] && [ -L "$source" ] || return 1
                 destination=$(dirname "$path")
-                changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                changes=$(sudo rsync -aHAX --numeric-ids --checksum --dry-run --itemize-changes \
                     "$source" "${destination}/" 2>/dev/null) || return 1
                 ;;
             *)
@@ -3447,7 +3455,7 @@ rollback_q2_112_present_path_restore_proof() {
 
     warn "Rolling back the controlled captured-present path restore proof"
     if [ -d "$emergency_target" ]; then
-        sudo rsync -aHAX --numeric-ids --delete \
+        sudo rsync -aHAX --numeric-ids --checksum --delete \
             "${emergency_target}/" "${Q2_112_PRESENT_PROOF_TARGET}/" || \
             err "Emergency target rollback failed; inspect ${emergency_target}"
     else
@@ -3565,7 +3573,7 @@ run_q2_112_present_path_restore_proof() {
         warn "The ignored marker was left for inspection: ${Q2_112_PRESENT_PROOF_MARKER}"
         return 1
     fi
-    changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+    changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
         --omit-dir-times --exclude="/${proof_marker_name}" \
         "${Q2_112_PRESENT_PROOF_SOURCE}/" "${Q2_112_PRESENT_PROOF_TARGET}/" 2>/dev/null) || {
         err "Could not verify target safety immediately before restore."
@@ -3582,7 +3590,7 @@ run_q2_112_present_path_restore_proof() {
     ok "Ignored proof marker created; no daemon-reload or service restart performed"
 
     banner "Executing sealed captured-present directory restore"
-    if ! sudo rsync -aHAX --numeric-ids --delete \
+    if ! sudo rsync -aHAX --numeric-ids --checksum --delete \
         "${Q2_112_PRESENT_PROOF_SOURCE}/" "${Q2_112_PRESENT_PROOF_TARGET}/"; then
         err "Contract-backed captured-present directory restore failed."
         rollback_q2_112_present_path_restore_proof
@@ -3593,7 +3601,7 @@ run_q2_112_present_path_restore_proof() {
         rollback_q2_112_present_path_restore_proof
         return 1
     fi
-    changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+    changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
         "${Q2_112_PRESENT_PROOF_SOURCE}/" "${Q2_112_PRESENT_PROOF_TARGET}/" 2>/dev/null) || {
         err "Could not verify restored target against the sealed contract."
         rollback_q2_112_present_path_restore_proof
@@ -3645,6 +3653,272 @@ EOF
 
 menu_q2_112_present_path_restore_proof() {
     run_q2_112_present_path_restore_proof
+    press_enter
+}
+
+q2_112_runtime_proof_services() {
+    printf '%s\n' klipper moonraker "$STOCK_UI_SERVICE" crowsnest
+}
+
+q2_112_runtime_services_active() {
+    local service
+
+    while IFS= read -r service; do
+        systemctl is-active --quiet "$service" || return 1
+    done < <(q2_112_runtime_proof_services)
+    return 0
+}
+
+write_q2_112_runtime_proof_guard() {
+    local output_dir="$1"
+    local service active
+
+    write_q2_112_present_proof_guard "$output_dir" || return 1
+    while IFS= read -r service; do
+        active=$(systemctl is-active "$service" 2>/dev/null || true)
+        printf '%s|%s\n' "$service" "${active:-inactive}"
+    done < <(q2_112_runtime_proof_services) | sudo tee "${output_dir}/runtime-services-active" >/dev/null
+}
+
+verify_q2_112_runtime_proof_guard() {
+    local before_dir="$1"
+    local after_dir="$2"
+
+    verify_q2_112_present_proof_guard "$before_dir" "$after_dir" || return 1
+    if ! sudo cmp -s "${before_dir}/runtime-services-active" "${after_dir}/runtime-services-active"; then
+        err "Runtime-path restore proof changed a guarded service active state"
+        return 1
+    fi
+    return 0
+}
+
+remove_q2_112_runtime_proof_marker() {
+    local marker="$1"
+    local expected_token="$2"
+    local marker_token
+
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+    marker_token=$(sudo cat "$marker" 2>/dev/null || true)
+    [ "$marker_token" = "$expected_token" ] || return 1
+    sudo rm -f "$marker"
+}
+
+rollback_q2_112_runtime_path_restore_proof() {
+    local proof_dir="$1"
+    local target="$2"
+    local emergency_target="${proof_dir}/emergency/target"
+
+    warn "Rolling back the controlled runtime-path restore proof"
+    if [ -d "$emergency_target" ] && [ ! -L "$emergency_target" ] && \
+       [ -d "$target" ] && [ ! -L "$target" ]; then
+        sudo rsync -aHAX --numeric-ids --checksum --delete "${emergency_target}/" "${target}/" || \
+            err "Emergency runtime-path rollback failed; inspect ${emergency_target}"
+    else
+        err "Emergency runtime-path rollback is unavailable; inspect ${target}"
+    fi
+}
+
+q2_112_runtime_path_restore_proof_passed() {
+    local proof_dir="$1"
+    local target="$2"
+    local marker="$3"
+    local pass_file="${proof_dir}/PASS"
+    local expected_seal current_seal expected_target
+    local before_dir="${proof_dir}/checks/before"
+    local after_dir="${proof_dir}/checks/after"
+
+    [ -f "$pass_file" ] || return 1
+    validate_q2_112_restore_contract || return 1
+    q2_112_present_path_restore_proof_passed || return 1
+    expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
+    current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+    expected_target=$(sed -n 's/^TARGET=//p' "$pass_file" 2>/dev/null | head -n 1)
+    [ -n "$expected_seal" ] && [ "$expected_seal" = "$current_seal" ] || return 1
+    [ "$expected_target" = "$target" ] || return 1
+    [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 1
+    verify_q2_112_runtime_proof_guard "$before_dir" "$after_dir"
+}
+
+run_q2_112_runtime_path_restore_proof() {
+    local label="$1"
+    local proof_dir="$2"
+    local target="$3"
+    local marker="$4"
+    local source="${Q2_112_CONTRACT_DIR}/external${target}"
+    local before_dir="${proof_dir}/checks/before"
+    local after_dir="${proof_dir}/checks/after"
+    local emergency_target="${proof_dir}/emergency/target"
+    local proof_token marker_name changes
+
+    banner "Q2 1.1.2 ${label} restore proof"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ] || [ "$STOCK_UI_SERVICE" != "qidi-client" ]; then
+        err "This proof is only available on Q2 firmware 1.1.2 with qidi-client."
+        return 1
+    fi
+    if ! validate_q2_112_restore_contract || ! q2_112_present_path_restore_proof_passed; then
+        err "The verified contract and captured-present systemd proof must pass first."
+        return 1
+    fi
+    if ! q2_112_external_paths_match_contract; then
+        err "One or more external paths no longer exactly match the sealed contract."
+        info "Run option 12 and review every reported change before continuing."
+        return 1
+    fi
+    if ! q2_112_contract_path_was_present_directory "$target"; then
+        err "Target was not captured as a present directory: ${target}"
+        return 1
+    fi
+    if [ ! -d "$target" ] || [ -L "$target" ] || [ ! -d "$source" ] || [ -L "$source" ]; then
+        err "Live target or sealed contract source is not a real directory."
+        return 1
+    fi
+    if [ -e "$marker" ] || [ -L "$marker" ]; then
+        err "Controlled runtime proof marker already exists; refusing to overwrite it."
+        return 1
+    fi
+    if ! q2_112_runtime_services_active; then
+        err "Klipper, Moonraker, QIDIClient, and Crowsnest must all be active."
+        return 1
+    fi
+
+    warn "This tests sealed restoration of one loaded Python runtime directory:"
+    warn "  ${target}"
+    warn "It creates one hidden marker without a .py extension, verifies that marker"
+    warn "is the only difference, then restores only this directory with rsync --delete."
+    warn "It does not reload Python, restart services, or touch active Klipper configs."
+    if ! confirm "Run the controlled ${label} restore proof now?"; then
+        info "${label} restore proof cancelled."
+        return 1
+    fi
+    if ! q2_112_runtime_services_active; then
+        err "A guarded runtime service changed state while awaiting confirmation."
+        return 1
+    fi
+
+    proof_token="AIO_Q2_112_RUNTIME_PATH_PROOF_$(date +%Y%m%d_%H%M%S)"
+    marker_name="${marker##*/}"
+    sudo rm -rf "$proof_dir"
+    sudo mkdir -p "$before_dir" "$after_dir" "$emergency_target" || {
+        err "Could not create runtime-path proof state."
+        return 1
+    }
+
+    banner "Capturing emergency rollback and runtime guard"
+    if ! sudo rsync -aHAX --numeric-ids "${target}/" "${emergency_target}/"; then
+        err "Could not capture emergency runtime-path rollback."
+        return 1
+    fi
+    write_q2_112_runtime_proof_guard "$before_dir" || {
+        err "Could not capture pre-proof runtime guard."
+        return 1
+    }
+    ok "Emergency rollback and pre-proof runtime guard captured"
+
+    banner "Creating harmless non-Python proof marker"
+    if ! printf '%s\n' "$proof_token" | sudo tee "$marker" >/dev/null; then
+        err "Could not create controlled runtime proof marker."
+        rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
+        return 1
+    fi
+    if [ "$(sudo cat "$marker" 2>/dev/null || true)" != "$proof_token" ]; then
+        err "Controlled runtime proof marker identity could not be verified."
+        warn "The marker was left for inspection: ${marker}"
+        return 1
+    fi
+    changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+        --omit-dir-times --exclude="/${marker_name}" "${source}/" "${target}/" 2>/dev/null) || {
+        err "Could not verify runtime target safety immediately before restore."
+        remove_q2_112_runtime_proof_marker "$marker" "$proof_token" || \
+            warn "The marker was left for inspection: ${marker}"
+        return 1
+    }
+    if [ -n "$changes" ]; then
+        err "Runtime target changed after the initial safety gate; refusing rsync --delete."
+        remove_q2_112_runtime_proof_marker "$marker" "$proof_token" || \
+            warn "The marker was left for inspection: ${marker}"
+        return 1
+    fi
+    if ! q2_112_runtime_services_active; then
+        err "A guarded runtime service changed state before the restore."
+        remove_q2_112_runtime_proof_marker "$marker" "$proof_token" || \
+            warn "The marker was left for inspection: ${marker}"
+        return 1
+    fi
+    ok "Marker is the only target difference; all guarded services remain active"
+
+    banner "Executing sealed runtime-directory restore"
+    if ! sudo rsync -aHAX --numeric-ids --checksum --delete "${source}/" "${target}/"; then
+        err "Contract-backed runtime-directory restore failed."
+        rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
+        return 1
+    fi
+    if [ -e "$marker" ] || [ -L "$marker" ]; then
+        err "Runtime proof marker survived contract-backed rsync --delete."
+        rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
+        return 1
+    fi
+    changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+        "${source}/" "${target}/" 2>/dev/null) || {
+        err "Could not verify restored runtime target against the sealed contract."
+        rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
+        return 1
+    }
+    if [ -n "$changes" ]; then
+        err "Restored runtime target does not exactly match the sealed contract."
+        rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
+        return 1
+    fi
+    ok "Runtime target exactly matches the sealed contract"
+
+    banner "Verifying unchanged runtime and printer state"
+    write_q2_112_runtime_proof_guard "$after_dir" || {
+        err "Could not capture post-proof runtime guard."
+        rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
+        return 1
+    }
+    if ! verify_q2_112_runtime_proof_guard "$before_dir" "$after_dir" || \
+       ! q2_112_runtime_services_active; then
+        err "Guarded printer runtime differs after the controlled restore."
+        rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
+        return 1
+    fi
+
+    if ! sudo tee "${proof_dir}/PASS" >/dev/null <<EOF
+AIO_VERSION=${AIO_VERSION}
+CONTRACT_DIR=${Q2_112_CONTRACT_DIR}
+CONTRACT_SEAL_SHA256=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+TARGET=${target}
+PROVED_AT=$(date -Iseconds)
+EOF
+    then
+        err "Restore succeeded, but the runtime-path proof PASS record could not be written."
+        return 1
+    fi
+    sudo rm -rf "${proof_dir}/emergency"
+    ok "Controlled ${label} restore proof passed"
+    ok "Klipper, Moonraker, QIDIClient, and Crowsnest remained active"
+    ok "No Python reload, service restart, config change, or package change occurred"
+    info "Run option 8 to verify full printer runtime and Qidi Box sensor health."
+    info "Full install and general real revert remain blocked."
+    return 0
+}
+
+menu_q2_112_klipper_extras_restore_proof() {
+    run_q2_112_runtime_path_restore_proof \
+        "Klipper extras" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_DIR" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_TARGET" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_MARKER"
+    press_enter
+}
+
+menu_q2_112_moonraker_components_restore_proof() {
+    run_q2_112_runtime_path_restore_proof \
+        "Moonraker components" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_DIR" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER"
     press_enter
 }
 
@@ -3730,6 +4004,8 @@ report_aio_removal_dry_run() {
         /etc/systemd/system/KlipperScreen.service \
         /etc/systemd/system/helixscreen.service \
         "$Q2_112_PRESENT_PROOF_MARKER" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_MARKER" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER" \
         /etc/systemd/system/helixscreen-update.path \
         /etc/systemd/system/helixscreen-update.service \
         /etc/udev/rules.d/99-helixscreen-backlight.rules \
@@ -4833,6 +5109,22 @@ run_readonly_diagnostics() {
     else
         info "1.1.2 captured-present path restore proof has not passed yet"
     fi
+    if q2_112_runtime_path_restore_proof_passed \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_DIR" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_TARGET" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_MARKER"; then
+        ok "1.1.2 Klipper extras restore proof has passed"
+    else
+        info "1.1.2 Klipper extras restore proof has not passed yet"
+    fi
+    if q2_112_runtime_path_restore_proof_passed \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_DIR" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER"; then
+        ok "1.1.2 Moonraker components restore proof has passed"
+    else
+        info "1.1.2 Moonraker components restore proof has not passed yet"
+    fi
     find_duplicate_macros_readonly
     check_invalid_klipper_options_readonly
     check_orphan_includes_readonly
@@ -5565,8 +5857,8 @@ ${C_BOLD}1.1.2 controlled live restore proof:${C_RESET}
 ${C_BOLD}1.1.2 external restore audit:${C_RESET}
   - Option 12 compares every captured-present and captured-absent
     external path against the sealed stock contract.
-  - It uses rsync --dry-run --itemize-changes to report exactly what a
-    future restore would replace or remove.
+  - It uses checksum-backed rsync --dry-run --itemize-changes to report
+    exactly what a future restore would replace or remove.
   - It does not write files or change packages, services, or boot targets.
 
 ${C_BOLD}1.1.2 captured-present path restore proof:${C_RESET}
@@ -5577,6 +5869,16 @@ ${C_BOLD}1.1.2 captured-present path restore proof:${C_RESET}
     from the sealed contract using rsync --delete.
   - It does not run daemon-reload or restart services, and verifies
     QIDIClient remains active plus all guarded printer state is unchanged.
+
+${C_BOLD}1.1.2 loaded runtime-path restore proofs:${C_RESET}
+  - Options 14 and 15 independently test sealed restoration of the stock
+    Klipper extras and Moonraker components directories.
+  - Each creates one hidden marker without a .py extension, permits only
+    that marker in the final safety comparison, then restores one directory
+    from the sealed contract using rsync --delete.
+  - They do not reload Python or restart services. Klipper, Moonraker,
+    QIDIClient, and Crowsnest must remain active, and all guarded config,
+    service, boot-target, and package state must remain unchanged.
 
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
@@ -5716,6 +6018,8 @@ draw_menu() {
     printf '  %s11)%s 1.1.2 Live Restore Proof            (controlled contract restore)\n' "$C_CYAN" "$C_RESET"
     printf '  %s12)%s 1.1.2 External Restore Audit         (read-only drift report)\n' "$C_CYAN" "$C_RESET"
     printf '  %s13)%s 1.1.2 Present-Path Restore Proof     (controlled systemd path)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s14)%s 1.1.2 Klipper Extras Restore Proof    (controlled runtime path)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s15)%s 1.1.2 Moonraker Components Proof      (controlled runtime path)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -5807,6 +6111,8 @@ main_loop() {
             11) menu_q2_112_live_restore_proof ;;
             12) menu_q2_112_external_restore_audit ;;
             13) menu_q2_112_present_path_restore_proof ;;
+            14) menu_q2_112_klipper_extras_restore_proof ;;
+            15) menu_q2_112_moonraker_components_restore_proof ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
