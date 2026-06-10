@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC2.27)
+   Qidi Q2 Superuser - AIO Setup Menu (RC2.28)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -27,6 +27,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
   TESTING
    9) 1.1.2 Compatibility Probe          (reversible round trip)
   10) 1.1.2 Restore Rehearsal             (isolated, no live changes)
+  11) 1.1.2 Live Restore Proof            (controlled contract restore)
    0) Exit
 ============================================
 ```
@@ -42,7 +43,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 AIO currently supports mutating install/revert/addon actions on the legacy Q2 firmware layout used by 1.1.0 and 1.1.1, where the active home/config path is `/home/mks`.
 
-Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.27 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting plus guarded baseline/restore-contract capture, option 9's controlled compatibility round-trip probe, and option 10's isolated restore rehearsal. It still blocks full install, real full revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
+Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.28 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting plus guarded baseline/restore-contract capture, option 9's controlled compatibility round-trip probe, option 10's isolated restore rehearsal, and option 11's controlled live contract-backed config restore proof. It still blocks full install, general real revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
 
 ## Install
 
@@ -75,6 +76,7 @@ chmod +x aio_menu.sh
 | 8 | **Health Check / Run Verifiers** | Reports Klipper, Moonraker, Happy Hare/MMU, HelixScreen, Qidi Box sensor/heater, Mainsail, and camera runtime health when applicable. On supported layouts, scans active Klipper includes for common problems and prompts before repairs. On unsupported layouts such as Q2 firmware 1.1.2, runs read-only diagnostics and verifies restore-contract integrity: no backups, repairs, service changes, or file edits. |
 | 9 | **1.1.2 Compatibility Probe** | Installs one harmless no-op macro config plus one include line after validating the guarded stock baseline. Records exact before/after `printer.cfg` hashes. Running option 9 again restores the exact pre-probe `printer.cfg`, removes the probe, and verifies the round trip. Cleanup refuses to overwrite unrelated changes. |
 | 10 | **1.1.2 Restore Rehearsal** | Reconstructs the sealed restore contract under an isolated installer-managed workspace, verifies file contents and full metadata, generates non-executing config/path/service/package plans, and proves the active config, service enablement, default target, and package inventory were unchanged. |
+| 11 | **1.1.2 Live Restore Proof** | Requires a verified contract, passed rehearsal, and exact stock config match. Creates two harmless proof artifacts, performs a real sealed contract-backed config restore, safely restores the captured-absent external proof path, and verifies the active config and guarded system state returned exactly to stock. |
 
 ## Backup and revert behavior
 
@@ -91,6 +93,10 @@ Option 9 provides a deliberately narrow install/revert round-trip before full 1.
 ## Q2 firmware 1.1.2 restore rehearsal
 
 Option 10 reconstructs the sealed config and external recovery trees only under `_Q2_112_RESTORE_REHEARSAL`. It validates hashes, ownership, permissions, timestamps, and symlink targets against the restore contract and generates explicit non-executing plans for config restoration, external present/absent paths, service states, and the stock package inventory. Before and after guards prove the active config tree, service enablement/fragment paths, default target, and package inventory did not change. It never writes to active `/home/qidi` runtime trees, `/etc`, packages, or services.
+
+## Q2 firmware 1.1.2 controlled live restore proof
+
+Option 11 is the first deliberately constrained live use of the sealed restore contract. It runs only when option 10 has passed and the active config tree still exactly matches the stock contract. It creates one non-included marker in the config tree and one marker under `/home/qidi/helix_print`, which the contract must prove was absent at capture. It then performs a real `rsync -aHAX --numeric-ids --delete` config restore and safely removes only the identified external proof path. Exact config hashes/metadata and before/after guards for service enablement, fragment paths, default target, and package inventory must all match. Option 8 validates the resulting historical proof record and stored guards without requiring post-reboot stock processes to leave the active config metadata permanently unchanged. An emergency config snapshot is retained if verification fails. Full install and general real revert remain blocked.
 
 ## What is Happier Hare?
 
@@ -138,6 +144,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.28 | Adds option 11's controlled Q2 1.1.2 live restore proof: requires the verified contract and passed rehearsal, creates two harmless proof artifacts, executes a real sealed config restore, safely restores one captured-absent external path, and verifies exact stock config plus unchanged guarded system state |
 | RC2.27 | Adds option 10's isolated Q2 1.1.2 restore rehearsal: reconstructs the sealed contract under installer-managed staging, verifies hashes and full metadata, generates non-executing restore plans, and proves guarded live printer state remained unchanged |
 | RC2.26 | Adds the guarded Q2 1.1.2 restore contract: atomically captures and validates exact config/external recovery trees, hashes, metadata, symlink and absent-path states, service states, default target, and package inventory; option 4 previews the contract-backed restore plan, option 8 reports integrity, fallback backup selection excludes internal `_` state directories, and stock `qidi-tuning` `Restart=always` behavior is reported without false crash warnings |
 | RC2.25 | Adds option 9's controlled 1.1.2 compatibility round-trip probe: installs one harmless macro/include, records exact before/after `printer.cfg` hashes, restores the exact original on removal, and refuses cleanup if unrelated config changes occurred |
@@ -181,7 +188,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 ## Known limitations
 
 - **Native Qidi Box humidity/dryer UI requires the Happier Hare patched HelixScreen zip.** Option 1 automatically uses the hosted Happier Hare release asset when available. `HAPPIER_HARE_ZIP_URL` and the layout-aware `~/helixscreen-pi-happier-hare.zip` remain available as overrides. Without the patched zip, use the macro buttons or Klipper console.
-- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for mutating install/revert actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout, option 8 can run read-only diagnostics and restore-contract integrity checks, option 4 can run a dry-run Revert report plus guarded stock-baseline/restore-contract capture, and option 10 can run an isolated restore rehearsal. Install, real revert, addon, and repair paths remain blocked until the compatibility lane lands.
+- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for general mutating install/revert actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout, option 8 can run read-only diagnostics and restore-contract integrity checks, option 4 can run a dry-run Revert report plus guarded stock-baseline/restore-contract capture, option 10 can run an isolated restore rehearsal, and option 11 can run a narrowly controlled live restore proof. Install, general real revert, addon, and repair paths remain blocked until the compatibility lane lands.
 - **MMU gear calibration is required after a fresh install.**
 - **Camera streaming (Mainsail)** requires a USB camera connected to the printer.
 
