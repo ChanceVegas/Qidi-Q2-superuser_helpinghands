@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.28'
+AIO_VERSION='RC2.29'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -2760,6 +2760,115 @@ report_q2_112_restore_contract() {
     return 0
 }
 
+report_q2_112_external_restore_audit() {
+    banner "Q2 1.1.2 external restore audit (read-only)"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "The external restore audit is only available on Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    if ! validate_q2_112_restore_contract; then
+        err "No complete, verified restore contract is available."
+        info "Run option 4 to capture and validate the restore contract first."
+        return 1
+    fi
+
+    warn "This compares live external paths with the sealed stock contract."
+    warn "It uses rsync --dry-run only; no files, packages, services, or boot targets are changed."
+
+    local captured kind mode uid gid path target source destination changes change
+    local exact=0 drift=0 absent_ok=0 unexpected=0 missing=0 errors=0 shown total
+    while IFS='|' read -r captured kind mode uid gid path target; do
+        source="${Q2_112_CONTRACT_DIR}/external${path}"
+        if [ "$captured" = "absent" ]; then
+            if [ -e "$path" ] || [ -L "$path" ]; then
+                warn "Captured absent but currently present: ${path}"
+                unexpected=$((unexpected + 1))
+            else
+                ok "Still absent as captured: ${path}"
+                absent_ok=$((absent_ok + 1))
+            fi
+            continue
+        fi
+
+        if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+            warn "Captured ${kind} is currently missing: ${path}"
+            missing=$((missing + 1))
+            continue
+        fi
+        if [ ! -e "$source" ] && [ ! -L "$source" ]; then
+            err "Contract source is missing for captured ${kind}: ${source}"
+            errors=$((errors + 1))
+            continue
+        fi
+
+        case "$kind" in
+            directory)
+                if ! changes=$(sudo rsync -aHAX --numeric-ids --delete --dry-run --itemize-changes \
+                    "${source}/" "${path}/" 2>&1); then
+                    err "Could not audit captured directory: ${path}"
+                    errors=$((errors + 1))
+                    continue
+                fi
+                ;;
+            file|symlink)
+                destination=$(dirname "$path")
+                if ! changes=$(sudo rsync -aHAX --numeric-ids --dry-run --itemize-changes \
+                    "$source" "${destination}/" 2>&1); then
+                    err "Could not audit captured ${kind}: ${path}"
+                    errors=$((errors + 1))
+                    continue
+                fi
+                ;;
+            *)
+                warn "Captured path kind requires manual review (${kind}): ${path}"
+                errors=$((errors + 1))
+                continue
+                ;;
+        esac
+
+        if [ -z "$changes" ]; then
+            ok "Exact external contract match: ${path}"
+            exact=$((exact + 1))
+            continue
+        fi
+
+        total=$(printf '%s\n' "$changes" | wc -l | tr -d ' ')
+        warn "External contract drift: ${path} (${total} rsync change item(s))"
+        shown=0
+        while IFS= read -r change; do
+            [ -n "$change" ] || continue
+            warn "  ${change}"
+            shown=$((shown + 1))
+            [ "$shown" -ge 8 ] && break
+        done <<< "$changes"
+        if [ "$total" -gt "$shown" ]; then
+            warn "  ... $((total - shown)) additional change item(s)"
+        fi
+        drift=$((drift + 1))
+    done < "$Q2_112_CONTRACT_PATH_STATES"
+
+    banner "External restore audit summary"
+    info "Exact captured-present paths: ${exact}"
+    info "Drifted captured-present paths: ${drift}"
+    info "Missing captured-present paths: ${missing}"
+    info "Captured-absent paths still absent: ${absent_ok}"
+    info "Captured-absent paths now present: ${unexpected}"
+    info "Audit errors/manual-review paths: ${errors}"
+    if [ "$drift" -eq 0 ] && [ "$missing" -eq 0 ] && \
+       [ "$unexpected" -eq 0 ] && [ "$errors" -eq 0 ]; then
+        ok "All mapped external paths exactly match the sealed stock contract"
+    else
+        warn "Do not enable general real revert until every reported external-path change is classified."
+    fi
+    return 0
+}
+
+menu_q2_112_external_restore_audit() {
+    report_q2_112_external_restore_audit
+    press_enter
+}
+
 write_q2_112_service_restore_plan() {
     local output="$1"
     local service exists enabled active fragment
@@ -5141,6 +5250,13 @@ ${C_BOLD}1.1.2 controlled live restore proof:${C_RESET}
     unchanged after a reboot.
   - Full install and general real revert remain blocked.
 
+${C_BOLD}1.1.2 external restore audit:${C_RESET}
+  - Option 12 compares every captured-present and captured-absent
+    external path against the sealed stock contract.
+  - It uses rsync --dry-run --itemize-changes to report exactly what a
+    future restore would replace or remove.
+  - It does not write files or change packages, services, or boot targets.
+
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
@@ -5277,6 +5393,7 @@ draw_menu() {
     printf '   %s9)%s 1.1.2 Compatibility Probe          (reversible round trip)\n' "$C_CYAN" "$C_RESET"
     printf '  %s10)%s 1.1.2 Restore Rehearsal             (isolated, no live changes)\n' "$C_CYAN" "$C_RESET"
     printf '  %s11)%s 1.1.2 Live Restore Proof            (controlled contract restore)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s12)%s 1.1.2 External Restore Audit         (read-only drift report)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -5366,6 +5483,7 @@ main_loop() {
             9) menu_q2_112_roundtrip_probe ;;
             10) menu_q2_112_restore_rehearsal ;;
             11) menu_q2_112_live_restore_proof ;;
+            12) menu_q2_112_external_restore_audit ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
