@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.31'
+AIO_VERSION='RC2.32'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -162,6 +162,9 @@ Q2_112_KLIPPER_EXTRAS_PROOF_MARKER="${Q2_112_KLIPPER_EXTRAS_PROOF_TARGET}/.aio-q
 Q2_112_MOONRAKER_COMPONENTS_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_MOONRAKER_COMPONENTS_RESTORE_PROOF"
 Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET="${MOONRAKER_DIR}/moonraker/components"
 Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER="${Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET}/.aio-q2-112-restore-proof.marker"
+Q2_112_UNIT_FILE_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_QIDI_CLIENT_UNIT_RESTORE_PROOF"
+Q2_112_UNIT_FILE_PROOF_TARGET="/etc/systemd/system/${STOCK_UI_SERVICE}.service"
+Q2_112_UNIT_FILE_PROOF_SOURCE="${Q2_112_CONTRACT_DIR}/external${Q2_112_UNIT_FILE_PROOF_TARGET}"
 
 # Returns the installed HelixScreen version string (e.g. "0.99.66") or
 # empty if it can't be determined. Tries the binary, then a VERSION file.
@@ -3218,6 +3221,13 @@ q2_112_contract_path_was_present_directory() {
         "$Q2_112_CONTRACT_PATH_STATES"
 }
 
+q2_112_contract_path_was_present_file() {
+    local path="$1"
+    awk -F'|' -v wanted="$path" \
+        '$1 == "present" && $2 == "file" && $6 == wanted { found=1 } END { exit !found }' \
+        "$Q2_112_CONTRACT_PATH_STATES"
+}
+
 remove_q2_112_live_proof_external_path() {
     local expected_token="${1:-}"
     local marker_token=""
@@ -3919,6 +3929,218 @@ menu_q2_112_moonraker_components_restore_proof() {
         "$Q2_112_MOONRAKER_COMPONENTS_PROOF_DIR" \
         "$Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET" \
         "$Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER"
+    press_enter
+}
+
+q2_112_runtime_path_proofs_passed() {
+    q2_112_runtime_path_restore_proof_passed \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_DIR" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_TARGET" \
+        "$Q2_112_KLIPPER_EXTRAS_PROOF_MARKER" || return 1
+    q2_112_runtime_path_restore_proof_passed \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_DIR" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_TARGET" \
+        "$Q2_112_MOONRAKER_COMPONENTS_PROOF_MARKER"
+}
+
+write_q2_112_unit_file_proof_guard() {
+    local output_dir="$1"
+    local need_reload
+
+    write_q2_112_runtime_proof_guard "$output_dir" || return 1
+    need_reload=$(systemctl show "$STOCK_UI_SERVICE" -p NeedDaemonReload --value 2>/dev/null || true)
+    printf '%s\n' "${need_reload:-unknown}" | sudo tee "${output_dir}/stock-ui-need-daemon-reload" >/dev/null
+}
+
+verify_q2_112_unit_file_proof_guard() {
+    local before_dir="$1"
+    local after_dir="$2"
+
+    verify_q2_112_runtime_proof_guard "$before_dir" "$after_dir" || return 1
+    if ! sudo cmp -s \
+        "${before_dir}/stock-ui-need-daemon-reload" \
+        "${after_dir}/stock-ui-need-daemon-reload"; then
+        err "Unit-file restore proof changed QIDIClient NeedDaemonReload state"
+        return 1
+    fi
+    return 0
+}
+
+rollback_q2_112_unit_file_restore_proof() {
+    local emergency_file="${Q2_112_UNIT_FILE_PROOF_DIR}/emergency/qidi-client.service"
+
+    warn "Rolling back the controlled QIDIClient unit-file restore proof"
+    if [ -f "$emergency_file" ] && [ ! -L "$emergency_file" ]; then
+        sudo rsync -aHAX --numeric-ids --checksum \
+            "$emergency_file" "$(dirname "$Q2_112_UNIT_FILE_PROOF_TARGET")/" || \
+            err "Emergency unit-file rollback failed; inspect ${emergency_file}"
+    else
+        err "Emergency unit-file rollback is unavailable; inspect ${Q2_112_UNIT_FILE_PROOF_TARGET}"
+    fi
+}
+
+q2_112_unit_file_restore_proof_passed() {
+    local pass_file="${Q2_112_UNIT_FILE_PROOF_DIR}/PASS"
+    local expected_seal current_seal expected_target
+    local before_dir="${Q2_112_UNIT_FILE_PROOF_DIR}/checks/before"
+    local after_dir="${Q2_112_UNIT_FILE_PROOF_DIR}/checks/after"
+
+    [ -f "$pass_file" ] || return 1
+    validate_q2_112_restore_contract || return 1
+    q2_112_runtime_path_proofs_passed || return 1
+    expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
+    current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+    expected_target=$(sed -n 's/^TARGET=//p' "$pass_file" 2>/dev/null | head -n 1)
+    [ -n "$expected_seal" ] && [ "$expected_seal" = "$current_seal" ] || return 1
+    [ "$expected_target" = "$Q2_112_UNIT_FILE_PROOF_TARGET" ] || return 1
+    verify_q2_112_unit_file_proof_guard "$before_dir" "$after_dir"
+}
+
+run_q2_112_unit_file_restore_proof() {
+    banner "Q2 1.1.2 QIDIClient unit-file restore proof"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ] || [ "$STOCK_UI_SERVICE" != "qidi-client" ]; then
+        err "This proof is only available on Q2 firmware 1.1.2 with qidi-client."
+        return 1
+    fi
+    if ! validate_q2_112_restore_contract || ! q2_112_runtime_path_proofs_passed; then
+        err "The verified contract and both loaded runtime-path proofs must pass first."
+        return 1
+    fi
+    if ! q2_112_external_paths_match_contract; then
+        err "One or more external paths no longer exactly match the sealed contract."
+        info "Run option 12 and review every reported change before continuing."
+        return 1
+    fi
+    if ! q2_112_contract_path_was_present_file "$Q2_112_UNIT_FILE_PROOF_TARGET"; then
+        err "Target was not captured as a present file: ${Q2_112_UNIT_FILE_PROOF_TARGET}"
+        return 1
+    fi
+    if [ ! -f "$Q2_112_UNIT_FILE_PROOF_TARGET" ] || [ -L "$Q2_112_UNIT_FILE_PROOF_TARGET" ] || \
+       [ ! -f "$Q2_112_UNIT_FILE_PROOF_SOURCE" ] || [ -L "$Q2_112_UNIT_FILE_PROOF_SOURCE" ]; then
+        err "Live target or sealed contract source is not a real file."
+        return 1
+    fi
+    if [ "$(sudo tail -c 1 "$Q2_112_UNIT_FILE_PROOF_SOURCE" 2>/dev/null | od -An -t x1 | tr -d ' \n')" != "0a" ]; then
+        err "Sealed QIDIClient unit file does not end with a newline; refusing comment append."
+        return 1
+    fi
+    if ! q2_112_runtime_services_active; then
+        err "Klipper, Moonraker, QIDIClient, and Crowsnest must all be active."
+        return 1
+    fi
+
+    warn "This tests sealed restoration of one loaded systemd unit file:"
+    warn "  ${Q2_112_UNIT_FILE_PROOF_TARGET}"
+    warn "It appends one uniquely identified comment, verifies that exact expected file,"
+    warn "then immediately restores the sealed stock unit file."
+    warn "It does not run daemon-reload, restart services, or touch default.target."
+    if ! confirm "Run the controlled QIDIClient unit-file restore proof now?"; then
+        info "QIDIClient unit-file restore proof cancelled."
+        return 1
+    fi
+    if ! q2_112_runtime_services_active || ! q2_112_external_paths_match_contract; then
+        err "Guarded runtime or external contract state changed while awaiting confirmation."
+        return 1
+    fi
+
+    local before_dir="${Q2_112_UNIT_FILE_PROOF_DIR}/checks/before"
+    local after_dir="${Q2_112_UNIT_FILE_PROOF_DIR}/checks/after"
+    local emergency_dir="${Q2_112_UNIT_FILE_PROOF_DIR}/emergency"
+    local expected_file="${Q2_112_UNIT_FILE_PROOF_DIR}/expected/qidi-client.service"
+    local proof_comment
+    proof_comment="# AIO_Q2_112_UNIT_FILE_RESTORE_PROOF_$(date +%Y%m%d_%H%M%S)"
+
+    sudo rm -rf "$Q2_112_UNIT_FILE_PROOF_DIR"
+    sudo mkdir -p "$before_dir" "$after_dir" "$emergency_dir" "$(dirname "$expected_file")" || {
+        err "Could not create QIDIClient unit-file proof state."
+        return 1
+    }
+
+    banner "Capturing emergency rollback and unit-file guard"
+    if ! sudo rsync -aHAX --numeric-ids \
+        "$Q2_112_UNIT_FILE_PROOF_TARGET" "${emergency_dir}/"; then
+        err "Could not capture emergency QIDIClient unit-file rollback."
+        return 1
+    fi
+    write_q2_112_unit_file_proof_guard "$before_dir" || {
+        err "Could not capture pre-proof unit-file guard."
+        return 1
+    }
+    if ! sudo cp -a "$Q2_112_UNIT_FILE_PROOF_SOURCE" "$expected_file" || \
+       ! printf '%s\n' "$proof_comment" | sudo tee -a "$expected_file" >/dev/null; then
+        err "Could not construct the exact expected proof file."
+        return 1
+    fi
+    ok "Emergency rollback, exact expected file, and pre-proof guard captured"
+
+    banner "Creating controlled unit-file comment"
+    if ! printf '%s\n' "$proof_comment" | sudo tee -a "$Q2_112_UNIT_FILE_PROOF_TARGET" >/dev/null; then
+        err "Could not append controlled unit-file proof comment."
+        rollback_q2_112_unit_file_restore_proof
+        return 1
+    fi
+    if ! sudo cmp -s "$expected_file" "$Q2_112_UNIT_FILE_PROOF_TARGET"; then
+        err "Live unit file does not exactly match the expected controlled proof file."
+        rollback_q2_112_unit_file_restore_proof
+        return 1
+    fi
+    if ! q2_112_runtime_services_active; then
+        err "A guarded runtime service changed state before the sealed restore."
+        rollback_q2_112_unit_file_restore_proof
+        return 1
+    fi
+    ok "Controlled comment is the only unit-file content difference"
+
+    banner "Executing sealed QIDIClient unit-file restore"
+    if ! sudo rsync -aHAX --numeric-ids --checksum \
+        "$Q2_112_UNIT_FILE_PROOF_SOURCE" "$(dirname "$Q2_112_UNIT_FILE_PROOF_TARGET")/"; then
+        err "Contract-backed QIDIClient unit-file restore failed."
+        rollback_q2_112_unit_file_restore_proof
+        return 1
+    fi
+    if ! sudo cmp -s "$Q2_112_UNIT_FILE_PROOF_SOURCE" "$Q2_112_UNIT_FILE_PROOF_TARGET"; then
+        err "Restored QIDIClient unit file does not exactly match the sealed contract."
+        rollback_q2_112_unit_file_restore_proof
+        return 1
+    fi
+    ok "QIDIClient unit file exactly matches the sealed contract"
+
+    banner "Verifying unchanged systemd and printer state"
+    write_q2_112_unit_file_proof_guard "$after_dir" || {
+        err "Could not capture post-proof unit-file guard."
+        rollback_q2_112_unit_file_restore_proof
+        return 1
+    }
+    if ! verify_q2_112_unit_file_proof_guard "$before_dir" "$after_dir" || \
+       ! q2_112_runtime_services_active || ! q2_112_external_paths_match_contract; then
+        err "Guarded systemd or printer state differs after the unit-file restore."
+        rollback_q2_112_unit_file_restore_proof
+        return 1
+    fi
+
+    if ! sudo tee "${Q2_112_UNIT_FILE_PROOF_DIR}/PASS" >/dev/null <<EOF
+AIO_VERSION=${AIO_VERSION}
+CONTRACT_DIR=${Q2_112_CONTRACT_DIR}
+CONTRACT_SEAL_SHA256=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
+TARGET=${Q2_112_UNIT_FILE_PROOF_TARGET}
+PROVED_AT=$(date -Iseconds)
+EOF
+    then
+        err "Restore succeeded, but the QIDIClient unit-file proof PASS record could not be written."
+        return 1
+    fi
+    sudo rm -rf "$emergency_dir" "$(dirname "$expected_file")"
+    ok "Controlled QIDIClient unit-file restore proof passed"
+    ok "NeedDaemonReload and all guarded runtime/service/config/package state are unchanged"
+    ok "Every mapped external path still exactly matches the sealed contract"
+    info "Run option 8 to verify full printer runtime and Qidi Box sensor health."
+    info "default.target remains untouched; full install and general real revert remain blocked."
+    return 0
+}
+
+menu_q2_112_unit_file_restore_proof() {
+    run_q2_112_unit_file_restore_proof
     press_enter
 }
 
@@ -5125,6 +5347,11 @@ run_readonly_diagnostics() {
     else
         info "1.1.2 Moonraker components restore proof has not passed yet"
     fi
+    if q2_112_unit_file_restore_proof_passed; then
+        ok "1.1.2 QIDIClient unit-file restore proof has passed"
+    else
+        info "1.1.2 QIDIClient unit-file restore proof has not passed yet"
+    fi
     find_duplicate_macros_readonly
     check_invalid_klipper_options_readonly
     check_orphan_includes_readonly
@@ -5880,6 +6107,15 @@ ${C_BOLD}1.1.2 loaded runtime-path restore proofs:${C_RESET}
     QIDIClient, and Crowsnest must remain active, and all guarded config,
     service, boot-target, and package state must remain unchanged.
 
+${C_BOLD}1.1.2 QIDIClient unit-file restore proof:${C_RESET}
+  - Option 16 tests sealed restoration of the captured-present
+    ${Q2_112_UNIT_FILE_PROOF_TARGET} file.
+  - It appends one uniquely identified comment, verifies the exact expected
+    proof file, then immediately restores the sealed stock unit file.
+  - It does not run daemon-reload or restart services. NeedDaemonReload,
+    all guarded runtime/service/config/package state, and default.target
+    must remain unchanged.
+
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
   - Revert removes KlipperScreen, HelixScreen, BunnyBox/Happy Hare,
@@ -6020,6 +6256,7 @@ draw_menu() {
     printf '  %s13)%s 1.1.2 Present-Path Restore Proof     (controlled systemd path)\n' "$C_CYAN" "$C_RESET"
     printf '  %s14)%s 1.1.2 Klipper Extras Restore Proof    (controlled runtime path)\n' "$C_CYAN" "$C_RESET"
     printf '  %s15)%s 1.1.2 Moonraker Components Proof      (controlled runtime path)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s16)%s 1.1.2 QIDIClient Unit Restore Proof    (controlled service file)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -6113,6 +6350,7 @@ main_loop() {
             13) menu_q2_112_present_path_restore_proof ;;
             14) menu_q2_112_klipper_extras_restore_proof ;;
             15) menu_q2_112_moonraker_components_restore_proof ;;
+            16) menu_q2_112_unit_file_restore_proof ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
