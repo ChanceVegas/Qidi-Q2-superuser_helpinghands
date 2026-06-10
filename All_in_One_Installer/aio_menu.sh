@@ -3061,6 +3061,8 @@ rollback_q2_112_live_restore_proof() {
 q2_112_live_restore_proof_passed() {
     local pass_file="${Q2_112_LIVE_PROOF_DIR}/PASS"
     local expected_seal current_seal
+    local before_dir="${Q2_112_LIVE_PROOF_DIR}/checks/before"
+    local after_dir="${Q2_112_LIVE_PROOF_DIR}/checks/after"
 
     [ -f "$pass_file" ] || return 1
     validate_q2_112_restore_contract || return 1
@@ -3069,11 +3071,8 @@ q2_112_live_restore_proof_passed() {
     current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
     [ -n "$expected_seal" ] && [ "$expected_seal" = "$current_seal" ] || return 1
     [ ! -e "$Q2_112_LIVE_PROOF_CFG" ] || return 1
-    [ ! -e "$Q2_112_LIVE_PROOF_EXTERNAL_DIR" ] || return 1
-    verify_q2_112_active_config_matches_contract || return 1
-    verify_q2_112_rehearsal_live_guard \
-        "${Q2_112_LIVE_PROOF_DIR}/checks/before" \
-        "${Q2_112_LIVE_PROOF_DIR}/checks/after"
+    [ ! -e "$Q2_112_LIVE_PROOF_EXTERNAL_MARKER" ] || return 1
+    verify_q2_112_rehearsal_live_guard "$before_dir" "$after_dir"
 }
 
 run_q2_112_live_restore_proof() {
@@ -5137,6 +5136,9 @@ ${C_BOLD}1.1.2 controlled live restore proof:${C_RESET}
   - It removes only the identified external proof path, verifies the
     exact stock config and guarded system state, and retains an emergency
     config snapshot if any verification fails.
+  - Option 8 validates the sealed historical proof and stored guards
+    without requiring stock processes to preserve active config metadata
+    unchanged after a reboot.
   - Full install and general real revert remain blocked.
 
 ${C_BOLD}What it can uninstall:${C_RESET}
