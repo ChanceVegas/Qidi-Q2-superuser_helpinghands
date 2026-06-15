@@ -114,6 +114,8 @@ acceptance or rejection verdict for every config-tree change. A changed
 `printer.cfg` stable section is trusted only when it matches a cached
 installed-version `qd-q2-system` package payload or the exact known Qidi
 comment-only Q2-to-MAX4 header anomaly with all functional lines unchanged.
+External refresh rejection must print an explicit per-change trust verdict;
+timestamp-only metadata is accepted, while all other metadata remains blocked.
 
 Per-component uninstall options (BunnyBox-only / HelixScreen-only / Both) were removed in RC4. Revert to Backup is the single uninstall path and delegates to `uninstall_bunnybox()` and `uninstall_helixscreen()` internally before restoring from `_FIRST_STOCK`.
 

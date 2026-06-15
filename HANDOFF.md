@@ -3,7 +3,7 @@
 ## Current 1.1.2 Compatibility Lane
 
 The historical RC1 notes below are retained for context, but the active work is
-RC2.40 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
+RC2.41 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
 
 - General install and real revert remain blocked on firmware 1.1.2.
 - Options 9-16 provide staged compatibility and restore proofs.
@@ -38,6 +38,9 @@ RC2.40 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
 - RC2.40 classifies Qidi's exact comment-only Q2-to-MAX4 `printer.cfg` header
   anomaly. The exception is accepted only when every remaining functional
   pre-`SAVE_CONFIG` line exactly matches the historical Q2 contract.
+- RC2.41 reports an explicit external refresh trust verdict for every mapped
+  path/change, distinguishes timestamp-only drift from other metadata changes,
+  and canonicalizes package paths before ownership/checksum verification.
 
 ## Project
 

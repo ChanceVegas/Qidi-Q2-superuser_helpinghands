@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.40'
+AIO_VERSION='RC2.41'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -3224,7 +3224,7 @@ q2_112_config_refresh_drift_is_trusted() {
 
 q2_112_refresh_drift_is_trusted() {
     local captured kind mode uid gid path target source destination changes change code relative live
-    local owner package
+    local owner package canonical_live
 
     q2_112_stock_package_upgrade_is_verified || return 1
     while IFS='|' read -r captured kind mode uid gid path target; do
@@ -3273,14 +3273,106 @@ q2_112_refresh_drift_is_trusted() {
             live="${path}/${relative}"
             [ -f "${source}/${relative}" ] && [ ! -L "${source}/${relative}" ] || return 1
             [ -f "$live" ] && [ ! -L "$live" ] || return 1
-            owner=$(dpkg-query -S "$live" 2>/dev/null | head -n 1 || true)
+            canonical_live=$(sudo readlink -f "$live" 2>/dev/null || printf '%s' "$live")
+            owner=$(dpkg-query -S "$canonical_live" 2>/dev/null | head -n 1 || true)
             [ -n "$owner" ] || return 1
             package="${owner%%:*}"
             [ "$package" = "$Q2_112_STOCK_SYSTEM_PACKAGE" ] || return 1
-            q2_112_live_file_matches_stock_package_record "$live" || return 1
+            q2_112_live_file_matches_stock_package_record "$canonical_live" || return 1
         done <<< "$changes"
     done < "$Q2_112_CONTRACT_PATH_STATES"
     return 0
+}
+
+report_q2_112_external_refresh_gate() {
+    local captured kind mode uid gid path target source destination changes change code relative live
+    local owner package canonical_live
+
+    banner "External refresh trust gate"
+    if q2_112_stock_package_upgrade_is_verified; then
+        ok "Verified ${Q2_112_STOCK_SYSTEM_PACKAGE} package transition"
+    else
+        warn "Rejected: stock package transition is missing, unchanged, or not fully installed"
+    fi
+
+    while IFS='|' read -r captured kind mode uid gid path target; do
+        source="${Q2_112_CONTRACT_DIR}/external${path}"
+        if [ "$captured" = "absent" ]; then
+            if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+                ok "Accepted captured-absent path: ${path}"
+            else
+                warn "Rejected captured-absent path now present: ${path}"
+            fi
+            continue
+        fi
+        if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+            warn "Rejected missing captured-present path: ${path}"
+            continue
+        fi
+        if [ ! -e "$source" ] && [ ! -L "$source" ]; then
+            warn "Rejected missing contract source: ${source}"
+            continue
+        fi
+        case "$kind" in
+            directory)
+                changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run \
+                    --itemize-changes "${source}/" "${path}/" 2>/dev/null || true)
+                ;;
+            file|symlink)
+                destination=$(dirname "$path")
+                changes=$(sudo rsync -aHAX --numeric-ids --checksum --dry-run \
+                    --itemize-changes "$source" "${destination}/" 2>/dev/null || true)
+                ;;
+            *)
+                warn "Rejected unsupported captured path kind (${kind}): ${path}"
+                continue
+                ;;
+        esac
+        [ -n "$changes" ] || {
+            ok "Accepted exact external path: ${path}"
+            continue
+        }
+        while IFS= read -r change; do
+            [ -n "$change" ] || continue
+            code="${change%% *}"
+            relative="${change#* }"
+            relative="${relative#"${relative%%[![:space:]]*}"}"
+            if [ "${code:0:1}" = "." ] && [ "${code:2:2}" = ".." ]; then
+                case "$code" in
+                    .d..t......|.f..t......|.L..t......)
+                        ok "Accepted timestamp-only external drift: ${path}/${relative}"
+                        ;;
+                    *)
+                        warn "Rejected non-timestamp metadata drift (${code}): ${path}/${relative}"
+                        ;;
+                esac
+                continue
+            fi
+            case "$relative" in
+                __pycache__/*.pyc|*/__pycache__/*.pyc)
+                    ok "Accepted generated Python bytecode: ${path}/${relative}"
+                    continue
+                    ;;
+            esac
+            if [ "$kind" != "directory" ]; then
+                warn "Rejected content change on captured ${kind}: ${path}"
+                continue
+            fi
+            live="${path}/${relative}"
+            canonical_live=$(sudo readlink -f "$live" 2>/dev/null || printf '%s' "$live")
+            owner=$(dpkg-query -S "$canonical_live" 2>/dev/null | head -n 1 || true)
+            package="${owner%%:*}"
+            if [ -z "$owner" ]; then
+                warn "Rejected content without package owner: ${canonical_live}"
+            elif [ "$package" != "$Q2_112_STOCK_SYSTEM_PACKAGE" ]; then
+                warn "Rejected content owned by ${package}: ${canonical_live}"
+            elif q2_112_live_file_matches_stock_package_record "$canonical_live"; then
+                ok "Accepted installed package record: ${canonical_live}"
+            else
+                warn "Rejected ${Q2_112_STOCK_SYSTEM_PACKAGE} package-record mismatch: ${canonical_live}"
+            fi
+        done <<< "$changes"
+    done < "$Q2_112_CONTRACT_PATH_STATES"
 }
 
 refresh_q2_112_restore_contract() {
@@ -3317,6 +3409,7 @@ refresh_q2_112_restore_contract() {
     fi
     if ! q2_112_refresh_drift_is_trusted; then
         err "External drift is not limited to a verified ${Q2_112_STOCK_SYSTEM_PACKAGE} upgrade and generated bytecode."
+        report_q2_112_external_refresh_gate
         info "Run option 12 and classify every content change before refreshing."
         return 1
     fi
