@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.38'
+AIO_VERSION='RC2.39'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -3130,6 +3130,38 @@ q2_112_printer_cfg_stable_content_matches() {
         <(sudo awk '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' "$live")
 }
 
+q2_112_printer_cfg_matches_cached_stock_package_payload() {
+    local live="${CONFIG_DIR}/printer.cfg"
+    local package_version candidate package candidate_version
+    local archive_root="/var/cache/apt/archives"
+
+    [ -f "$live" ] && [ ! -L "$live" ] || return 1
+    command -v dpkg-deb >/dev/null 2>&1 || return 1
+    command -v tar >/dev/null 2>&1 || return 1
+    package_version=$(dpkg-query -W -f='${Version}\n' "$Q2_112_STOCK_SYSTEM_PACKAGE" \
+        2>/dev/null | head -n 1 || true)
+    [ -n "$package_version" ] || return 1
+
+    while IFS= read -r -d '' candidate; do
+        package=$(dpkg-deb -f "$candidate" Package 2>/dev/null || true)
+        candidate_version=$(dpkg-deb -f "$candidate" Version 2>/dev/null || true)
+        [ "$package" = "$Q2_112_STOCK_SYSTEM_PACKAGE" ] || continue
+        [ "$candidate_version" = "$package_version" ] || continue
+        if cmp -s \
+            <(sudo awk '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' "$live") \
+            <(dpkg-deb --fsys-tarfile "$candidate" 2>/dev/null | \
+                tar -xOf - "./${live#/}" 2>/dev/null | \
+                awk '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}'); then
+            return 0
+        fi
+    done < <(
+        [ -d "$archive_root" ] && \
+            find "$archive_root" -type f -user root ! -perm /022 \
+                -name "${Q2_112_STOCK_SYSTEM_PACKAGE}*.deb" -print0 2>/dev/null
+    )
+    return 1
+}
+
 q2_112_config_refresh_drift_is_trusted() {
     local changes change code relative live
 
@@ -3154,7 +3186,8 @@ q2_112_config_refresh_drift_is_trusted() {
                 ;;
             printer.cfg)
                 if ! q2_112_printer_cfg_stable_content_matches && \
-                   ! q2_112_live_file_matches_stock_package_record "$live"; then
+                   ! q2_112_live_file_matches_stock_package_record "$live" && \
+                   ! q2_112_printer_cfg_matches_cached_stock_package_payload; then
                     return 1
                 fi
                 ;;
@@ -3733,7 +3766,7 @@ report_q2_112_identical_config_sources() {
 }
 
 report_q2_112_config_refresh_gate() {
-    local changes change code relative live expected actual
+    local changes change code relative live expected actual cached_debs package_version candidate
 
     banner "Config refresh trust gate"
     changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
@@ -3769,6 +3802,9 @@ report_q2_112_config_refresh_gate() {
                     ok "Accepted generated SAVE_CONFIG-only drift: ${relative}"
                 elif q2_112_live_file_matches_stock_package_record "$live"; then
                     ok "Accepted installed ${Q2_112_STOCK_SYSTEM_PACKAGE} package record: ${relative}"
+                elif q2_112_printer_cfg_matches_cached_stock_package_payload; then
+                    ok "Accepted stable config from cached installed ${Q2_112_STOCK_SYSTEM_PACKAGE} package payload: ${relative}"
+                    info "  Live differences beyond the package payload are limited to generated SAVE_CONFIG state."
                 else
                     expected=$(sudo awk -v path="${live#/}" \
                         '$2 == path { print $1; exit }' \
@@ -3777,6 +3813,19 @@ report_q2_112_config_refresh_gate() {
                     warn "Rejected stable config drift: ${relative}"
                     info "  installed package md5: ${expected:-not recorded}"
                     info "  live file md5:         ${actual:-unavailable}"
+                    package_version=$(dpkg-query -W -f='${Version}\n' "$Q2_112_STOCK_SYSTEM_PACKAGE" \
+                        2>/dev/null | head -n 1 || true)
+                    cached_debs=$(find /var/cache/apt/archives -type f -user root ! -perm /022 \
+                        -name "${Q2_112_STOCK_SYSTEM_PACKAGE}*.deb" -print 2>/dev/null || true)
+                    if [ -n "$cached_debs" ]; then
+                        info "  trusted cached package candidates for installed version ${package_version:-unknown}:"
+                        while IFS= read -r candidate; do
+                            info "    ${candidate}"
+                        done <<< "$cached_debs"
+                        warn "  no cached installed-package payload has a matching stable printer.cfg section"
+                    else
+                        warn "  no root-owned non-writable cached ${Q2_112_STOCK_SYSTEM_PACKAGE} .deb payload was found"
+                    fi
                 fi
                 ;;
             klipper-macros-qd/gcode_macro.cfg)

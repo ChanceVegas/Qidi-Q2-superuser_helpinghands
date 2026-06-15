@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC2.38)
+   Qidi Q2 Superuser - AIO Setup Menu (RC2.39)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -49,7 +49,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 AIO currently supports mutating install/revert/addon actions on the legacy Q2 firmware layout used by 1.1.0 and 1.1.1, where the active home/config path is `/home/mks`.
 
-Qidi Q2 firmware 1.1.2 migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.38 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting plus guarded baseline/restore-contract capture, options 9-16's staged compatibility/restore proofs, and option 17's guarded refresh when Qidi updates the authoritative stock package after capture. It still blocks full install, general real revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
+Qidi Q2 firmware 1.1.2 migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.39 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting plus guarded baseline/restore-contract capture, options 9-16's staged compatibility/restore proofs, and option 17's guarded refresh when Qidi updates the authoritative stock package after capture. It still blocks full install, general real revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
 
 ## Install
 
@@ -116,7 +116,7 @@ Option 12 is the read-only gate before testing restoration of captured-present e
 
 ## Q2 firmware 1.1.2 guarded restore-contract refresh
 
-Option 17 handles a narrow stock-firmware maintenance case: Qidi upgraded the installed `qd-q2-system` package after the original contract was sealed. The refresh refuses to run unless AIO artifacts are absent, guarded runtime services are active, captured-absent paths remain absent, metadata drift is timestamp-only, and every meaningful external content change is an existing file owned by that upgraded package whose live checksum matches its installed package record. Generated `__pycache__/` and `*.pyc` changes are accepted as volatile runtime state. Config drift is accepted only for package-verified `printer.cfg` / `klipper-macros-qd/gcode_macro.cfg`, Klipper's generated `SAVE_CONFIG` block, and mutable `saved_variables.cfg`; every other config change remains a hard blocker. Option 17 identifies the running AIO revision, reports changed config paths with hashes, metadata, canonical package provenance, active-include status, and content previews, then searches known Qidi/runtime/backup trees for changed active configs that do not match the installed package record. Canonical-path comparison prevents the live file from being reported as its own provenance candidate. A dedicated trust-gate report lists the acceptance or rejection reason for every config-tree change and shows installed-package versus live MD5 values on rejection. The old contract is preserved as historical evidence before schema 2 is captured atomically. The changed seal intentionally invalidates options 10-16, which must be rerun in order.
+Option 17 handles a narrow stock-firmware maintenance case: Qidi upgraded the installed `qd-q2-system` package after the original contract was sealed. The refresh refuses to run unless AIO artifacts are absent, guarded runtime services are active, captured-absent paths remain absent, metadata drift is timestamp-only, and every meaningful external content change is an existing file owned by that upgraded package whose live checksum matches its installed package record. Generated `__pycache__/` and `*.pyc` changes are accepted as volatile runtime state. Config drift is accepted only for package-verified stock files, `printer.cfg` whose stable pre-`SAVE_CONFIG` section matches a root-owned non-writable installed-version package payload cached under `/var/cache/apt/archives`, Klipper's generated `SAVE_CONFIG` block, and mutable `saved_variables.cfg`; every other config change remains a hard blocker. Option 17 identifies the running AIO revision, reports changed config paths with hashes, metadata, canonical package provenance, active-include status, and content previews, then searches known Qidi/runtime/backup trees for changed active configs that do not match the installed package record. Canonical-path comparison prevents the live file from being reported as its own provenance candidate. A dedicated trust-gate report lists the acceptance or rejection reason for every config-tree change and shows installed-package versus live MD5 values on rejection. The old contract is preserved as historical evidence before schema 2 is captured atomically. The changed seal intentionally invalidates options 10-16, which must be rerun in order.
 
 ## Q2 firmware 1.1.2 captured-present path restore proof
 
@@ -176,6 +176,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.39 | Adds read-only cached-package payload verification for `printer.cfg`, accepting its stable section only when it matches a root-owned non-writable installed-version `qd-q2-system` `.deb` under `/var/cache/apt/archives` while preserving generated `SAVE_CONFIG` calibration state |
 | RC2.38 | Prevents Option 17 from reporting a live config as its own provenance candidate and adds an explicit config refresh trust-gate report with per-path acceptance/rejection reasons plus installed-package and live MD5 evidence |
 | RC2.37 | Makes Option 17 identify its exact AIO revision and automatically scan every changed active unowned config for provenance; `printer.cfg` source matching now compares the stable pre-`SAVE_CONFIG` section so calibration changes do not prevent source identification |
 | RC2.36 | Adds read-only source provenance for unowned active config drift, searching known Qidi runtime and backup trees for byte-identical copies with metadata and package ownership before any contract refresh is allowed |

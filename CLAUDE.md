@@ -110,7 +110,9 @@ installed `qd-q2-system` package upgrade; the historical contract is preserved
 and options 10-16 must be rerun for the new seal. Option 17 identifies its
 running AIO revision, searches changed active unowned configs for provenance
 without treating the live file as its own source, and reports an explicit
-acceptance or rejection verdict for every config-tree change.
+acceptance or rejection verdict for every config-tree change. A changed
+`printer.cfg` stable section is trusted only when it matches a cached
+installed-version `qd-q2-system` package payload.
 
 Per-component uninstall options (BunnyBox-only / HelixScreen-only / Both) were removed in RC4. Revert to Backup is the single uninstall path and delegates to `uninstall_bunnybox()` and `uninstall_helixscreen()` internally before restoring from `_FIRST_STOCK`.
 
