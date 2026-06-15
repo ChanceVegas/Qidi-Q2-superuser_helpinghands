@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.34'
+AIO_VERSION='RC2.35'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -3119,6 +3119,55 @@ q2_112_live_file_matches_stock_package_record() {
     [ -n "$actual" ] && [ "$actual" = "$expected" ]
 }
 
+q2_112_printer_cfg_stable_content_matches() {
+    local sealed="${Q2_112_CONTRACT_DIR}/config/printer.cfg"
+    local live="${CONFIG_DIR}/printer.cfg"
+
+    [ -f "$sealed" ] && [ -f "$live" ] || return 1
+    cmp -s \
+        <(sudo awk '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' "$sealed") \
+        <(sudo awk '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' "$live")
+}
+
+q2_112_config_refresh_drift_is_trusted() {
+    local changes change code relative live
+
+    changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+        "${Q2_112_CONTRACT_DIR}/config/" "${CONFIG_DIR}/" 2>/dev/null) || return 1
+    while IFS= read -r change; do
+        [ -n "$change" ] || continue
+        code="${change%% *}"
+        if [ "${code:0:1}" = "." ] && [ "${code:2:2}" = ".." ]; then
+            case "$code" in
+                .d..t......|.f..t......|.L..t......) continue ;;
+                *) return 1 ;;
+            esac
+        fi
+        relative="${change#* }"
+        relative="${relative#"${relative%%[![:space:]]*}"}"
+        relative="${relative#./}"
+        live="${CONFIG_DIR}/${relative}"
+        case "$relative" in
+            saved_variables.cfg)
+                [ -f "$live" ] && [ ! -L "$live" ] || return 1
+                ;;
+            printer.cfg)
+                if ! q2_112_printer_cfg_stable_content_matches && \
+                   ! q2_112_live_file_matches_stock_package_record "$live"; then
+                    return 1
+                fi
+                ;;
+            klipper-macros-qd/gcode_macro.cfg)
+                q2_112_live_file_matches_stock_package_record "$live" || return 1
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done <<< "$changes"
+    return 0
+}
+
 q2_112_refresh_drift_is_trusted() {
     local captured kind mode uid gid path target source destination changes change code relative live
     local owner package
@@ -3195,11 +3244,17 @@ refresh_q2_112_restore_contract() {
     q2_112_aio_artifacts_absent || return 1
     q2_112_baseline_safe || return 1
     if ! verify_q2_112_active_config_matches_contract; then
-        err "Active config no longer exactly matches the sealed contract."
-        warn "Refusing to refresh over unrelated config changes."
+        warn "Active config no longer exactly matches the historical contract."
         report_q2_112_active_config_drift
-        info "Do not recapture or restore anything until every reported config change is classified."
-        return 1
+        if q2_112_config_refresh_drift_is_trusted; then
+            ok "Config drift is limited to verified stock-package files and mutable Klipper state."
+            warn "The refreshed contract will preserve the printer's current stock calibration and variables."
+        else
+            err "Config drift includes unverified stable or structural changes."
+            warn "Refusing to refresh over unrelated config changes."
+            info "Do not recapture or restore anything until every reported config change is classified."
+            return 1
+        fi
     fi
     if ! q2_112_runtime_services_active; then
         err "Klipper, Moonraker, QIDIClient, and Crowsnest must all be active."
@@ -3229,7 +3284,8 @@ refresh_q2_112_restore_contract() {
         info "Restore-contract refresh cancelled."
         return 1
     fi
-    if ! q2_112_refresh_drift_is_trusted || ! q2_112_runtime_services_active; then
+    if ! q2_112_config_refresh_drift_is_trusted || \
+       ! q2_112_refresh_drift_is_trusted || ! q2_112_runtime_services_active; then
         err "Trusted stock state changed while awaiting confirmation."
         return 1
     fi
@@ -3594,6 +3650,26 @@ q2_112_config_path_is_active() {
     return 1
 }
 
+report_q2_112_printer_cfg_stable_drift() {
+    local sealed="$1"
+    local live="$2"
+    local stable_diff
+
+    stable_diff=$(diff -u \
+        <(sudo awk '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' "$sealed") \
+        <(sudo awk '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' "$live") \
+        2>/dev/null | head -n 60 || true)
+    if [ -n "$stable_diff" ]; then
+        warn "  stable config before SAVE_CONFIG differs:"
+        while IFS= read -r line; do
+            warn "    ${line}"
+        done <<< "$stable_diff"
+    else
+        ok "  stable config before SAVE_CONFIG is unchanged"
+        info "  differences are limited to Klipper's generated SAVE_CONFIG block"
+    fi
+}
+
 report_q2_112_active_config_drift() {
     local check_output line relative sealed live sealed_hash live_hash value
     local content_changes preview shown
@@ -3628,6 +3704,12 @@ report_q2_112_active_config_drift() {
                         warn "  include state: active Klipper config"
                     else
                         info "  include state: not active in the current Klipper include graph"
+                    fi
+                    report_q2_112_drift_file_evidence "$sealed" "$live" "$relative"
+                    if [ "$relative" = "./printer.cfg" ]; then
+                        report_q2_112_printer_cfg_stable_drift "$sealed" "$live"
+                    elif [ "$relative" = "./saved_variables.cfg" ]; then
+                        info "  classification hint: mutable Klipper save_variables state"
                     fi
                     preview=$(sudo diff -u "$sealed" "$live" 2>/dev/null | head -n 60 || true)
                     if [ -n "$preview" ]; then
