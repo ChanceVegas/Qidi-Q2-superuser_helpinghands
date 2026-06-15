@@ -3,7 +3,7 @@
 ## Current 1.1.2 Compatibility Lane
 
 The historical RC1 notes below are retained for context, but the active work is
-RC2.35 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
+RC2.36 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
 
 - General install and real revert remain blocked on firmware 1.1.2.
 - Options 9-16 provide staged compatibility and restore proofs.
@@ -21,6 +21,9 @@ RC2.35 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
 - RC2.35 accepts config refresh drift only for package-verified stock config
   files, Klipper's generated `SAVE_CONFIG` state, and mutable
   `saved_variables.cfg`; every other config change remains blocked.
+- RC2.36 searches known Qidi runtime and backup trees for byte-identical source
+  copies when active config files are not package-owned, reporting metadata and
+  package ownership without allowing the refresh.
 
 ## Project
 

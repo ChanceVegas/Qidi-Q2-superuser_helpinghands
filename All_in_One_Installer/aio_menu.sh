@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.35'
+AIO_VERSION='RC2.36'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -3670,6 +3670,44 @@ report_q2_112_printer_cfg_stable_drift() {
     fi
 }
 
+report_q2_112_identical_config_sources() {
+    local live="$1"
+    local live_hash basename candidate candidate_hash value owner found=false
+    local root
+    local -a roots=(
+        "${AIO_HOME}/QIDI_Client"
+        "${AIO_HOME}/printer_data"
+        "$BACKUP_ROOT"
+        "${AIO_HOME}/klipper"
+        "${AIO_HOME}/moonraker"
+    )
+
+    [ -f "$live" ] && [ ! -L "$live" ] || return 0
+    live_hash=$(file_sha256 "$live")
+    basename="${live##*/}"
+    info "  Searching known Qidi/runtime/backup trees for byte-identical ${basename} copies"
+    while IFS= read -r -d '' candidate; do
+        [ "$candidate" != "$live" ] || continue
+        candidate_hash=$(file_sha256 "$candidate")
+        [ -n "$candidate_hash" ] && [ "$candidate_hash" = "$live_hash" ] || continue
+        value=$(sudo stat -c 'size=%s mtime=%y mode=%a owner=%u:%g' \
+            "$candidate" 2>/dev/null || printf 'stat unavailable')
+        owner=$(dpkg-query -S "$candidate" 2>/dev/null | head -n 1 || true)
+        ok "  identical source candidate: ${candidate}"
+        info "    ${value}"
+        info "    package owner: ${owner:-none reported}"
+        found=true
+    done < <(
+        for root in "${roots[@]}"; do
+            [ -d "$root" ] || continue
+            sudo find "$root" -type f -name "$basename" -print0 2>/dev/null
+        done
+    )
+    if [ "$found" = false ]; then
+        warn "  no byte-identical source copy found in known Qidi/runtime/backup trees"
+    fi
+}
+
 report_q2_112_active_config_drift() {
     local check_output line relative sealed live sealed_hash live_hash value
     local content_changes preview shown
@@ -3710,6 +3748,10 @@ report_q2_112_active_config_drift() {
                         report_q2_112_printer_cfg_stable_drift "$sealed" "$live"
                     elif [ "$relative" = "./saved_variables.cfg" ]; then
                         info "  classification hint: mutable Klipper save_variables state"
+                    fi
+                    if [ "$relative" = "./printer.cfg" ] || \
+                       [ "$relative" = "./klipper-macros-qd/gcode_macro.cfg" ]; then
+                        report_q2_112_identical_config_sources "$live"
                     fi
                     preview=$(sudo diff -u "$sealed" "$live" 2>/dev/null | head -n 60 || true)
                     if [ -n "$preview" ]; then
