@@ -2792,8 +2792,9 @@ report_q2_112_external_restore_audit() {
     warn "This compares live external paths with the sealed stock contract."
     warn "It uses rsync --dry-run only; no files, packages, services, or boot targets are changed."
 
-    local captured kind mode uid gid path target source destination changes change
+    local captured kind mode uid gid path target source destination changes change code
     local exact=0 drift=0 absent_ok=0 unexpected=0 missing=0 errors=0 shown total
+    local path_content path_metadata content_total=0 metadata_total=0
     while IFS='|' read -r captured kind mode uid gid path target; do
         source="${Q2_112_CONTRACT_DIR}/external${path}"
         if [ "$captured" = "absent" ]; then
@@ -2876,16 +2877,55 @@ report_q2_112_external_restore_audit() {
         fi
 
         total=$(printf '%s\n' "$changes" | wc -l | tr -d ' ')
-        warn "External contract drift: ${path} (${total} rsync change item(s))"
-        shown=0
+        path_content=0
+        path_metadata=0
         while IFS= read -r change; do
             [ -n "$change" ] || continue
-            warn "  ${change}"
-            shown=$((shown + 1))
-            [ "$shown" -ge 8 ] && break
+            code="${change%% *}"
+            if [ "${code:0:1}" = "." ] && [ "${code:2:2}" = ".." ]; then
+                path_metadata=$((path_metadata + 1))
+            else
+                path_content=$((path_content + 1))
+            fi
         done <<< "$changes"
-        if [ "$total" -gt "$shown" ]; then
-            warn "  ... $((total - shown)) additional change item(s)"
+        content_total=$((content_total + path_content))
+        metadata_total=$((metadata_total + path_metadata))
+
+        warn "External contract drift: ${path} (${total} rsync change item(s))"
+        warn "  Content/structural: ${path_content} | metadata-only: ${path_metadata}"
+        if [ "$path_content" -gt 0 ]; then
+            warn "  Content/structural changes:"
+            shown=0
+            while IFS= read -r change; do
+                [ -n "$change" ] || continue
+                code="${change%% *}"
+                if [ "${code:0:1}" = "." ] && [ "${code:2:2}" = ".." ]; then
+                    continue
+                fi
+                warn "    ${change}"
+                shown=$((shown + 1))
+                [ "$shown" -ge 8 ] && break
+            done <<< "$changes"
+            if [ "$path_content" -gt "$shown" ]; then
+                warn "    ... $((path_content - shown)) additional content/structural item(s)"
+            fi
+        fi
+        if [ "$path_metadata" -gt 0 ]; then
+            info "  Metadata-only examples:"
+            shown=0
+            while IFS= read -r change; do
+                [ -n "$change" ] || continue
+                code="${change%% *}"
+                if [ "${code:0:1}" != "." ] || [ "${code:2:2}" != ".." ]; then
+                    continue
+                fi
+                info "    ${change}"
+                shown=$((shown + 1))
+                [ "$shown" -ge 4 ] && break
+            done <<< "$changes"
+            if [ "$path_metadata" -gt "$shown" ]; then
+                info "    ... $((path_metadata - shown)) additional metadata-only item(s)"
+            fi
         fi
         drift=$((drift + 1))
     done < "$Q2_112_CONTRACT_PATH_STATES"
@@ -2897,10 +2937,16 @@ report_q2_112_external_restore_audit() {
     info "Captured-absent paths still absent: ${absent_ok}"
     info "Captured-absent paths now present: ${unexpected}"
     info "Audit errors/manual-review paths: ${errors}"
+    info "Content/structural change items: ${content_total}"
+    info "Metadata-only change items: ${metadata_total}"
     if [ "$drift" -eq 0 ] && [ "$missing" -eq 0 ] && \
        [ "$unexpected" -eq 0 ] && [ "$errors" -eq 0 ]; then
         ok "All mapped external paths exactly match the sealed stock contract"
     else
+        if [ "$content_total" -gt 0 ]; then
+            warn "The sealed contract is stale or live stock content changed."
+            warn "Do not restore from or recapture the contract until content drift is classified."
+        fi
         warn "Do not enable general real revert until every reported external-path change is classified."
     fi
     return 0
@@ -6085,7 +6131,8 @@ ${C_BOLD}1.1.2 external restore audit:${C_RESET}
   - Option 12 compares every captured-present and captured-absent
     external path against the sealed stock contract.
   - It uses checksum-backed rsync --dry-run --itemize-changes to report
-    exactly what a future restore would replace or remove.
+    exactly what a future restore would replace or remove, separating
+    content/structural drift from metadata-only drift.
   - It does not write files or change packages, services, or boot targets.
 
 ${C_BOLD}1.1.2 captured-present path restore proof:${C_RESET}
