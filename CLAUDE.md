@@ -108,9 +108,9 @@ restore contract excludes generated `__pycache__/` and `*.pyc` files. Option 17
 may refresh a stale contract only when all meaningful drift is verified as an
 installed `qd-q2-system` package upgrade; the historical contract is preserved
 and options 10-16 must be rerun for the new seal. Option 17 identifies its
-running AIO revision and automatically searches changed active unowned configs
-for provenance; `printer.cfg` source matching ignores its generated
-`SAVE_CONFIG` section.
+running AIO revision, searches changed active unowned configs for provenance
+without treating the live file as its own source, and reports an explicit
+acceptance or rejection verdict for every config-tree change.
 
 Per-component uninstall options (BunnyBox-only / HelixScreen-only / Both) were removed in RC4. Revert to Backup is the single uninstall path and delegates to `uninstall_bunnybox()` and `uninstall_helixscreen()` internally before restoring from `_FIRST_STOCK`.
 

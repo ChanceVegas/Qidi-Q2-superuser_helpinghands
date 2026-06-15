@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.37'
+AIO_VERSION='RC2.38'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -2816,7 +2816,7 @@ report_q2_112_drift_file_evidence() {
     local live="$2"
     local label="$3"
     local value owner package captured_package live_package verify_line md5_record
-    local expected_md5 actual_md5
+    local expected_md5 actual_md5 canonical_live
 
     warn "    Evidence: ${label}"
     if [ -e "$sealed" ] || [ -L "$sealed" ]; then
@@ -2832,6 +2832,7 @@ report_q2_112_drift_file_evidence() {
     fi
 
     if [ -e "$live" ] || [ -L "$live" ]; then
+        canonical_live=$(sudo readlink -f "$live" 2>/dev/null || printf '%s' "$live")
         value=$(sudo stat -c 'size=%s mtime=%y mode=%a owner=%u:%g' "$live" 2>/dev/null || printf 'stat unavailable')
         info "      live:   ${value}"
         if [ -f "$live" ] && [ ! -L "$live" ]; then
@@ -2842,7 +2843,7 @@ report_q2_112_drift_file_evidence() {
         elif [ -L "$live" ]; then
             info "      live symlink: $(sudo readlink "$live" 2>/dev/null || printf 'unknown')"
         fi
-        owner=$(dpkg-query -S "$live" 2>/dev/null | head -n 1 || true)
+        owner=$(dpkg-query -S "$canonical_live" 2>/dev/null | head -n 1 || true)
         if [ -n "$owner" ]; then
             info "      package owner: ${owner}"
             package="${owner%%: *}"
@@ -2851,15 +2852,15 @@ report_q2_112_drift_file_evidence() {
                 "$package" 2>/dev/null | head -n 1 || true)
             info "      captured package: ${captured_package:-not captured}"
             info "      live package:     ${live_package:-not installed}"
-            verify_line=$(sudo dpkg -V "$package" 2>/dev/null | grep -F " $live" | head -n 1 || true)
+            verify_line=$(sudo dpkg -V "$package" 2>/dev/null | grep -F " $canonical_live" | head -n 1 || true)
             if [ -n "$verify_line" ]; then
                 warn "      dpkg verify: ${verify_line}"
             else
-                md5_record=$(sudo grep -F "  ${live#/}" "/var/lib/dpkg/info/${package}.md5sums" \
+                md5_record=$(sudo grep -F "  ${canonical_live#/}" "/var/lib/dpkg/info/${package}.md5sums" \
                     2>/dev/null | head -n 1 || true)
                 if [ -n "$md5_record" ]; then
                     expected_md5="${md5_record%% *}"
-                    actual_md5=$(sudo md5sum "$live" 2>/dev/null | awk '{print $1}')
+                    actual_md5=$(sudo md5sum "$canonical_live" 2>/dev/null | awk '{print $1}')
                     if [ -n "$actual_md5" ] && [ "$actual_md5" = "$expected_md5" ]; then
                         info "      dpkg verify: live checksum matches installed package record"
                     else
@@ -3674,7 +3675,7 @@ report_q2_112_printer_cfg_stable_drift() {
 report_q2_112_identical_config_sources() {
     local live="$1"
     local live_hash live_stable_hash basename candidate candidate_hash candidate_stable_hash
-    local value owner found=false
+    local value owner found=false canonical_live canonical_candidate
     local root
     local -a roots=(
         "${AIO_HOME}/QIDI_Client"
@@ -3685,6 +3686,7 @@ report_q2_112_identical_config_sources() {
     )
 
     [ -f "$live" ] && [ ! -L "$live" ] || return 0
+    canonical_live=$(sudo readlink -f "$live" 2>/dev/null || printf '%s' "$live")
     live_hash=$(file_sha256 "$live")
     basename="${live##*/}"
     live_stable_hash=""
@@ -3695,7 +3697,8 @@ report_q2_112_identical_config_sources() {
     fi
     info "  Provenance scan (${AIO_VERSION}): searching known Qidi/runtime/backup trees for ${basename}"
     while IFS= read -r -d '' candidate; do
-        [ "$candidate" != "$live" ] || continue
+        canonical_candidate=$(sudo readlink -f "$candidate" 2>/dev/null || printf '%s' "$candidate")
+        [ "$canonical_candidate" != "$canonical_live" ] || continue
         candidate_hash=$(file_sha256 "$candidate")
         candidate_stable_hash=""
         if [ "$candidate_hash" != "$live_hash" ] && [ -n "$live_stable_hash" ]; then
@@ -3729,8 +3732,75 @@ report_q2_112_identical_config_sources() {
     fi
 }
 
+report_q2_112_config_refresh_gate() {
+    local changes change code relative live expected actual
+
+    banner "Config refresh trust gate"
+    changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+        "${Q2_112_CONTRACT_DIR}/config/" "${CONFIG_DIR}/" 2>/dev/null) || {
+        err "Could not calculate config refresh trust decisions."
+        return 1
+    }
+    while IFS= read -r change; do
+        [ -n "$change" ] || continue
+        code="${change%% *}"
+        if [ "${code:0:1}" = "." ] && [ "${code:2:2}" = ".." ]; then
+            case "$code" in
+                .d..t......|.f..t......|.L..t......)
+                    info "Accepted metadata-only config drift: ${change#* }"
+                    continue
+                    ;;
+                *)
+                    warn "Rejected unsupported metadata drift: ${change}"
+                    continue
+                    ;;
+            esac
+        fi
+        relative="${change#* }"
+        relative="${relative#"${relative%%[![:space:]]*}"}"
+        relative="${relative#./}"
+        live="${CONFIG_DIR}/${relative}"
+        case "$relative" in
+            saved_variables.cfg)
+                ok "Accepted mutable Klipper state: ${relative}"
+                ;;
+            printer.cfg)
+                if q2_112_printer_cfg_stable_content_matches; then
+                    ok "Accepted generated SAVE_CONFIG-only drift: ${relative}"
+                elif q2_112_live_file_matches_stock_package_record "$live"; then
+                    ok "Accepted installed ${Q2_112_STOCK_SYSTEM_PACKAGE} package record: ${relative}"
+                else
+                    expected=$(sudo awk -v path="${live#/}" \
+                        '$2 == path { print $1; exit }' \
+                        "/var/lib/dpkg/info/${Q2_112_STOCK_SYSTEM_PACKAGE}.md5sums" 2>/dev/null || true)
+                    actual=$(sudo md5sum "$live" 2>/dev/null | awk '{print $1}')
+                    warn "Rejected stable config drift: ${relative}"
+                    info "  installed package md5: ${expected:-not recorded}"
+                    info "  live file md5:         ${actual:-unavailable}"
+                fi
+                ;;
+            klipper-macros-qd/gcode_macro.cfg)
+                if q2_112_live_file_matches_stock_package_record "$live"; then
+                    ok "Accepted installed ${Q2_112_STOCK_SYSTEM_PACKAGE} package record: ${relative}"
+                else
+                    expected=$(sudo awk -v path="${live#/}" \
+                        '$2 == path { print $1; exit }' \
+                        "/var/lib/dpkg/info/${Q2_112_STOCK_SYSTEM_PACKAGE}.md5sums" 2>/dev/null || true)
+                    actual=$(sudo md5sum "$live" 2>/dev/null | awk '{print $1}')
+                    warn "Rejected package-record mismatch: ${relative}"
+                    info "  installed package md5: ${expected:-not recorded}"
+                    info "  live file md5:         ${actual:-unavailable}"
+                fi
+                ;;
+            *)
+                warn "Rejected unclassified config drift: ${relative}"
+                ;;
+        esac
+    done <<< "$changes"
+}
+
 report_q2_112_active_config_drift() {
-    local check_output line relative normalized sealed live sealed_hash live_hash value owner
+    local check_output line relative normalized sealed live sealed_hash live_hash value
     local content_changes preview shown active_config
 
     banner "Active config drift evidence"
@@ -3773,8 +3843,8 @@ report_q2_112_active_config_drift() {
                     elif [ "$normalized" = "saved_variables.cfg" ]; then
                         info "  classification hint: mutable Klipper save_variables state"
                     fi
-                    owner=$(dpkg-query -S "$live" 2>/dev/null | head -n 1 || true)
-                    if [ "$active_config" = true ] && [ -z "$owner" ]; then
+                    if [ "$active_config" = true ] && \
+                       ! q2_112_live_file_matches_stock_package_record "$live"; then
                         report_q2_112_identical_config_sources "$live"
                     fi
                     preview=$(sudo diff -u "$sealed" "$live" 2>/dev/null | head -n 60 || true)
@@ -3811,6 +3881,7 @@ report_q2_112_active_config_drift() {
         "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config.inventory"; then
         warn "Config-tree metadata/inventory also differs from the sealed contract."
     fi
+    report_q2_112_config_refresh_gate
 }
 
 q2_112_contract_path_was_absent() {

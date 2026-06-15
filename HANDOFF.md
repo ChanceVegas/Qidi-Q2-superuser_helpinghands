@@ -3,7 +3,7 @@
 ## Current 1.1.2 Compatibility Lane
 
 The historical RC1 notes below are retained for context, but the active work is
-RC2.37 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
+RC2.38 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
 
 - General install and real revert remain blocked on firmware 1.1.2.
 - Options 9-16 provide staged compatibility and restore proofs.
@@ -28,6 +28,9 @@ RC2.37 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
   every changed active unowned config. For `printer.cfg`, source provenance
   compares the stable pre-`SAVE_CONFIG` section so calibration changes do not
   prevent a match.
+- RC2.38 canonicalizes provenance paths so live files cannot be reported as
+  their own source, and reports the precise trust-gate verdict plus installed
+  package/live MD5 evidence for every changed config path.
 
 ## Project
 
