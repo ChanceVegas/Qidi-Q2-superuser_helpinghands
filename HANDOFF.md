@@ -1,5 +1,47 @@
 # Session Handoff — Qidi Q2 Superuser AIO
 
+## Current 1.1.2 Compatibility Lane
+
+The historical RC1 notes below are retained for context, but the active work is
+RC2.41 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
+
+- General install and real revert remain blocked on firmware 1.1.2.
+- Options 9-16 provide staged compatibility and restore proofs.
+- Qidi upgraded the authoritative `qd-q2-system` package from
+  `01.01.02.01` to `01.01.02.02` after the original contract capture.
+- Option 17 now performs a guarded schema-2 contract refresh only when every
+  meaningful changed file is owned by that upgraded package and matches its
+  installed checksum record.
+- Schema 2 excludes generated `__pycache__/` and `*.pyc` files from restore
+  authority, preserves the previous contract as historical evidence, and
+  intentionally requires options 10-16 to be rerun for the new seal.
+- Option 17 remains blocked when active config differs; RC2.34 reports each
+  changed config path with hashes, metadata, active-include state, rsync drift,
+  and inventory drift so the change can be classified before any refresh.
+- RC2.35 accepts config refresh drift only for package-verified stock config
+  files, Klipper's generated `SAVE_CONFIG` state, and mutable
+  `saved_variables.cfg`; every other config change remains blocked.
+- RC2.36 searches known Qidi runtime and backup trees for byte-identical source
+  copies when active config files are not package-owned, reporting metadata and
+  package ownership without allowing the refresh.
+- RC2.37 identifies the running revision in Option 17 and automatically scans
+  every changed active unowned config. For `printer.cfg`, source provenance
+  compares the stable pre-`SAVE_CONFIG` section so calibration changes do not
+  prevent a match.
+- RC2.38 canonicalizes provenance paths so live files cannot be reported as
+  their own source, and reports the precise trust-gate verdict plus installed
+  package/live MD5 evidence for every changed config path.
+- RC2.39 verifies the stable pre-`SAVE_CONFIG` section of `printer.cfg`
+  directly against a root-owned non-writable installed-version
+  `qd-q2-system` payload under `/var/cache/apt/archives`. If no matching
+  trusted payload is available, the refresh remains blocked.
+- RC2.40 classifies Qidi's exact comment-only Q2-to-MAX4 `printer.cfg` header
+  anomaly. The exception is accepted only when every remaining functional
+  pre-`SAVE_CONFIG` line exactly matches the historical Q2 contract.
+- RC2.41 reports an explicit external refresh trust verdict for every mapped
+  path/change, distinguishes timestamp-only drift from other metadata changes,
+  and canonicalizes package paths before ownership/checksum verification.
+
 ## Project
 
 **Repo:** `ChanceVegas/Qidi-Q2-superuser_helpinghands`

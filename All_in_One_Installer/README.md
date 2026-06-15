@@ -6,7 +6,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 ```
 ============================================
-   Qidi Q2 Superuser - AIO Setup Menu (RC2.31)
+   Qidi Q2 Superuser - AIO Setup Menu (RC2.41)
 ============================================
   BunnyBox: not found | Display: none | IdleFan: off | BoxWrite: off
   Mainsail: not found | Camera: off
@@ -32,6 +32,8 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
   13) 1.1.2 Present-Path Restore Proof     (controlled systemd path)
   14) 1.1.2 Klipper Extras Restore Proof    (controlled runtime path)
   15) 1.1.2 Moonraker Components Proof      (controlled runtime path)
+  16) 1.1.2 QIDIClient Unit Restore Proof    (controlled service file)
+  17) 1.1.2 Restore Contract Refresh         (guarded stock-package refresh)
    0) Exit
 ============================================
 ```
@@ -47,7 +49,7 @@ A single menu that handles every install, uninstall, and addon path for the Qidi
 
 AIO currently supports mutating install/revert/addon actions on the legacy Q2 firmware layout used by 1.1.0 and 1.1.1, where the active home/config path is `/home/mks`.
 
-Qidi Q2 firmware 1.1.2 / `V01.01.02.01` migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.31 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting plus guarded baseline/restore-contract capture, options 9-13's staged compatibility/restore proofs, and options 14-15's independent loaded runtime-directory restore proofs. It still blocks full install, general real revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
+Qidi Q2 firmware 1.1.2 migrates the printer to `/home/qidi`, leaves `/home/mks` as a symlink, replaces `makerbase-client` with `qidi-client.service`, and moves stock macros under `klipper-macros-qd/`. RC2.41 detects that layout, resolves the active home/config/service names internally, allows option 8 read-only diagnostics, option 4 dry-run revert reporting plus guarded baseline/restore-contract capture, options 9-16's staged compatibility/restore proofs, and option 17's guarded refresh when Qidi updates the authoritative stock package after capture. It still blocks full install, general real revert, addons, and verifier repair paths until the dedicated 1.1.2 compatibility lane is implemented.
 
 ## Install
 
@@ -81,10 +83,12 @@ chmod +x aio_menu.sh
 | 9 | **1.1.2 Compatibility Probe** | Installs one harmless no-op macro config plus one include line after validating the guarded stock baseline. Records exact before/after `printer.cfg` hashes. Running option 9 again restores the exact pre-probe `printer.cfg`, removes the probe, and verifies the round trip. Cleanup refuses to overwrite unrelated changes. |
 | 10 | **1.1.2 Restore Rehearsal** | Reconstructs the sealed restore contract under an isolated installer-managed workspace, verifies file contents and full metadata, generates non-executing config/path/service/package plans, and proves the active config, service enablement, default target, and package inventory were unchanged. |
 | 11 | **1.1.2 Live Restore Proof** | Requires a verified contract, passed rehearsal, and exact stock config match. Creates two harmless proof artifacts, performs a real sealed contract-backed config restore, safely restores the captured-absent external proof path, and verifies the active config and guarded system state returned exactly to stock. |
-| 12 | **1.1.2 External Restore Audit** | Compares every mapped captured-present and captured-absent external path against the sealed contract using checksum-backed `rsync --dry-run --itemize-changes`. Reports exactly what a future restore would replace or remove without changing files, packages, services, or boot targets. |
+| 12 | **1.1.2 External Restore Audit** | Compares every mapped captured-present and captured-absent external path against the sealed contract using checksum-backed `rsync --dry-run --itemize-changes`. Separately reports content/structural drift and metadata-only drift without changing files, packages, services, or boot targets. |
 | 13 | **1.1.2 Present-Path Restore Proof** | Requires all mapped external paths to exactly match the contract. Creates one systemd-ignored marker under `qidi-client.service.d`, restores only that captured-present directory using sealed `rsync --delete`, and verifies QIDIClient plus all guarded printer state remained unchanged without a daemon reload or service restart. |
 | 14 | **1.1.2 Klipper Extras Restore Proof** | Independently tests sealed restoration of `/home/qidi/klipper/klippy/extras` with one harmless non-Python marker while all guarded stock runtime services remain active. |
 | 15 | **1.1.2 Moonraker Components Proof** | Independently tests sealed restoration of `/home/qidi/moonraker/moonraker/components` with one harmless non-Python marker while all guarded stock runtime services remain active. |
+| 16 | **1.1.2 QIDIClient Unit Restore Proof** | Appends one uniquely identified comment to the loaded stock `qidi-client.service`, verifies that exact controlled change, immediately restores the sealed unit file, and proves `NeedDaemonReload` plus all guarded printer state remained unchanged without a daemon reload or service restart. |
+| 17 | **1.1.2 Restore Contract Refresh** | Refreshes a stale sealed contract only when all meaningful drift is proven to come from a verified `qd-q2-system` package upgrade and all remaining content drift is generated Python bytecode. Preserves the historical contract, atomically captures schema 2 without `__pycache__/` or `*.pyc`, and invalidates prior proof seals for an ordered rerun. |
 
 ## Backup and revert behavior
 
@@ -92,7 +96,7 @@ Option 1 captures the current active Klipper config tree before it installs Bunn
 
 Option 4 (**Revert to Backup**) prefers that first stock snapshot, restores it over the active Klipper config directory, removes AIO-installed runtime directories and residue, and verifies stock display services. Root-level AIO KAMP files such as `KAMP_Settings.cfg`, `Adaptive_Meshing.cfg`, `Line_Purge.cfg`, and `Smart_Park.cfg` are treated as install artifacts; the stock `KAMP/` directory is preserved through backup/restore instead of being blindly removed.
 
-On unsupported layouts such as Q2 firmware 1.1.2, option 4 is dry-run only for revert. It reports the selected backup source, what would be restored, what AIO artifacts would be removed, which stock files/services must be preserved, Qidi Box objects/sensors, and the active include graph. It does not run a real restore, delete AIO artifacts, edit active configs, or change services. If the selected `_FIRST_STOCK` is missing active stock essentials, option 4 can quarantine that unsafe baseline and capture a fresh one from the current stock config tree after guarded checks pass. Once that baseline passes, option 4 can atomically capture `_Q2_112_RESTORE_CONTRACT`. The contract records the exact config tree, Klipper extras, Moonraker components, mapped display/runtime and system integration paths, present/absent states, file hashes, full tree metadata, symlink targets, service states, the default boot target, and installed Debian package inventory. Option 4 previews the contract-backed restore plan and option 8 validates its integrity. `mudstockbackups/` is installer-managed backup state, not stock firmware content.
+On unsupported layouts such as Q2 firmware 1.1.2, option 4 is dry-run only for revert. It reports the selected backup source, what would be restored, what AIO artifacts would be removed, which stock files/services must be preserved, Qidi Box objects/sensors, and the active include graph. It does not run a real restore, delete AIO artifacts, edit active configs, or change services. If the selected `_FIRST_STOCK` is missing active stock essentials, option 4 can quarantine that unsafe baseline and capture a fresh one from the current stock config tree after guarded checks pass. Once that baseline passes, option 4 can atomically capture `_Q2_112_RESTORE_CONTRACT`. Schema 2 records the exact config tree, mapped external recovery content excluding generated `__pycache__/` and `*.pyc`, present/absent states, file hashes, full authoritative metadata, symlink targets, service states, the default boot target, and installed Debian package inventory. Option 4 previews the contract-backed restore plan and option 8 validates its integrity. `mudstockbackups/` is installer-managed backup state, not stock firmware content.
 
 ## Q2 firmware 1.1.2 compatibility probe
 
@@ -108,7 +112,11 @@ Option 11 is the first deliberately constrained live use of the sealed restore c
 
 ## Q2 firmware 1.1.2 external restore audit
 
-Option 12 is the read-only gate before testing restoration of captured-present external paths such as Klipper extras and Moonraker components. It compares each mapped live path with its sealed contract source using checksum-backed `rsync --dry-run --itemize-changes`, including `--delete` semantics for captured directories. Captured-absent paths are checked for newly present content. The report classifies exact matches, drift, missing stock paths, unexpected paths, and audit errors without changing the printer.
+Option 12 is the read-only gate before testing restoration of captured-present external paths such as Klipper extras and Moonraker components. It compares each mapped live path with its sealed contract source using checksum-backed `rsync --dry-run --itemize-changes`, including `--delete` semantics for captured directories. Captured-absent paths are checked for newly present content. The report separately classifies content/structural changes and metadata-only changes. For each content-changed item it reports sealed/live hashes, sizes, timestamps, modes, owners, live file type, Debian package ownership, captured/current package versions, dpkg verification state, and generated-bytecode hints, then summarizes exact matches, drift, missing stock paths, unexpected paths, and audit errors without changing the printer. Any content/structural drift blocks restore and contract recapture until it is classified.
+
+## Q2 firmware 1.1.2 guarded restore-contract refresh
+
+Option 17 handles a narrow stock-firmware maintenance case: Qidi upgraded the installed `qd-q2-system` package after the original contract was sealed. The refresh refuses to run unless AIO artifacts are absent, guarded runtime services are active, captured-absent paths remain absent, metadata drift is timestamp-only, and every meaningful external content change is an existing file owned by that upgraded package whose live checksum matches its installed package record. Generated `__pycache__/` and `*.pyc` changes are accepted as volatile runtime state. Config drift is accepted only for package-verified stock files, `printer.cfg` whose stable pre-`SAVE_CONFIG` section matches a trusted package payload, the exact known Qidi comment-only Q2-to-MAX4 header anomaly, Klipper's generated `SAVE_CONFIG` block, and mutable `saved_variables.cfg`; every other config change remains a hard blocker. The header anomaly exception requires the historical first line to be the Q2 header, the live first two lines to be the exact MAX4 comments, and every remaining functional pre-`SAVE_CONFIG` line to match exactly. Option 17 reports explicit config and external trust-gate verdicts. The external report distinguishes accepted timestamp-only drift from other metadata changes, canonicalizes package paths, and identifies the exact rejected path instead of returning an opaque failure. The old contract is preserved as historical evidence before schema 2 is captured atomically. The changed seal intentionally invalidates options 10-16, which must be rerun in order.
 
 ## Q2 firmware 1.1.2 captured-present path restore proof
 
@@ -117,6 +125,10 @@ Option 13 is the first controlled live restoration of a captured-present externa
 ## Q2 firmware 1.1.2 loaded runtime-path restore proofs
 
 Options 14 and 15 independently test the next two captured-present restore surfaces: stock Klipper extras and Moonraker components. Each requires Option 13 and every mapped external path to exactly match the sealed contract. The proof creates one uniquely identified hidden marker without a `.py` extension, verifies that marker is the only difference immediately before restoration, then restores only the selected directory with sealed `rsync --delete`. It does not reload Python or restart services. Klipper, Moonraker, QIDIClient, and Crowsnest must be active before and after, the restored target must exactly match the contract, and all existing config/service/boot-target/package guards must remain identical. Each target has its own PASS record and emergency rollback snapshot. For printer testing, run option 14 followed by option 8; only after both are clean, run option 15 followed by option 8.
+
+## Q2 firmware 1.1.2 QIDIClient unit-file restore proof
+
+Option 16 is the controlled proof for the captured-present `/etc/systemd/system/qidi-client.service` file. It requires both loaded runtime-directory proofs and every mapped external path to exactly match the sealed contract. The proof first requires the sealed unit file to end with a newline, then appends one uniquely identified comment to the live file and verifies the result byte-for-byte against an independently constructed expected proof file. It immediately restores the sealed stock unit file without running `systemctl daemon-reload` or restarting any service. The restored file and every mapped external path must exactly match the contract; Klipper, Moonraker, QIDIClient, and Crowsnest must remain active; `NeedDaemonReload` and every existing config/service/boot-target/package guard must remain identical. The captured `default.target` symlink remains untouched.
 
 ## What is Happier Hare?
 
@@ -164,6 +176,16 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
+| RC2.41 | Adds an explicit external refresh trust-gate report, distinguishes timestamp-only metadata from other metadata drift, and canonicalizes package paths so the final external blocker is reported precisely |
+| RC2.40 | Classifies Qidi's 1.1.2 comment-only Q2-to-MAX4 `printer.cfg` header anomaly with an exact narrow comparison; any functional pre-`SAVE_CONFIG` change still blocks refresh |
+| RC2.39 | Adds read-only cached-package payload verification for `printer.cfg`, accepting its stable section only when it matches a root-owned non-writable installed-version `qd-q2-system` `.deb` under `/var/cache/apt/archives` while preserving generated `SAVE_CONFIG` calibration state |
+| RC2.38 | Prevents Option 17 from reporting a live config as its own provenance candidate and adds an explicit config refresh trust-gate report with per-path acceptance/rejection reasons plus installed-package and live MD5 evidence |
+| RC2.37 | Makes Option 17 identify its exact AIO revision and automatically scan every changed active unowned config for provenance; `printer.cfg` source matching now compares the stable pre-`SAVE_CONFIG` section so calibration changes do not prevent source identification |
+| RC2.36 | Adds read-only source provenance for unowned active config drift, searching known Qidi runtime and backup trees for byte-identical copies with metadata and package ownership before any contract refresh is allowed |
+| RC2.35 | Classifies guarded config refresh drift: accepts only package-verified stock config updates, Klipper's generated `SAVE_CONFIG` state, and mutable `saved_variables.cfg`; adds config package provenance and stable-versus-generated `printer.cfg` reporting while preserving all other config drift as a hard blocker |
+| RC2.34 | Keeps option 17 blocked when the active config differs, but now reports each changed config path with sealed/live hashes, metadata, active-include status, complete checksum-backed rsync drift, and inventory drift so those changes can be classified safely |
+| RC2.33 | Adds option 17's guarded Q2 1.1.2 restore-contract refresh for verified `qd-q2-system` package upgrades, preserves the historical contract, introduces schema 2 external recovery semantics that exclude generated Python bytecode, and requires options 10-16 to be rerun for the new seal |
+| RC2.32 | Adds option 16's controlled Q2 1.1.2 QIDIClient unit-file restore proof, using one exact expected comment-only change, sealed immediate restoration, `NeedDaemonReload` verification, active runtime-service guards, and emergency rollback while leaving `default.target` untouched; Option 12 now separates content/structural drift from metadata-only drift and reports per-file provenance evidence |
 | RC2.31 | Adds independent controlled Q2 1.1.2 restore proofs for the loaded stock Klipper extras and Moonraker components directories, strengthens external-path comparisons with checksums, and adds harmless non-Python markers, immediate pre-delete safety gates, service-active verification, and emergency rollback |
 | RC2.30 | Adds option 13's controlled Q2 1.1.2 captured-present path restore proof, safely testing sealed restoration of `qidi-client.service.d` with an ignored marker, no daemon reload or service restart, emergency rollback, and unchanged-state verification |
 | RC2.29 | Adds option 12's read-only Q2 1.1.2 external restore audit, comparing every mapped captured-present and captured-absent path with the sealed contract and reporting exact future restore changes before any broader live restore is attempted |
@@ -211,7 +233,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 ## Known limitations
 
 - **Native Qidi Box humidity/dryer UI requires the Happier Hare patched HelixScreen zip.** Option 1 automatically uses the hosted Happier Hare release asset when available. `HAPPIER_HARE_ZIP_URL` and the layout-aware `~/helixscreen-pi-happier-hare.zip` remain available as overrides. Without the patched zip, use the macro buttons or Klipper console.
-- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for general mutating install/revert actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout, option 8 can run read-only diagnostics and restore-contract integrity checks, option 4 can run a dry-run Revert report plus guarded stock-baseline/restore-contract capture, options 9-13 can run staged compatibility/restore proofs, and options 14-15 can independently prove sealed restoration of the loaded Klipper extras and Moonraker components directories. Install, general real revert, addon, and repair paths remain blocked until the compatibility lane lands.
+- **Qidi Q2 firmware 1.1.2 is detected but not yet supported for general mutating install/revert actions.** AIO resolves the new `/home/qidi` + `qidi-client` layout, option 8 can run read-only diagnostics and restore-contract integrity checks, option 4 can run a dry-run Revert report plus guarded stock-baseline/restore-contract capture, options 9-16 can run staged compatibility/restore proofs, and option 17 can refresh a stale contract only after a verified stock-package upgrade. Install, general real revert, addon, and repair paths remain blocked until the compatibility lane lands.
 - **MMU gear calibration is required after a fresh install.**
 - **Camera streaming (Mainsail)** requires a USB camera connected to the printer.
 

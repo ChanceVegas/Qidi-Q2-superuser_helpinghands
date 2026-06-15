@@ -40,13 +40,15 @@ Plugins/                   ← Stock plugin reference. DO NOT MODIFY.
 ## Target Environment
 
 - Hardware: Qidi Q2 Pro 3D printer
-- OS: ARM Linux, user `mks`
+- OS: ARM Linux; legacy firmware uses `mks`, firmware 1.1.2 uses `/home/qidi`
 - Stack: Klipper + Moonraker + Happy Hare (MMU) + HelixScreen (LVGL UI) + Qidi Box (4-slot AMS)
 - Key paths on the printer:
   - `/home/mks/printer_data/config/` — Klipper config root
   - `/home/mks/mudstockbackups/` — AIO backup snapshots
   - `/home/mks/helixscreen/` — HelixScreen install dir
   - `/home/mks/Happy-Hare/` — Happy Hare MMU firmware
+  - `/home/qidi/printer_data/config/` — firmware 1.1.2 Klipper config root
+  - `/home/qidi/mudstockbackups/` — firmware 1.1.2 AIO backup/proof state
 
 ## Critical Rules
 
@@ -95,9 +97,25 @@ When `install_*` fetches a remote file, use the `fetch()` helper, not `curl` dir
 5) Idle Fan Shutdown                 (10m idle, temp-gated)
 6) Mainsail                          (web UI on port 100)
 7) About
-8) Run all verifiers
+8) Health Check / Run Verifiers
+9-16) Q2 1.1.2 staged compatibility and restore proofs
+17) Q2 1.1.2 guarded restore-contract refresh
 0) Exit
 ```
+
+Firmware 1.1.2 general install/revert mutations remain blocked. Its schema-2
+restore contract excludes generated `__pycache__/` and `*.pyc` files. Option 17
+may refresh a stale contract only when all meaningful drift is verified as an
+installed `qd-q2-system` package upgrade; the historical contract is preserved
+and options 10-16 must be rerun for the new seal. Option 17 identifies its
+running AIO revision, searches changed active unowned configs for provenance
+without treating the live file as its own source, and reports an explicit
+acceptance or rejection verdict for every config-tree change. A changed
+`printer.cfg` stable section is trusted only when it matches a cached
+installed-version `qd-q2-system` package payload or the exact known Qidi
+comment-only Q2-to-MAX4 header anomaly with all functional lines unchanged.
+External refresh rejection must print an explicit per-change trust verdict;
+timestamp-only metadata is accepted, while all other metadata remains blocked.
 
 Per-component uninstall options (BunnyBox-only / HelixScreen-only / Both) were removed in RC4. Revert to Backup is the single uninstall path and delegates to `uninstall_bunnybox()` and `uninstall_helixscreen()` internally before restoring from `_FIRST_STOCK`.
 
