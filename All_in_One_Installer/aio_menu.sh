@@ -2776,6 +2776,53 @@ report_q2_112_restore_contract() {
     return 0
 }
 
+report_q2_112_drift_file_evidence() {
+    local sealed="$1"
+    local live="$2"
+    local label="$3"
+    local value owner
+
+    warn "    Evidence: ${label}"
+    if [ -e "$sealed" ] || [ -L "$sealed" ]; then
+        value=$(sudo stat -c 'size=%s mtime=%y mode=%a owner=%u:%g' "$sealed" 2>/dev/null || printf 'stat unavailable')
+        info "      sealed: ${value}"
+        if [ -f "$sealed" ] && [ ! -L "$sealed" ]; then
+            info "      sealed sha256: $(file_sha256 "$sealed")"
+        elif [ -L "$sealed" ]; then
+            info "      sealed symlink: $(sudo readlink "$sealed" 2>/dev/null || printf 'unknown')"
+        fi
+    else
+        info "      sealed: absent"
+    fi
+
+    if [ -e "$live" ] || [ -L "$live" ]; then
+        value=$(sudo stat -c 'size=%s mtime=%y mode=%a owner=%u:%g' "$live" 2>/dev/null || printf 'stat unavailable')
+        info "      live:   ${value}"
+        if [ -f "$live" ] && [ ! -L "$live" ]; then
+            info "      live sha256:   $(file_sha256 "$live")"
+            if command -v file >/dev/null 2>&1; then
+                info "      live type: $(sudo file -b "$live" 2>/dev/null || printf 'unknown')"
+            fi
+        elif [ -L "$live" ]; then
+            info "      live symlink: $(sudo readlink "$live" 2>/dev/null || printf 'unknown')"
+        fi
+        owner=$(dpkg-query -S "$live" 2>/dev/null | head -n 1 || true)
+        if [ -n "$owner" ]; then
+            info "      package owner: ${owner}"
+        else
+            info "      package owner: none reported"
+        fi
+    else
+        info "      live: absent"
+    fi
+
+    case "$live" in
+        */__pycache__/*.pyc)
+            info "      classification hint: generated Python bytecode"
+            ;;
+    esac
+}
+
 report_q2_112_external_restore_audit() {
     banner "Q2 1.1.2 external restore audit (read-only)"
 
@@ -2792,7 +2839,8 @@ report_q2_112_external_restore_audit() {
     warn "This compares live external paths with the sealed stock contract."
     warn "It uses rsync --dry-run only; no files, packages, services, or boot targets are changed."
 
-    local captured kind mode uid gid path target source destination changes change code
+    local captured kind mode uid gid path target source destination changes change code relative
+    local evidence_sealed evidence_live
     local exact=0 drift=0 absent_ok=0 unexpected=0 missing=0 errors=0 shown total
     local path_content path_metadata content_total=0 metadata_total=0
     while IFS='|' read -r captured kind mode uid gid path target; do
@@ -2903,6 +2951,20 @@ report_q2_112_external_restore_audit() {
                     continue
                 fi
                 warn "    ${change}"
+                relative="${change#* }"
+                relative="${relative#"${relative%%[![:space:]]*}"}"
+                case "$kind" in
+                    directory)
+                        evidence_sealed="${source}/${relative}"
+                        evidence_live="${path}/${relative}"
+                        ;;
+                    file|symlink)
+                        evidence_sealed="$source"
+                        evidence_live="$path"
+                        ;;
+                esac
+                report_q2_112_drift_file_evidence \
+                    "$evidence_sealed" "$evidence_live" "$relative"
                 shown=$((shown + 1))
                 [ "$shown" -ge 8 ] && break
             done <<< "$changes"
@@ -6133,6 +6195,8 @@ ${C_BOLD}1.1.2 external restore audit:${C_RESET}
   - It uses checksum-backed rsync --dry-run --itemize-changes to report
     exactly what a future restore would replace or remove, separating
     content/structural drift from metadata-only drift.
+  - Content-changed items include sealed/live hashes, metadata, file type,
+    package ownership, and generated-bytecode classification hints.
   - It does not write files or change packages, services, or boot targets.
 
 ${C_BOLD}1.1.2 captured-present path restore proof:${C_RESET}

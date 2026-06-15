@@ -110,7 +110,7 @@ Option 11 is the first deliberately constrained live use of the sealed restore c
 
 ## Q2 firmware 1.1.2 external restore audit
 
-Option 12 is the read-only gate before testing restoration of captured-present external paths such as Klipper extras and Moonraker components. It compares each mapped live path with its sealed contract source using checksum-backed `rsync --dry-run --itemize-changes`, including `--delete` semantics for captured directories. Captured-absent paths are checked for newly present content. The report separately classifies content/structural changes and metadata-only changes, then reports exact matches, drift, missing stock paths, unexpected paths, and audit errors without changing the printer. Any content/structural drift blocks restore and contract recapture until it is classified.
+Option 12 is the read-only gate before testing restoration of captured-present external paths such as Klipper extras and Moonraker components. It compares each mapped live path with its sealed contract source using checksum-backed `rsync --dry-run --itemize-changes`, including `--delete` semantics for captured directories. Captured-absent paths are checked for newly present content. The report separately classifies content/structural changes and metadata-only changes. For each content-changed item it reports sealed/live hashes, sizes, timestamps, modes, owners, live file type, Debian package ownership, and generated-bytecode hints, then summarizes exact matches, drift, missing stock paths, unexpected paths, and audit errors without changing the printer. Any content/structural drift blocks restore and contract recapture until it is classified.
 
 ## Q2 firmware 1.1.2 captured-present path restore proof
 
@@ -170,7 +170,7 @@ After installing BunnyBox (option 1), the following one-tap drying macros are av
 
 | Version | Notable additions |
 |---------|------------------|
-| RC2.32 | Adds option 16's controlled Q2 1.1.2 QIDIClient unit-file restore proof, using one exact expected comment-only change, sealed immediate restoration, `NeedDaemonReload` verification, active runtime-service guards, and emergency rollback while leaving `default.target` untouched; Option 12 now separates content/structural drift from metadata-only drift |
+| RC2.32 | Adds option 16's controlled Q2 1.1.2 QIDIClient unit-file restore proof, using one exact expected comment-only change, sealed immediate restoration, `NeedDaemonReload` verification, active runtime-service guards, and emergency rollback while leaving `default.target` untouched; Option 12 now separates content/structural drift from metadata-only drift and reports per-file provenance evidence |
 | RC2.31 | Adds independent controlled Q2 1.1.2 restore proofs for the loaded stock Klipper extras and Moonraker components directories, strengthens external-path comparisons with checksums, and adds harmless non-Python markers, immediate pre-delete safety gates, service-active verification, and emergency rollback |
 | RC2.30 | Adds option 13's controlled Q2 1.1.2 captured-present path restore proof, safely testing sealed restoration of `qidi-client.service.d` with an ignored marker, no daemon reload or service restart, emergency rollback, and unchanged-state verification |
 | RC2.29 | Adds option 12's read-only Q2 1.1.2 external restore audit, comparing every mapped captured-present and captured-absent path with the sealed contract and reporting exact future restore changes before any broader live restore is attempted |
