@@ -1,5 +1,21 @@
 # Session Handoff — Qidi Q2 Superuser AIO
 
+## Current 1.1.2 Compatibility Lane
+
+The historical RC1 notes below are retained for context, but the active work is
+RC2.33 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
+
+- General install and real revert remain blocked on firmware 1.1.2.
+- Options 9-16 provide staged compatibility and restore proofs.
+- Qidi upgraded the authoritative `qd-q2-system` package from
+  `01.01.02.01` to `01.01.02.02` after the original contract capture.
+- Option 17 now performs a guarded schema-2 contract refresh only when every
+  meaningful changed file is owned by that upgraded package and matches its
+  installed checksum record.
+- Schema 2 excludes generated `__pycache__/` and `*.pyc` files from restore
+  authority, preserves the previous contract as historical evidence, and
+  intentionally requires options 10-16 to be rerun for the new seal.
+
 ## Project
 
 **Repo:** `ChanceVegas/Qidi-Q2-superuser_helpinghands`

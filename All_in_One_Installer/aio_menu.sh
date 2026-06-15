@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.32'
+AIO_VERSION='RC2.33'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -147,6 +147,8 @@ Q2_112_PROBE_INCLUDE='[include aio_q2_112_compat_probe.cfg]'
 Q2_112_CONTRACT_DIR="${BACKUP_ROOT}/_Q2_112_RESTORE_CONTRACT"
 Q2_112_CONTRACT_PATH_STATES="${Q2_112_CONTRACT_DIR}/path_states"
 Q2_112_CONTRACT_SERVICES="${Q2_112_CONTRACT_DIR}/services"
+Q2_112_CONTRACT_SCHEMA_CURRENT=2
+Q2_112_STOCK_SYSTEM_PACKAGE='qd-q2-system'
 Q2_112_REHEARSAL_DIR="${BACKUP_ROOT}/_Q2_112_RESTORE_REHEARSAL"
 Q2_112_LIVE_PROOF_DIR="${BACKUP_ROOT}/_Q2_112_LIVE_RESTORE_PROOF"
 Q2_112_LIVE_PROOF_CFG="${CONFIG_DIR}/aio_q2_112_live_restore_proof.cfg"
@@ -2506,6 +2508,17 @@ verify_q2_112_contract_tree_inventory() {
     ' sh "$tree" "$inventory"
 }
 
+q2_112_contract_schema() {
+    local contract_dir="${1:-$Q2_112_CONTRACT_DIR}"
+
+    sed -n 's/^CONTRACT_SCHEMA=//p' "${contract_dir}/manifest" 2>/dev/null | head -n 1
+}
+
+q2_112_contract_is_restore_authoritative() {
+    validate_q2_112_restore_contract || return 1
+    [ "$(q2_112_contract_schema)" = "$Q2_112_CONTRACT_SCHEMA_CURRENT" ]
+}
+
 validate_q2_112_restore_contract() {
     local contract_dir="${1:-$Q2_112_CONTRACT_DIR}"
     local manifest="${contract_dir}/manifest"
@@ -2533,7 +2546,7 @@ validate_q2_112_restore_contract() {
     [ -s "$contract_hashes" ] || return 1
     [ -d "$config_tree" ] || return 1
     [ -d "$external_tree" ] || return 1
-    grep -Fqx 'CONTRACT_SCHEMA=1' "$manifest" 2>/dev/null || return 1
+    grep -Eq '^CONTRACT_SCHEMA=(1|2)$' "$manifest" 2>/dev/null || return 1
     grep -Fqx 'AIO_LAYOUT=q2_112' "$manifest" 2>/dev/null || return 1
     grep -Fqx "CONFIG_DIR=${CONFIG_DIR}" "$manifest" 2>/dev/null || return 1
     [ -s "$path_states" ] || return 1
@@ -2550,6 +2563,12 @@ validate_q2_112_restore_contract() {
     fi
     verify_q2_112_contract_tree_inventory "$config_tree" "$config_inventory" || return 1
     verify_q2_112_contract_tree_inventory "$external_tree" "$external_inventory" || return 1
+    if grep -Fqx "CONTRACT_SCHEMA=${Q2_112_CONTRACT_SCHEMA_CURRENT}" "$manifest" 2>/dev/null && \
+       sudo find "$external_tree" \
+           \( -type d -name __pycache__ -o -type f -name '*.pyc' \) \
+           -print -quit 2>/dev/null | grep -q .; then
+        return 1
+    fi
 
     local rel
     for rel in printer.cfg box.cfg MCU_ID.cfg crowsnest.conf timelapse.cfg klipper-macros-qd; do
@@ -2561,6 +2580,8 @@ validate_q2_112_restore_contract() {
 }
 
 capture_q2_112_restore_contract() {
+    local skip_confirmation="${1:-false}"
+
     banner "Capture 1.1.2 restore contract"
 
     if [ "$AIO_LAYOUT" != "q2_112" ]; then
@@ -2571,10 +2592,15 @@ capture_q2_112_restore_contract() {
     q2_112_aio_artifacts_absent || return 1
     q2_112_baseline_safe || return 1
 
-    if validate_q2_112_restore_contract; then
+    if q2_112_contract_is_restore_authoritative; then
         ok "A complete, verified 1.1.2 restore contract already exists."
         info "Contract: ${Q2_112_CONTRACT_DIR}"
         return 0
+    fi
+    if validate_q2_112_restore_contract; then
+        warn "The existing restore contract uses legacy schema $(q2_112_contract_schema)."
+        info "Run option 17 to refresh it only after option 12 classifies all drift."
+        return 1
     fi
 
     warn "This captures recovery material for every currently mapped Option 1 mutation surface:"
@@ -2583,7 +2609,8 @@ capture_q2_112_restore_contract() {
     warn "  It also records the installed Debian package inventory for later comparison."
     warn "It records both present and absent paths so a future restore can remove only AIO additions."
     warn "It does not modify active printer configs or service states."
-    if ! confirm "Capture the guarded 1.1.2 restore contract now?"; then
+    if [ "$skip_confirmation" != "true" ] && \
+       ! confirm "Capture the guarded 1.1.2 restore contract now?"; then
         info "Restore contract capture cancelled."
         return 1
     fi
@@ -2617,7 +2644,9 @@ capture_q2_112_restore_contract() {
     while IFS= read -r path; do
         q2_112_contract_path_state_line "$path" | sudo tee -a "${staging}/path_states" >/dev/null
         if [ -e "$path" ] || [ -L "$path" ]; then
-            if ! sudo rsync -aHAX --numeric-ids --relative "$path" "${staging}/external/"; then
+            if ! sudo rsync -aHAX --numeric-ids --relative \
+                --exclude='__pycache__/' --exclude='*.pyc' \
+                "$path" "${staging}/external/"; then
                 err "Could not capture mapped path: ${path}"
                 sudo rm -rf "$staging"
                 return 1
@@ -2639,7 +2668,7 @@ capture_q2_112_restore_contract() {
 
     default_target=$(systemctl get-default 2>/dev/null || printf 'unknown')
     if ! sudo tee "${staging}/manifest" >/dev/null <<EOF
-CONTRACT_SCHEMA=1
+CONTRACT_SCHEMA=${Q2_112_CONTRACT_SCHEMA_CURRENT}
 AIO_VERSION=${AIO_VERSION}
 AIO_LAYOUT=${AIO_LAYOUT}
 AIO_HOME=${AIO_HOME}
@@ -2713,6 +2742,12 @@ report_q2_112_restore_contract() {
     fi
 
     ok "Restore contract integrity verified: ${Q2_112_CONTRACT_DIR}"
+    info "Contract schema: $(q2_112_contract_schema) (current restore-authoritative schema: ${Q2_112_CONTRACT_SCHEMA_CURRENT})"
+    if q2_112_contract_is_restore_authoritative; then
+        ok "Restore contract is current and restore-authoritative"
+    else
+        warn "Restore contract is historical only; use option 17 after classifying drift"
+    fi
     info "Exact config restore source: ${Q2_112_CONTRACT_DIR}/config"
     info "Config restore would use rsync -aHAX --numeric-ids --delete"
     info "Captured Debian package count: $(wc -l < "${Q2_112_CONTRACT_DIR}/packages" | tr -d ' ')"
@@ -2781,6 +2816,7 @@ report_q2_112_drift_file_evidence() {
     local live="$2"
     local label="$3"
     local value owner package captured_package live_package verify_line md5_record
+    local expected_md5 actual_md5
 
     warn "    Evidence: ${label}"
     if [ -e "$sealed" ] || [ -L "$sealed" ]; then
@@ -2822,7 +2858,13 @@ report_q2_112_drift_file_evidence() {
                 md5_record=$(sudo grep -F "  ${live#/}" "/var/lib/dpkg/info/${package}.md5sums" \
                     2>/dev/null | head -n 1 || true)
                 if [ -n "$md5_record" ]; then
-                    info "      dpkg verify: live file matches installed package record"
+                    expected_md5="${md5_record%% *}"
+                    actual_md5=$(sudo md5sum "$live" 2>/dev/null | awk '{print $1}')
+                    if [ -n "$actual_md5" ] && [ "$actual_md5" = "$expected_md5" ]; then
+                        info "      dpkg verify: live checksum matches installed package record"
+                    else
+                        warn "      dpkg verify: live checksum differs from installed package record"
+                    fi
                 else
                     info "      dpkg verify: no per-file md5 record reported"
                 fi
@@ -2861,6 +2903,11 @@ report_q2_112_external_restore_audit() {
     local evidence_sealed evidence_live
     local exact=0 drift=0 absent_ok=0 unexpected=0 missing=0 errors=0 shown total
     local path_content path_metadata content_total=0 metadata_total=0
+    local -a rsync_excludes=()
+    if [ "$(q2_112_contract_schema)" = "$Q2_112_CONTRACT_SCHEMA_CURRENT" ]; then
+        rsync_excludes=(--exclude='__pycache__/' --exclude='*.pyc')
+        info "Schema ${Q2_112_CONTRACT_SCHEMA_CURRENT} ignores generated Python bytecode."
+    fi
     while IFS='|' read -r captured kind mode uid gid path target; do
         source="${Q2_112_CONTRACT_DIR}/external${path}"
         if [ "$captured" = "absent" ]; then
@@ -2894,6 +2941,7 @@ report_q2_112_external_restore_audit() {
                     continue
                 fi
                 if ! changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+                    "${rsync_excludes[@]}" \
                     "${source}/" "${path}/" 2>&1); then
                     err "Could not audit captured directory: ${path}"
                     errors=$((errors + 1))
@@ -3026,6 +3074,10 @@ report_q2_112_external_restore_audit() {
         if [ "$content_total" -gt 0 ]; then
             warn "The sealed contract is stale or live stock content changed."
             warn "Do not restore from or recapture the contract until content drift is classified."
+            if q2_112_refresh_drift_is_trusted; then
+                ok "All content drift is limited to a verified ${Q2_112_STOCK_SYSTEM_PACKAGE} upgrade and generated bytecode."
+                info "Option 17 may now perform the guarded restore-contract refresh."
+            fi
         fi
         warn "Do not enable general real revert until every reported external-path change is classified."
     fi
@@ -3037,9 +3089,41 @@ menu_q2_112_external_restore_audit() {
     press_enter
 }
 
-q2_112_external_paths_match_contract() {
-    local captured kind mode uid gid path target source destination changes
+q2_112_stock_package_upgrade_is_verified() {
+    local captured_package live_package
 
+    captured_package=$(grep -F "${Q2_112_STOCK_SYSTEM_PACKAGE}|" \
+        "${Q2_112_CONTRACT_DIR}/packages" 2>/dev/null | head -n 1 || true)
+    live_package=$(dpkg-query -W -f='${binary:Package}|${Version}|${db:Status-Abbrev}\n' \
+        "$Q2_112_STOCK_SYSTEM_PACKAGE" 2>/dev/null | head -n 1 || true)
+    [ -n "$captured_package" ] && [ -n "$live_package" ] || return 1
+    [ "$captured_package" != "$live_package" ] || return 1
+    case "$live_package" in
+        "${Q2_112_STOCK_SYSTEM_PACKAGE}|"*"|ii") ;;
+        *) return 1 ;;
+    esac
+
+    return 0
+}
+
+q2_112_live_file_matches_stock_package_record() {
+    local live="$1"
+    local expected actual
+
+    [ -f "$live" ] && [ ! -L "$live" ] || return 1
+    expected=$(sudo awk -v path="${live#/}" \
+        '$2 == path { print $1; exit }' \
+        "/var/lib/dpkg/info/${Q2_112_STOCK_SYSTEM_PACKAGE}.md5sums" 2>/dev/null || true)
+    [ -n "$expected" ] || return 1
+    actual=$(sudo md5sum "$live" 2>/dev/null | awk '{print $1}')
+    [ -n "$actual" ] && [ "$actual" = "$expected" ]
+}
+
+q2_112_refresh_drift_is_trusted() {
+    local captured kind mode uid gid path target source destination changes change code relative live
+    local owner package
+
+    q2_112_stock_package_upgrade_is_verified || return 1
     while IFS='|' read -r captured kind mode uid gid path target; do
         source="${Q2_112_CONTRACT_DIR}/external${path}"
         if [ "$captured" = "absent" ]; then
@@ -3054,6 +3138,168 @@ q2_112_external_paths_match_contract() {
                 [ -d "$path" ] && [ ! -L "$path" ] || return 1
                 [ -d "$source" ] && [ ! -L "$source" ] || return 1
                 changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+                    "${source}/" "${path}/" 2>/dev/null) || return 1
+                ;;
+            file|symlink)
+                destination=$(dirname "$path")
+                changes=$(sudo rsync -aHAX --numeric-ids --checksum --dry-run --itemize-changes \
+                    "$source" "${destination}/" 2>/dev/null) || return 1
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+
+        while IFS= read -r change; do
+            [ -n "$change" ] || continue
+            code="${change%% *}"
+            if [ "${code:0:1}" = "." ] && [ "${code:2:2}" = ".." ]; then
+                case "$code" in
+                    .d..t......|.f..t......|.L..t......) continue ;;
+                    *) return 1 ;;
+                esac
+            fi
+            relative="${change#* }"
+            relative="${relative#"${relative%%[![:space:]]*}"}"
+            case "$relative" in
+                __pycache__/*.pyc|*/__pycache__/*.pyc)
+                    continue
+                    ;;
+            esac
+            [ "$kind" = "directory" ] || return 1
+            live="${path}/${relative}"
+            [ -f "${source}/${relative}" ] && [ ! -L "${source}/${relative}" ] || return 1
+            [ -f "$live" ] && [ ! -L "$live" ] || return 1
+            owner=$(dpkg-query -S "$live" 2>/dev/null | head -n 1 || true)
+            [ -n "$owner" ] || return 1
+            package="${owner%%:*}"
+            [ "$package" = "$Q2_112_STOCK_SYSTEM_PACKAGE" ] || return 1
+            q2_112_live_file_matches_stock_package_record "$live" || return 1
+        done <<< "$changes"
+    done < "$Q2_112_CONTRACT_PATH_STATES"
+    return 0
+}
+
+refresh_q2_112_restore_contract() {
+    banner "Q2 1.1.2 guarded restore-contract refresh"
+
+    if [ "$AIO_LAYOUT" != "q2_112" ]; then
+        err "The restore-contract refresh is only available on Q2 firmware 1.1.2 / qidi layout."
+        return 1
+    fi
+    if ! validate_q2_112_restore_contract; then
+        err "No complete, verified historical restore contract is available."
+        return 1
+    fi
+    q2_112_stock_essentials_present || return 1
+    q2_112_aio_artifacts_absent || return 1
+    q2_112_baseline_safe || return 1
+    if ! verify_q2_112_active_config_matches_contract; then
+        err "Active config no longer exactly matches the sealed contract."
+        warn "Refusing to refresh over unrelated config changes."
+        return 1
+    fi
+    if ! q2_112_runtime_services_active; then
+        err "Klipper, Moonraker, QIDIClient, and Crowsnest must all be active."
+        return 1
+    fi
+    if ! q2_112_refresh_drift_is_trusted; then
+        err "External drift is not limited to a verified ${Q2_112_STOCK_SYSTEM_PACKAGE} upgrade and generated bytecode."
+        info "Run option 12 and classify every content change before refreshing."
+        return 1
+    fi
+
+    local captured_package live_package archive failed_refresh timestamp
+    captured_package=$(grep -F "${Q2_112_STOCK_SYSTEM_PACKAGE}|" \
+        "${Q2_112_CONTRACT_DIR}/packages" 2>/dev/null | head -n 1 || true)
+    live_package=$(dpkg-query -W -f='${binary:Package}|${Version}|${db:Status-Abbrev}\n' \
+        "$Q2_112_STOCK_SYSTEM_PACKAGE" 2>/dev/null | head -n 1 || true)
+
+    warn "The existing contract is intact historical evidence, but it is stale."
+    warn "Verified stock package transition:"
+    warn "  captured: ${captured_package}"
+    warn "  live:     ${live_package}"
+    warn "The refresh will preserve the old contract, atomically capture schema"
+    warn "${Q2_112_CONTRACT_SCHEMA_CURRENT}, and exclude generated __pycache__/ and *.pyc files."
+    warn "All prior restore-proof PASS records will become invalid for the new seal."
+    warn "No active config, runtime path, package, service, or boot target will be changed."
+    if ! confirm "Refresh the sealed stock restore contract now?"; then
+        info "Restore-contract refresh cancelled."
+        return 1
+    fi
+    if ! q2_112_refresh_drift_is_trusted || ! q2_112_runtime_services_active; then
+        err "Trusted stock state changed while awaiting confirmation."
+        return 1
+    fi
+
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    archive="${Q2_112_CONTRACT_DIR}.historical-schema$(q2_112_contract_schema).${timestamp}"
+    if ! sudo mv "$Q2_112_CONTRACT_DIR" "$archive"; then
+        err "Could not preserve the historical restore contract."
+        return 1
+    fi
+    ok "Historical contract preserved: ${archive}"
+
+    if ! capture_q2_112_restore_contract true; then
+        failed_refresh="${Q2_112_CONTRACT_DIR}.failed-refresh.${timestamp}"
+        if [ -e "$Q2_112_CONTRACT_DIR" ] || [ -L "$Q2_112_CONTRACT_DIR" ]; then
+            sudo mv "$Q2_112_CONTRACT_DIR" "$failed_refresh" || true
+            warn "Failed refresh state preserved: ${failed_refresh}"
+        fi
+        if sudo mv "$archive" "$Q2_112_CONTRACT_DIR"; then
+            ok "Historical contract restored after refresh failure."
+        else
+            err "Could not restore the historical contract; inspect ${archive}"
+        fi
+        return 1
+    fi
+    if ! q2_112_contract_is_restore_authoritative; then
+        err "Refreshed contract did not validate as current schema."
+        failed_refresh="${Q2_112_CONTRACT_DIR}.failed-refresh.${timestamp}"
+        if [ -e "$Q2_112_CONTRACT_DIR" ] || [ -L "$Q2_112_CONTRACT_DIR" ]; then
+            sudo mv "$Q2_112_CONTRACT_DIR" "$failed_refresh" || true
+            warn "Invalid refreshed contract preserved: ${failed_refresh}"
+        fi
+        if sudo mv "$archive" "$Q2_112_CONTRACT_DIR"; then
+            ok "Historical contract restored after validation failure."
+        else
+            err "Could not restore the historical contract; inspect ${archive}"
+        fi
+        return 1
+    fi
+
+    ok "Schema ${Q2_112_CONTRACT_SCHEMA_CURRENT} restore contract captured from verified current stock state."
+    ok "Generated Python bytecode is no longer restore-authoritative."
+    warn "Options 10 through 16 must be rerun in order for the new contract seal."
+    info "Run option 8, then option 10 to begin the new proof sequence."
+    info "Full install and general real revert remain blocked."
+    return 0
+}
+
+menu_q2_112_restore_contract_refresh() {
+    refresh_q2_112_restore_contract
+    press_enter
+}
+
+q2_112_external_paths_match_contract() {
+    local captured kind mode uid gid path target source destination changes
+
+    q2_112_contract_is_restore_authoritative || return 1
+    while IFS='|' read -r captured kind mode uid gid path target; do
+        source="${Q2_112_CONTRACT_DIR}/external${path}"
+        if [ "$captured" = "absent" ]; then
+            [ ! -e "$path" ] && [ ! -L "$path" ] || return 1
+            continue
+        fi
+        [ -e "$path" ] || [ -L "$path" ] || return 1
+        [ -e "$source" ] || [ -L "$source" ] || return 1
+
+        case "$kind" in
+            directory)
+                [ -d "$path" ] && [ ! -L "$path" ] || return 1
+                [ -d "$source" ] && [ ! -L "$source" ] || return 1
+                changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+                    --exclude='__pycache__/' --exclude='*.pyc' \
                     "${source}/" "${path}/" 2>/dev/null) || return 1
                 ;;
             file)
@@ -3132,7 +3378,7 @@ write_q2_112_path_restore_plan() {
         fi
 
         source="${Q2_112_CONTRACT_DIR}/external${path}"
-        printf 'RESTORE|%s|%s|mode=%s|uid=%s|gid=%s|source=%s|target=%s\n' \
+        printf 'RESTORE|%s|%s|mode=%s|uid=%s|gid=%s|source=%s|target=%s|exclude=__pycache__,*.pyc\n' \
             "$kind" "$path" "$mode" "$uid" "$gid" "$source" "$target"
     done < "$Q2_112_CONTRACT_PATH_STATES" | sudo tee -a "$output" >/dev/null
 }
@@ -3164,7 +3410,7 @@ q2_112_restore_rehearsal_passed() {
     local after_dir="${Q2_112_REHEARSAL_DIR}/checks/after"
 
     [ -f "$pass_file" ] || return 1
-    validate_q2_112_restore_contract || return 1
+    q2_112_contract_is_restore_authoritative || return 1
     expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
     current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
     [ -n "$expected_seal" ] && [ "$expected_seal" = "$current_seal" ] || return 1
@@ -3208,9 +3454,9 @@ run_q2_112_restore_rehearsal() {
         err "The restore rehearsal is only available on Q2 firmware 1.1.2 / qidi layout."
         return 1
     fi
-    if ! validate_q2_112_restore_contract; then
-        err "No complete, verified restore contract is available."
-        info "Run option 4 to capture and validate the restore contract first."
+    if ! q2_112_contract_is_restore_authoritative; then
+        err "No current, restore-authoritative schema ${Q2_112_CONTRACT_SCHEMA_CURRENT} contract is available."
+        info "Run option 12, then option 17 only after every content change is classified."
         return 1
     fi
 
@@ -3397,7 +3643,7 @@ q2_112_live_restore_proof_passed() {
     local after_dir="${Q2_112_LIVE_PROOF_DIR}/checks/after"
 
     [ -f "$pass_file" ] || return 1
-    validate_q2_112_restore_contract || return 1
+    q2_112_contract_is_restore_authoritative || return 1
     q2_112_restore_rehearsal_passed || return 1
     expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
     current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
@@ -3414,8 +3660,8 @@ run_q2_112_live_restore_proof() {
         err "The controlled live restore proof is only available on Q2 firmware 1.1.2 / qidi layout."
         return 1
     fi
-    if ! validate_q2_112_restore_contract; then
-        err "No complete, verified restore contract is available."
+    if ! q2_112_contract_is_restore_authoritative; then
+        err "No current, restore-authoritative schema ${Q2_112_CONTRACT_SCHEMA_CURRENT} contract is available."
         return 1
     fi
     if ! q2_112_restore_rehearsal_passed; then
@@ -3616,7 +3862,7 @@ q2_112_present_path_restore_proof_passed() {
     local after_dir="${Q2_112_PRESENT_PROOF_DIR}/checks/after"
 
     [ -f "$pass_file" ] || return 1
-    validate_q2_112_restore_contract || return 1
+    q2_112_contract_is_restore_authoritative || return 1
     q2_112_live_restore_proof_passed || return 1
     expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
     current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
@@ -3632,8 +3878,8 @@ run_q2_112_present_path_restore_proof() {
         err "This proof is only available on Q2 firmware 1.1.2 with qidi-client."
         return 1
     fi
-    if ! validate_q2_112_restore_contract; then
-        err "No complete, verified restore contract is available."
+    if ! q2_112_contract_is_restore_authoritative; then
+        err "No current, restore-authoritative contract is available."
         return 1
     fi
     if ! q2_112_restore_rehearsal_passed || ! q2_112_live_restore_proof_passed; then
@@ -3864,7 +4110,7 @@ q2_112_runtime_path_restore_proof_passed() {
     local after_dir="${proof_dir}/checks/after"
 
     [ -f "$pass_file" ] || return 1
-    validate_q2_112_restore_contract || return 1
+    q2_112_contract_is_restore_authoritative || return 1
     q2_112_present_path_restore_proof_passed || return 1
     expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
     current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
@@ -3892,7 +4138,7 @@ run_q2_112_runtime_path_restore_proof() {
         err "This proof is only available on Q2 firmware 1.1.2 with qidi-client."
         return 1
     fi
-    if ! validate_q2_112_restore_contract || ! q2_112_present_path_restore_proof_passed; then
+    if ! q2_112_contract_is_restore_authoritative || ! q2_112_present_path_restore_proof_passed; then
         err "The verified contract and captured-present systemd proof must pass first."
         return 1
     fi
@@ -3963,7 +4209,9 @@ run_q2_112_runtime_path_restore_proof() {
         return 1
     fi
     changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
-        --omit-dir-times --exclude="/${marker_name}" "${source}/" "${target}/" 2>/dev/null) || {
+        --omit-dir-times --exclude="/${marker_name}" \
+        --exclude='__pycache__/' --exclude='*.pyc' \
+        "${source}/" "${target}/" 2>/dev/null) || {
         err "Could not verify runtime target safety immediately before restore."
         remove_q2_112_runtime_proof_marker "$marker" "$proof_token" || \
             warn "The marker was left for inspection: ${marker}"
@@ -3984,7 +4232,9 @@ run_q2_112_runtime_path_restore_proof() {
     ok "Marker is the only target difference; all guarded services remain active"
 
     banner "Executing sealed runtime-directory restore"
-    if ! sudo rsync -aHAX --numeric-ids --checksum --delete "${source}/" "${target}/"; then
+    if ! sudo rsync -aHAX --numeric-ids --checksum --delete \
+        --exclude='__pycache__/' --exclude='*.pyc' \
+        "${source}/" "${target}/"; then
         err "Contract-backed runtime-directory restore failed."
         rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
         return 1
@@ -3995,6 +4245,7 @@ run_q2_112_runtime_path_restore_proof() {
         return 1
     fi
     changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete --dry-run --itemize-changes \
+        --exclude='__pycache__/' --exclude='*.pyc' \
         "${source}/" "${target}/" 2>/dev/null) || {
         err "Could not verify restored runtime target against the sealed contract."
         rollback_q2_112_runtime_path_restore_proof "$proof_dir" "$target"
@@ -4112,7 +4363,7 @@ q2_112_unit_file_restore_proof_passed() {
     local after_dir="${Q2_112_UNIT_FILE_PROOF_DIR}/checks/after"
 
     [ -f "$pass_file" ] || return 1
-    validate_q2_112_restore_contract || return 1
+    q2_112_contract_is_restore_authoritative || return 1
     q2_112_runtime_path_proofs_passed || return 1
     expected_seal=$(sed -n 's/^CONTRACT_SEAL_SHA256=//p' "$pass_file" 2>/dev/null | head -n 1)
     current_seal=$(file_sha256 "${Q2_112_CONTRACT_DIR}/contract.sha256")
@@ -4129,7 +4380,7 @@ run_q2_112_unit_file_restore_proof() {
         err "This proof is only available on Q2 firmware 1.1.2 with qidi-client."
         return 1
     fi
-    if ! validate_q2_112_restore_contract || ! q2_112_runtime_path_proofs_passed; then
+    if ! q2_112_contract_is_restore_authoritative || ! q2_112_runtime_path_proofs_passed; then
         err "The verified contract and both loaded runtime-path proofs must pass first."
         return 1
     fi
@@ -4273,8 +4524,12 @@ menu_q2_112_unit_file_restore_proof() {
 offer_q2_112_restore_contract_capture() {
     [ "$AIO_LAYOUT" = "q2_112" ] || return 0
 
-    if validate_q2_112_restore_contract; then
+    if q2_112_contract_is_restore_authoritative; then
         ok "Verified 1.1.2 restore contract is ready."
+        return 0
+    fi
+    if validate_q2_112_restore_contract; then
+        warn "Verified historical restore contract requires option 12 classification and option 17 refresh."
         return 0
     fi
     if capture_q2_112_restore_contract; then
@@ -5437,8 +5692,11 @@ run_readonly_diagnostics() {
     else
         info "1.1.2 compatibility probe not installed"
     fi
-    if validate_q2_112_restore_contract; then
-        ok "Verified 1.1.2 restore contract is ready"
+    if q2_112_contract_is_restore_authoritative; then
+        ok "Verified schema ${Q2_112_CONTRACT_SCHEMA_CURRENT} restore contract is restore-authoritative"
+    elif validate_q2_112_restore_contract; then
+        warn "Verified historical restore contract is not restore-authoritative"
+        info "Run option 12, then option 17 only after all drift is classified"
     else
         warn "Verified 1.1.2 restore contract is not ready"
     fi
@@ -6176,6 +6434,8 @@ ${C_BOLD}1.1.2 restore contract:${C_RESET}
     Moonraker components, mapped display/runtime and system integration
     paths, their present/absent state, file hashes, metadata, symlink
     targets, service states, default boot target, and Debian package inventory.
+  - Schema ${Q2_112_CONTRACT_SCHEMA_CURRENT} excludes generated __pycache__/
+    and *.pyc files from external restore authority.
   - Option 4 previews the exact contract-backed restore plan. Option 8
     verifies contract integrity without modifying active printer state.
   - Full install and general real revert remain blocked while the
@@ -6245,6 +6505,16 @@ ${C_BOLD}1.1.2 QIDIClient unit-file restore proof:${C_RESET}
   - It does not run daemon-reload or restart services. NeedDaemonReload,
     all guarded runtime/service/config/package state, and default.target
     must remain unchanged.
+
+${C_BOLD}1.1.2 guarded restore-contract refresh:${C_RESET}
+  - Option 17 is available only when option 12 proves every meaningful
+    content change came from a verified ${Q2_112_STOCK_SYSTEM_PACKAGE}
+    package upgrade and all remaining content drift is generated bytecode.
+  - It preserves the old sealed contract as historical evidence, captures
+    schema ${Q2_112_CONTRACT_SCHEMA_CURRENT} atomically, and excludes
+    __pycache__/ and *.pyc files from restore authority.
+  - The new contract seal intentionally invalidates every earlier proof;
+    options 10 through 16 must then be rerun in order.
 
 ${C_BOLD}What it can uninstall:${C_RESET}
   - 'Revert to Backup' is the supported full restore path.
@@ -6387,6 +6657,7 @@ draw_menu() {
     printf '  %s14)%s 1.1.2 Klipper Extras Restore Proof    (controlled runtime path)\n' "$C_CYAN" "$C_RESET"
     printf '  %s15)%s 1.1.2 Moonraker Components Proof      (controlled runtime path)\n' "$C_CYAN" "$C_RESET"
     printf '  %s16)%s 1.1.2 QIDIClient Unit Restore Proof    (controlled service file)\n' "$C_CYAN" "$C_RESET"
+    printf '  %s17)%s 1.1.2 Restore Contract Refresh         (guarded stock-package refresh)\n' "$C_CYAN" "$C_RESET"
     printf '   %s0)%s Exit\n'                                                    "$C_CYAN" "$C_RESET"
     printf '%s============================================%s\n' "$C_BOLD$C_MAGENTA" "$C_RESET"
     printf '%sEnter selection:%s ' "$C_BOLD" "$C_RESET"
@@ -6481,6 +6752,7 @@ main_loop() {
             14) menu_q2_112_klipper_extras_restore_proof ;;
             15) menu_q2_112_moonraker_components_restore_proof ;;
             16) menu_q2_112_unit_file_restore_proof ;;
+            17) menu_q2_112_restore_contract_refresh ;;
             0|q|Q|exit) info "Bye."; exit 0 ;;
             *) err "Invalid selection: '$choice'"; sleep 1 ;;
         esac
