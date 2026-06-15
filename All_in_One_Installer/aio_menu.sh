@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.36'
+AIO_VERSION='RC2.37'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -3231,6 +3231,7 @@ q2_112_refresh_drift_is_trusted() {
 
 refresh_q2_112_restore_contract() {
     banner "Q2 1.1.2 guarded restore-contract refresh"
+    info "Running AIO ${AIO_VERSION} guarded refresh diagnostics"
 
     if [ "$AIO_LAYOUT" != "q2_112" ]; then
         err "The restore-contract refresh is only available on Q2 firmware 1.1.2 / qidi layout."
@@ -3672,7 +3673,8 @@ report_q2_112_printer_cfg_stable_drift() {
 
 report_q2_112_identical_config_sources() {
     local live="$1"
-    local live_hash basename candidate candidate_hash value owner found=false
+    local live_hash live_stable_hash basename candidate candidate_hash candidate_stable_hash
+    local value owner found=false
     local root
     local -a roots=(
         "${AIO_HOME}/QIDI_Client"
@@ -3685,16 +3687,35 @@ report_q2_112_identical_config_sources() {
     [ -f "$live" ] && [ ! -L "$live" ] || return 0
     live_hash=$(file_sha256 "$live")
     basename="${live##*/}"
-    info "  Searching known Qidi/runtime/backup trees for byte-identical ${basename} copies"
+    live_stable_hash=""
+    if [ "$basename" = "printer.cfg" ]; then
+        live_stable_hash=$(sudo awk \
+            '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' \
+            "$live" 2>/dev/null | sha256sum | awk '{print $1}')
+    fi
+    info "  Provenance scan (${AIO_VERSION}): searching known Qidi/runtime/backup trees for ${basename}"
     while IFS= read -r -d '' candidate; do
         [ "$candidate" != "$live" ] || continue
         candidate_hash=$(file_sha256 "$candidate")
-        [ -n "$candidate_hash" ] && [ "$candidate_hash" = "$live_hash" ] || continue
+        candidate_stable_hash=""
+        if [ "$candidate_hash" != "$live_hash" ] && [ -n "$live_stable_hash" ]; then
+            candidate_stable_hash=$(sudo awk \
+                '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} {print}' \
+                "$candidate" 2>/dev/null | sha256sum | awk '{print $1}')
+            [ "$candidate_stable_hash" = "$live_stable_hash" ] || continue
+        elif [ -z "$candidate_hash" ] || [ "$candidate_hash" != "$live_hash" ]; then
+            continue
+        fi
         value=$(sudo stat -c 'size=%s mtime=%y mode=%a owner=%u:%g' \
             "$candidate" 2>/dev/null || printf 'stat unavailable')
         owner=$(dpkg-query -S "$candidate" 2>/dev/null | head -n 1 || true)
-        ok "  identical source candidate: ${candidate}"
+        if [ "$candidate_hash" = "$live_hash" ]; then
+            ok "  byte-identical source candidate: ${candidate}"
+        else
+            ok "  stable pre-SAVE_CONFIG source candidate: ${candidate}"
+        fi
         info "    ${value}"
+        info "    sha256: ${candidate_hash}"
         info "    package owner: ${owner:-none reported}"
         found=true
     done < <(
@@ -3704,13 +3725,13 @@ report_q2_112_identical_config_sources() {
         done
     )
     if [ "$found" = false ]; then
-        warn "  no byte-identical source copy found in known Qidi/runtime/backup trees"
+        warn "  no matching source copy found in known Qidi/runtime/backup trees"
     fi
 }
 
 report_q2_112_active_config_drift() {
-    local check_output line relative sealed live sealed_hash live_hash value
-    local content_changes preview shown
+    local check_output line relative normalized sealed live sealed_hash live_hash value owner
+    local content_changes preview shown active_config
 
     banner "Active config drift evidence"
     check_output=$(sudo sh -c 'cd "$1" && sha256sum -c "$2"' \
@@ -3720,6 +3741,7 @@ report_q2_112_active_config_drift() {
             *': FAILED'*|*': NOT FOUND')
                 relative="${line%%: FAILED*}"
                 relative="${relative%%: NOT FOUND*}"
+                normalized="${relative#./}"
                 sealed="${Q2_112_CONTRACT_DIR}/config/${relative}"
                 live="${CONFIG_DIR}/${relative}"
                 warn "Changed config path: ${relative}"
@@ -3738,19 +3760,21 @@ report_q2_112_active_config_drift() {
                         "$live" 2>/dev/null || printf 'stat unavailable')
                     info "  live:   ${value}"
                     info "  live sha256:   ${live_hash}"
+                    active_config=false
                     if q2_112_config_path_is_active "$live"; then
                         warn "  include state: active Klipper config"
+                        active_config=true
                     else
                         info "  include state: not active in the current Klipper include graph"
                     fi
                     report_q2_112_drift_file_evidence "$sealed" "$live" "$relative"
-                    if [ "$relative" = "./printer.cfg" ]; then
+                    if [ "$normalized" = "printer.cfg" ]; then
                         report_q2_112_printer_cfg_stable_drift "$sealed" "$live"
-                    elif [ "$relative" = "./saved_variables.cfg" ]; then
+                    elif [ "$normalized" = "saved_variables.cfg" ]; then
                         info "  classification hint: mutable Klipper save_variables state"
                     fi
-                    if [ "$relative" = "./printer.cfg" ] || \
-                       [ "$relative" = "./klipper-macros-qd/gcode_macro.cfg" ]; then
+                    owner=$(dpkg-query -S "$live" 2>/dev/null | head -n 1 || true)
+                    if [ "$active_config" = true ] && [ -z "$owner" ]; then
                         report_q2_112_identical_config_sources "$live"
                     fi
                     preview=$(sudo diff -u "$sealed" "$live" 2>/dev/null | head -n 60 || true)
