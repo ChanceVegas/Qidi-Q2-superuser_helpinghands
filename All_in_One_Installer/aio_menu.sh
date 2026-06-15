@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.39'
+AIO_VERSION='RC2.40'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -3162,6 +3162,25 @@ q2_112_printer_cfg_matches_cached_stock_package_payload() {
     return 1
 }
 
+q2_112_printer_cfg_has_known_qidi_max4_header_only_drift() {
+    local sealed="${Q2_112_CONTRACT_DIR}/config/printer.cfg"
+    local live="${CONFIG_DIR}/printer.cfg"
+
+    [ -f "$sealed" ] && [ ! -L "$sealed" ] || return 1
+    [ -f "$live" ] && [ ! -L "$live" ] || return 1
+    [ "$(sudo sed -n '1p' "$sealed" 2>/dev/null)" = "# Q2 打印机配置文件" ] || return 1
+    [ "$(sudo sed -n '1p' "$live" 2>/dev/null)" = "# MAX4 打印机配置文件" ] || return 1
+    [ "$(sudo sed -n '2p' "$live" 2>/dev/null)" = "# QIDI MAX4385x405x342mm打印空间" ] || return 1
+
+    cmp -s \
+        <(sudo awk \
+            '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} NR > 1 {print}' \
+            "$sealed") \
+        <(sudo awk \
+            '/^#\*# <---------------------- SAVE_CONFIG ---------------------->/{exit} NR > 2 {print}' \
+            "$live")
+}
+
 q2_112_config_refresh_drift_is_trusted() {
     local changes change code relative live
 
@@ -3187,7 +3206,8 @@ q2_112_config_refresh_drift_is_trusted() {
             printer.cfg)
                 if ! q2_112_printer_cfg_stable_content_matches && \
                    ! q2_112_live_file_matches_stock_package_record "$live" && \
-                   ! q2_112_printer_cfg_matches_cached_stock_package_payload; then
+                   ! q2_112_printer_cfg_matches_cached_stock_package_payload && \
+                   ! q2_112_printer_cfg_has_known_qidi_max4_header_only_drift; then
                     return 1
                 fi
                 ;;
@@ -3315,6 +3335,11 @@ refresh_q2_112_restore_contract() {
     warn "${Q2_112_CONTRACT_SCHEMA_CURRENT}, and exclude generated __pycache__/ and *.pyc files."
     warn "All prior restore-proof PASS records will become invalid for the new seal."
     warn "No active config, runtime path, package, service, or boot target will be changed."
+    if q2_112_printer_cfg_has_known_qidi_max4_header_only_drift; then
+        warn "The current printer.cfg contains Qidi's known comment-only Q2-to-MAX4 header anomaly."
+        warn "Its functional pre-SAVE_CONFIG content exactly matches the historical Q2 contract."
+        warn "The refreshed contract will preserve those current vendor-supplied comment lines."
+    fi
     if ! confirm "Refresh the sealed stock restore contract now?"; then
         info "Restore-contract refresh cancelled."
         return 1
@@ -3805,6 +3830,10 @@ report_q2_112_config_refresh_gate() {
                 elif q2_112_printer_cfg_matches_cached_stock_package_payload; then
                     ok "Accepted stable config from cached installed ${Q2_112_STOCK_SYSTEM_PACKAGE} package payload: ${relative}"
                     info "  Live differences beyond the package payload are limited to generated SAVE_CONFIG state."
+                elif q2_112_printer_cfg_has_known_qidi_max4_header_only_drift; then
+                    ok "Accepted known Qidi comment-only Q2-to-MAX4 header anomaly: ${relative}"
+                    info "  Functional pre-SAVE_CONFIG content exactly matches the historical Q2 contract."
+                    info "  Generated SAVE_CONFIG calibration state is preserved separately."
                 else
                     expected=$(sudo awk -v path="${live#/}" \
                         '$2 == path { print $1; exit }' \
