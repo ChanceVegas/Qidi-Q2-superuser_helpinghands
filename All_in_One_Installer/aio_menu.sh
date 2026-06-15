@@ -19,7 +19,7 @@
 set -uo pipefail
 
 # ---------- version --------------------------------------------------
-AIO_VERSION='RC2.33'
+AIO_VERSION='RC2.34'
 
 # ---------- firmware layout ------------------------------------------
 detect_q2_firmware_layout() {
@@ -3197,6 +3197,8 @@ refresh_q2_112_restore_contract() {
     if ! verify_q2_112_active_config_matches_contract; then
         err "Active config no longer exactly matches the sealed contract."
         warn "Refusing to refresh over unrelated config changes."
+        report_q2_112_active_config_drift
+        info "Do not recapture or restore anything until every reported config change is classified."
         return 1
     fi
     if ! q2_112_runtime_services_active; then
@@ -3578,6 +3580,89 @@ verify_q2_112_active_config_matches_contract() {
         sh "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config.sha256" || return 1
     verify_q2_112_contract_tree_inventory \
         "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config.inventory"
+}
+
+q2_112_config_path_is_active() {
+    local wanted="$1"
+    local active
+
+    wanted=$(readlink -f "$wanted" 2>/dev/null || printf '%s' "$wanted")
+    while IFS= read -r -d '' active; do
+        active=$(readlink -f "$active" 2>/dev/null || printf '%s' "$active")
+        [ "$active" = "$wanted" ] && return 0
+    done < <(list_active_klipper_configs 2>/dev/null || true)
+    return 1
+}
+
+report_q2_112_active_config_drift() {
+    local check_output line relative sealed live sealed_hash live_hash value
+    local content_changes preview shown
+
+    banner "Active config drift evidence"
+    check_output=$(sudo sh -c 'cd "$1" && sha256sum -c "$2"' \
+        sh "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config.sha256" 2>&1 || true)
+    while IFS= read -r line; do
+        case "$line" in
+            *': FAILED'*|*': NOT FOUND')
+                relative="${line%%: FAILED*}"
+                relative="${relative%%: NOT FOUND*}"
+                sealed="${Q2_112_CONTRACT_DIR}/config/${relative}"
+                live="${CONFIG_DIR}/${relative}"
+                warn "Changed config path: ${relative}"
+                if [ -f "$sealed" ] && [ ! -L "$sealed" ]; then
+                    sealed_hash=$(file_sha256 "$sealed")
+                    value=$(sudo stat -c 'size=%s mtime=%y mode=%a owner=%u:%g' \
+                        "$sealed" 2>/dev/null || printf 'stat unavailable')
+                    info "  sealed: ${value}"
+                    info "  sealed sha256: ${sealed_hash}"
+                else
+                    info "  sealed: absent or non-regular"
+                fi
+                if [ -f "$live" ] && [ ! -L "$live" ]; then
+                    live_hash=$(file_sha256 "$live")
+                    value=$(sudo stat -c 'size=%s mtime=%y mode=%a owner=%u:%g' \
+                        "$live" 2>/dev/null || printf 'stat unavailable')
+                    info "  live:   ${value}"
+                    info "  live sha256:   ${live_hash}"
+                    if q2_112_config_path_is_active "$live"; then
+                        warn "  include state: active Klipper config"
+                    else
+                        info "  include state: not active in the current Klipper include graph"
+                    fi
+                    preview=$(sudo diff -u "$sealed" "$live" 2>/dev/null | head -n 60 || true)
+                    if [ -n "$preview" ]; then
+                        info "  content diff preview (first 60 lines):"
+                        shown=0
+                        while IFS= read -r line; do
+                            info "    ${line}"
+                            shown=$((shown + 1))
+                        done <<< "$preview"
+                        [ "$shown" -lt 60 ] || info "    ... preview truncated"
+                    fi
+                else
+                    warn "  live: missing or non-regular"
+                fi
+                ;;
+        esac
+    done <<< "$check_output"
+
+    if content_changes=$(sudo rsync -aHAX --numeric-ids --checksum --delete \
+        --dry-run --itemize-changes --out-format='%i %n%L' \
+        "${Q2_112_CONTRACT_DIR}/config/" "${CONFIG_DIR}/" 2>/dev/null); then
+        if [ -n "$content_changes" ]; then
+            warn "Complete config-tree rsync drift:"
+            while IFS= read -r line; do
+                warn "  ${line}"
+            done <<< "$content_changes"
+        fi
+    else
+        warn "Could not generate the complete config-tree rsync drift report."
+    fi
+
+    if ! verify_q2_112_contract_tree_inventory \
+        "$CONFIG_DIR" "${Q2_112_CONTRACT_DIR}/config.inventory"; then
+        warn "Config-tree metadata/inventory also differs from the sealed contract."
+    fi
 }
 
 q2_112_contract_path_was_absent() {

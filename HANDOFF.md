@@ -3,7 +3,7 @@
 ## Current 1.1.2 Compatibility Lane
 
 The historical RC1 notes below are retained for context, but the active work is
-RC2.33 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
+RC2.34 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
 
 - General install and real revert remain blocked on firmware 1.1.2.
 - Options 9-16 provide staged compatibility and restore proofs.
@@ -15,6 +15,9 @@ RC2.33 on `claude/q2-112-unit-file-restore-proof` / draft PR #77.
 - Schema 2 excludes generated `__pycache__/` and `*.pyc` files from restore
   authority, preserves the previous contract as historical evidence, and
   intentionally requires options 10-16 to be rerun for the new seal.
+- Option 17 remains blocked when active config differs; RC2.34 reports each
+  changed config path with hashes, metadata, active-include state, rsync drift,
+  and inventory drift so the change can be classified before any refresh.
 
 ## Project
 
