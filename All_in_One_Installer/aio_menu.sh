@@ -2780,7 +2780,7 @@ report_q2_112_drift_file_evidence() {
     local sealed="$1"
     local live="$2"
     local label="$3"
-    local value owner
+    local value owner package captured_package live_package verify_line md5_record
 
     warn "    Evidence: ${label}"
     if [ -e "$sealed" ] || [ -L "$sealed" ]; then
@@ -2809,6 +2809,24 @@ report_q2_112_drift_file_evidence() {
         owner=$(dpkg-query -S "$live" 2>/dev/null | head -n 1 || true)
         if [ -n "$owner" ]; then
             info "      package owner: ${owner}"
+            package="${owner%%: *}"
+            captured_package=$(grep -F "${package}|" "${Q2_112_CONTRACT_DIR}/packages" 2>/dev/null | head -n 1 || true)
+            live_package=$(dpkg-query -W -f='${binary:Package}|${Version}|${db:Status-Abbrev}\n' \
+                "$package" 2>/dev/null | head -n 1 || true)
+            info "      captured package: ${captured_package:-not captured}"
+            info "      live package:     ${live_package:-not installed}"
+            verify_line=$(sudo dpkg -V "$package" 2>/dev/null | grep -F " $live" | head -n 1 || true)
+            if [ -n "$verify_line" ]; then
+                warn "      dpkg verify: ${verify_line}"
+            else
+                md5_record=$(sudo grep -F "  ${live#/}" "/var/lib/dpkg/info/${package}.md5sums" \
+                    2>/dev/null | head -n 1 || true)
+                if [ -n "$md5_record" ]; then
+                    info "      dpkg verify: live file matches installed package record"
+                else
+                    info "      dpkg verify: no per-file md5 record reported"
+                fi
+            fi
         else
             info "      package owner: none reported"
         fi
@@ -6196,7 +6214,8 @@ ${C_BOLD}1.1.2 external restore audit:${C_RESET}
     exactly what a future restore would replace or remove, separating
     content/structural drift from metadata-only drift.
   - Content-changed items include sealed/live hashes, metadata, file type,
-    package ownership, and generated-bytecode classification hints.
+    captured/current package versions, dpkg verification state, package
+    ownership, and generated-bytecode classification hints.
   - It does not write files or change packages, services, or boot targets.
 
 ${C_BOLD}1.1.2 captured-present path restore proof:${C_RESET}
