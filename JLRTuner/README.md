@@ -29,6 +29,9 @@ the technical research that defines what gets built.
   transport**. It can reach the engine ECU, but engine *tuning* is a separate,
   VIN-locked **tune file bought elsewhere and flashed through the tool** — not
   intelligence in the device.
+- Our build adds two confirmed core requirements: **live engine data streaming**
+  and **flashing a matched tune to both the engine ECU and the transmission
+  TCM** (ZF 8HP/6HP). See spec §4.5 (live data) and §7 (flashing strategy).
 - A proven open-source reimplementation of JLR's diagnostic stack already exists
   (`jlr-open-diag`): **read/diagnose/config-read works on a real car**; **write/
   flash is walled** behind an online-delivered Secondary Boot Loader and, on
@@ -40,10 +43,10 @@ the technical research that defines what gets built.
 
 Own-vehicle use only. Ships **no** security-bypass material (no seed-key
 algorithms, no gateway circumvention, no bootloader redistribution) and **no**
-emissions-defeat routines. See `TECHNICAL_SPEC.md` §9.
+emissions-defeat routines. See `TECHNICAL_SPEC.md` §10.
 
 ## Next decisions
 
-Open questions that gate Phase 1 are listed in `TECHNICAL_SPEC.md` §10 — chiefly:
-first target platform/model-years, J2534 adapter choice, and core-library
-language.
+Open questions that gate Phase 1 are listed in `TECHNICAL_SPEC.md` §11 — chiefly:
+first target platform/model-years, J2534 adapter choice, bench/boot flashing
+interface, and core-library language.

@@ -60,6 +60,24 @@ checked against primary JLR documentation or confirmed on a car.
 - Autoflasher — Land Rover TDV6 / Ingenium / ZF chiptuning — <https://www.autoflasher.co.uk/chiptuning-land-rover>
 - Understanding ECU types EDC15/16/17, MED17 — <https://www.tuning-database.co.uk/understanding-ecu-types-edc15-edc16-edc17-med17/>
 
+## Transmission (TCM) tuning — ZF 8HP / 6HP
+
+- Viezu — JLR 8-speed ZF 8HP gearbox tuning — <https://viezu.com/shop/gearbox-tuning-jaguar-land-rover-8-speed-zf-8hp/>
+- ZF 8HP transmission (Wikipedia, applications) — <https://en.wikipedia.org/wiki/ZF_8HP_transmission>
+- HP Tuners forum — ZF8 shift pressures & timing (ramp-rate/firmness) — <https://forum.hptuners.com/printthread.php?t=81943&pp=40>
+- TCU tuning explained (what it changes) — <https://gulfeuroclinic.com/tcu-tuning-explained/>
+
+## Flashing access methods (OBD vs bench vs boot)
+
+- OBD vs Bench vs Boot Mode: reading/writing ECUs — <https://www.tuning-database.co.uk/obd-vs-bench-vs-boot-mode-ecu-reading-writing/>
+- EDC17 control guide — tuning hardware / bench setup — <https://electronics.alibaba.com/buyingguides/edc17-control-guide-tuning-tools-bench-setup>
+- EDC17 chip tuning FAQ (TriCore, boot/BSL) — <https://ktagecu.blogspot.com/2017/03/edc17-ecu-chip-tuning-faq.html>
+
+## Live data (UDS services)
+
+- UDS data-transmission services (0x22/0x2A/0x2C) — pyUDSKit docs — <https://pyudskit.readthedocs.io/en/latest/services/data-transmission/>
+- UDS SID 0x2A ReadDataByPeriodicIdentifier — <https://uds-simulation.vercel.app/docs/sid_0x2a>
+
 ## Standards (for implementation)
 
 - UDS — ISO 14229 (Unified Diagnostic Services)
@@ -80,5 +98,5 @@ Two research threads were intentionally not pursued to a how-to level:
 2. **EGR/DPF/SCR defeat** — out of scope and illegal on road vehicles in many
    jurisdictions.
 
-Both are documented in `TECHNICAL_SPEC.md` §6 and §9 as *constraints/walls*, not
+Both are documented in `TECHNICAL_SPEC.md` §6 and §10 as *constraints/walls*, not
 as procedures.
